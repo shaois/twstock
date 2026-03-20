@@ -130,8 +130,10 @@ class AIAnalyzer:
             return f"{sign}{n:,} {unit}"
 
         total = institutional.get("total_net")
-        inst_comment = "法人資料暫無"
-        if total is not None:
+        foreign = institutional.get("foreign_net")
+        has_inst = total is not None and foreign is not None
+        inst_comment = "本次查詢無法取得即時法人資料（TWSE API 限制），請依基本面與技術面判斷"
+        if has_inst:
             if total > 5000:    inst_comment = f"三大法人大幅買超 {total:,} 張，法人積極布局"
             elif total > 0:     inst_comment = f"三大法人買超 {total:,} 張，籌碼偏多"
             elif total > -5000: inst_comment = f"三大法人賣超 {abs(total):,} 張，法人調節"
@@ -168,12 +170,12 @@ class AIAnalyzer:
 • RSI14：{t.get('rsi14','N/A')}  |  MACD Hist：{t.get('macd_hist','N/A')}
 • 量比(5/20日)：{t.get('vol_ratio_5_20','N/A')}x  |  52W位置：{t.get('price_position_52w','N/A')}%
 
-═══ 法人籌碼（最新交易日） ═══
+═══ 法人籌碼 ═══
+{"（資料可用）" if has_inst else "（本次無法取得即時資料，以下為參考）"}
 • 外資買賣超：{fmt(institutional.get('foreign_net'))}
 • 投信買賣超：{fmt(institutional.get('trust_net'))}
-• 自營商買賣超：{fmt(institutional.get('dealer_net'))}
 • 三大法人合計：{fmt(institutional.get('total_net'))}
-• 解讀：{inst_comment}
+• 說明：{inst_comment}
 
 ═══ 市場面 ═══
 • 52週價格位置：{t.get('price_position_52w','N/A')}%（0=年低點，100=年高點）
