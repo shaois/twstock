@@ -14,6 +14,9 @@ from datetime import datetime, timedelta
 import os
 from pathlib import Path
 
+# 從環境變數讀取 NVIDIA API Key（Render 部署時設定）
+NVIDIA_API_KEY_ENV = os.environ.get("NVIDIA_API_KEY", "")
+
 from data_fetcher import TWStockFetcher
 from scorer import StockScorer
 from ai_analyzer import AIAnalyzer
@@ -80,10 +83,13 @@ async def get_stock_score(stock_id: str):
         raise HTTPException(status_code=500, detail=f"評分失敗: {str(e)}")
 
 @app.get("/api/stock/{stock_id}/ai-analysis")
-async def get_ai_analysis(stock_id: str, api_key: str):
+async def get_ai_analysis(stock_id: str, api_key: str = ""):
     """用 NVIDIA NIM 生成 AI 中長期分析建議"""
-    if not api_key:
+    # 優先用前端傳入的 key，否則用環境變數
+    effective_key = api_key or NVIDIA_API_KEY_ENV
+    if not effective_key:
         raise HTTPException(status_code=400, detail="需要提供 NVIDIA API Key")
+    api_key = effective_key
     try:
         cache_key = f"ai_{stock_id}"
         data = cache.get(cache_key)
