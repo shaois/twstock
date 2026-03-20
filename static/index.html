@@ -762,8 +762,7 @@ function renderStockDetail(stockId, stockName, sc) {
 }
 
 async function loadAIAnalysis(stockId) {
-  const apiKey = getApiKey();
-  if (!apiKey) { showToast('❌ 請先輸入 NVIDIA API Key'); return; }
+  const apiKey = getApiKey();  // 可空白，後端會用環境變數
 
   const panel = document.getElementById('aiPanel');
   const content = document.getElementById('aiContent');
