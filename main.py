@@ -197,6 +197,29 @@ async def finmind_proxy(stock_id: str, token: str = "", start_date: str = "2026-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+@app.post("/api/nvidia")
+async def nvidia_proxy(request: dict):
+    """Proxy NVIDIA NIM API to bypass CORS"""
+    import os
+    api_key = request.get("api_key") or os.environ.get("NVIDIA_API_KEY", "")
+    if not api_key:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="需要 NVIDIA API Key")
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            r = await client.post(
+                "https://integrate.api.nvidia.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=request.get("body", {})
+            )
+            from fastapi.responses import JSONResponse
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
