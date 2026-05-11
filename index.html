@@ -671,10 +671,13 @@ ${instStr}
 ⚠️ 本分析僅供參考，不構成投資建議。`;
 
   try {
-    const r=await fetch(NVIDIA_API,{
+    const r=await fetch('https://twstock-app.onrender.com/api/nvidia',{
       method:'POST',
-      headers:{'Authorization':`Bearer ${apiKey}`,'Content-Type':'application/json'},
-      body:JSON.stringify({model:MODEL,messages:[{role:'user',content:prompt}],temperature:0.35,max_tokens:1500})
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        api_key: apiKey,
+        body: {model:MODEL,messages:[{role:'user',content:prompt}],temperature:0.35,max_tokens:1500}
+      })
     });
     if(!r.ok){const e=await r.text();throw new Error(`API錯誤 ${r.status}: ${e}`);}
     const d=await r.json();
