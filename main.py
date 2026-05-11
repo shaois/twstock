@@ -168,6 +168,35 @@ async def run_batch_scoring():
             except Exception as e:
                 print(f"[WARN] {sid} 評分失敗: {e}")
 
+
+
+# ── Proxy Routes for GitHub Pages ────────────────────────────────────
+@app.get("/api/yahoo/{stock_id}")
+async def yahoo_proxy(stock_id: str, range: str = "1y"):
+    """Proxy Yahoo Finance to bypass CORS"""
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{stock_id}.TW?interval=1d&range={range}"
+    try:
+        async with httpx.AsyncClient(timeout=15.0, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }) as client:
+            r = await client.get(url)
+            from fastapi.responses import JSONResponse
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/finmind/{stock_id}")
+async def finmind_proxy(stock_id: str, token: str = "", start_date: str = "2026-03-01"):
+    """Proxy FinMind to bypass CORS"""
+    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={stock_id}&start_date={start_date}&token={token}"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(url)
+            from fastapi.responses import JSONResponse
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
