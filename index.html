@@ -335,9 +335,10 @@ async function fetchInstitutional(stockId) {
     let foreign=0, trust=0, dealer=0;
     for(const row of rows) {
       const net = (row.buy||0) - (row.sell||0);
-      if(row.name==='Foreign_Investor') foreign += net;
-      else if(row.name==='Investment_Trust') trust += net;
-      else if(row.name==='Dealer_Self' || row.name==='Dealer_Hedging') dealer += net;
+      const n = row.name;
+      if(n==='Foreign_Investor') foreign += net;
+      else if(n==='Investment_Trust') trust += net;
+      else if(n==='Dealer_Self' || n==='Dealer_self' || n==='Dealer_Hedging') dealer += net;
     }
     const result = {foreign, trust, dealer, total: foreign+trust+dealer, date: latest};
     instCache[stockId] = result;
