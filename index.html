@@ -335,9 +335,9 @@ async function fetchInstitutional(stockId) {
     let foreign=0, trust=0, dealer=0;
     for(const row of rows) {
       const net = (row.buy||0) - (row.sell||0);
-      if(row.name==='外資') foreign = net;
-      else if(row.name==='投信') trust = net;
-      else if(row.name==='自營商') dealer = net;
+      if(row.name==='Foreign_Investor') foreign += net;
+      else if(row.name==='Investment_Trust') trust += net;
+      else if(row.name==='Dealer_Self' || row.name==='Dealer_Hedging') dealer += net;
     }
     const result = {foreign, trust, dealer, total: foreign+trust+dealer, date: latest};
     instCache[stockId] = result;
@@ -702,8 +702,12 @@ function runScreener() {
         <div class="panel-title" style="margin:0">篩選結果 — 評分 ≥ 60（共 ${results.length} 支）</div>
       </div>
       <table>
-        <thead><tr><th>股票</th><th>評級</th><th>總分</th><th>基本面</th><th>技術面</th><th>估值面</th><th>PE</th><th>殖利率</th><th>建議</th></tr></thead>
-        <tbody>${results.map(sc=>`
+        <thead><tr><th>股票</th><th>評級</th><th>總分</th><th>基本面</th><th>技術面</th><th>估值面</th><th>RSI14</th><th>PE</th><th>殖利率</th><th>建議</th></tr></thead>
+        <tbody>${results.map(sc=>{
+          const rsi=sc.t.rsi;
+          const rsiColor=rsi>=80?'var(--red)':rsi>=70?'#f97316':rsi>=50?'var(--green)':rsi>=30?'var(--accent)':'#818cf8';
+          const rsiTag=rsi>=80?'極熱':rsi>=70?'過熱':rsi>=50?'偏多':rsi>=30?'偏弱':'超賣';
+          return `
           <tr onclick="showDetail('${sc.id}')">
             <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--muted)">${sc.name}</span></td>
             <td><span class="grade-badge g${sc.grade.replace('+','p')}">${sc.grade}</span></td>
@@ -711,10 +715,11 @@ function runScreener() {
             <td class="td-mono">${sc.fScore}</td>
             <td class="td-mono">${sc.tScore}</td>
             <td class="td-mono">${sc.vScore}</td>
+            <td class="td-mono"><span style="color:${rsiColor};font-weight:700">${rsi.toFixed(1)}</span> <span style="font-size:10px;color:${rsiColor}">${rsiTag}</span></td>
             <td class="td-mono">${sc.vDetail.pe?sc.vDetail.pe.toFixed(1)+'x':'—'}</td>
             <td class="td-mono">${sc.vDetail.divYield.toFixed(2)}%</td>
             <td style="font-size:11px">${sc.suggestion}</td>
-          </tr>`).join('')}
+          </tr>`;}).join('')}
         </tbody>
       </table>
     </div>`;
