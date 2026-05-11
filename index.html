@@ -303,8 +303,8 @@ function getApiKey() { return document.getElementById('apiKeyInput').value.trim(
 
 // ── Yahoo Finance ─────────────────────────────────────────────
 async function fetchYahoo(stockId) {
-  const url=`https://query1.finance.yahoo.com/v8/finance/chart/${stockId}.TW?interval=1d&range=1y`;
-  const r=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0"}});
+  const url=`https://twstock-app.onrender.com/api/yahoo/${stockId}?range=1y`;
+  const r=await fetch(url);
   if(!r.ok) return null;
   const d=await r.json();
   const result=d?.chart?.result?.[0];
@@ -317,6 +317,32 @@ async function fetchYahoo(stockId) {
     price:meta.regularMarketPrice||closes[closes.length-1]||0,
     high52:meta.fiftyTwoWeekHigh||0,
     low52:meta.fiftyTwoWeekLow||0};
+}
+
+// ── FinMind Institutional Data ────────────────────────────────
+async function fetchInstitutional(stockId) {
+  if(instCache[stockId]) return instCache[stockId];
+  try {
+    const today = new Date();
+    const startDate = new Date(today - 30*24*60*60*1000).toISOString().slice(0,10);
+    const url = `https://twstock-app.onrender.com/api/finmind/${stockId}?token=${FINMIND_TOKEN}&start_date=${startDate}`;
+    const r = await fetch(url);
+    if(!r.ok) return null;
+    const d = await r.json();
+    if(d.status !== 200 || !d.data?.length) return null;
+    const latest = d.data[d.data.length-1].date;
+    const rows = d.data.filter(x => x.date === latest);
+    let foreign=0, trust=0, dealer=0;
+    for(const row of rows) {
+      const net = (row.buy||0) - (row.sell||0);
+      if(row.name==='外資') foreign = net;
+      else if(row.name==='投信') trust = net;
+      else if(row.name==='自營商') dealer = net;
+    }
+    const result = {foreign, trust, dealer, total: foreign+trust+dealer, date: latest};
+    instCache[stockId] = result;
+    return result;
+  } catch(e) { return null; }
 }
 
 // ── Technical Indicators ──────────────────────────────────────
