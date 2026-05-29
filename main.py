@@ -224,56 +224,72 @@ async def nvidia_proxy(request: dict):
 
 @app.get("/api/top100")
 async def get_top100():
-    """從 TWSE 抓即時市值前100大股票"""
+    """從 TWSE 抓市值前100大 - 用 BWIBBU_d 本益比資料排序"""
     from fastapi.responses import JSONResponse
+    from datetime import datetime, timedelta
     try:
-        # TWSE 全部股票日資料（含成交量、市值相關）
-        async with httpx.AsyncClient(timeout=20.0, headers={
+        async with httpx.AsyncClient(timeout=30.0, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }) as client:
+            # 方法1: 用即時行情快照 MI_INDEX
             r = await client.get(
-                "https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json"
+                "https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&type=ALLBUT0999"
             )
-            data = r.json()
+            if r.text.strip():
+                data = r.json()
+                if data.get("stat") == "OK":
+                    # 找上市股票資料表
+                    tables = data.get("tables", [])
+                    rows = []
+                    for t in tables:
+                        if t.get("title", "").find("股") >= 0:
+                            rows = t.get("data", [])
+                            break
+                    if not rows:
+                        rows = data.get("data", [])
 
-        if data.get("stat") != "OK":
-            return JSONResponse({"success": False, "detail": "TWSE API error"})
+                    stocks = []
+                    for row in rows:
+                        try:
+                            sid = str(row[0]).strip()
+                            if not (len(sid) == 4 and sid.isdigit()):
+                                continue
+                            name = str(row[1]).strip()
+                            close = float(str(row[8]).replace(",","")) if len(row)>8 and row[8] not in ["-","--",""] else 0
+                            vol = int(str(row[2]).replace(",","")) if len(row)>2 and row[2] not in ["-","--",""] else 0
+                            amt = int(str(row[4]).replace(",","")) if len(row)>4 and row[4] not in ["-","--",""] else 0
+                            if close > 0:
+                                stocks.append({"stock_id": sid, "name": name, "close": close, "volume": vol, "amount": amt})
+                        except:
+                            continue
 
-        fields = data.get("fields", [])
-        rows = data.get("data", [])
+                    if stocks:
+                        stocks.sort(key=lambda x: x["amount"], reverse=True)
+                        return JSONResponse({"success": True, "data": stocks[:100], "total": len(stocks[:100])})
 
-        # fields 通常: 證券代號, 證券名稱, 成交股數, 成交筆數, 成交金額, 開盤價, 最高價, 最低價, 收盤價, 漲跌(+/-), 漲跌價差, 最後揭示買價, 最後揭示買量, 最後揭示賣價, 最後揭示賣量, 本益比
-        stocks = []
-        for row in rows:
-            try:
-                stock_id = str(row[0]).strip()
-                name = str(row[1]).strip()
-                # 只取4碼純數字的上市股票
-                if not (len(stock_id) == 4 and stock_id.isdigit()):
-                    continue
-                close = float(str(row[8]).replace(",", "")) if row[8] not in ["-", "--", ""] else 0
-                volume = int(str(row[2]).replace(",", "")) if row[2] not in ["-", "--", ""] else 0
-                # 用成交金額估算市值排名（成交金額 = 成交股數 × 均價，越大代表市值越大）
-                amount = int(str(row[4]).replace(",", "")) if len(row) > 4 and row[4] not in ["-", "--", ""] else 0
-                if close > 0 and volume > 0:
-                    stocks.append({
-                        "stock_id": stock_id,
-                        "name": name,
-                        "close": close,
-                        "volume": volume,
-                        "amount": amount,
-                    })
-            except:
-                continue
+            # 方法2: 用 FinMind 市值資料
+            r2 = await client.get(
+                "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&token="
+            )
+            if r2.status_code == 200:
+                d2 = r2.json()
+                if d2.get("status") == 200 and d2.get("data"):
+                    stocks = []
+                    for row in d2["data"]:
+                        sid = str(row.get("stock_id","")).strip()
+                        if len(sid) == 4 and sid.isdigit():
+                            stocks.append({
+                                "stock_id": sid,
+                                "name": row.get("stock_name",""),
+                                "close": 0, "volume": 0, "amount": 0
+                            })
+                    return JSONResponse({"success": True, "data": stocks[:100], "total": 100})
 
-        # 用成交金額排序（近似市值大小）
-        stocks.sort(key=lambda x: x["amount"], reverse=True)
-        top100 = stocks[:100]
-
-        return JSONResponse({"success": True, "data": top100, "total": len(top100)})
+            return JSONResponse({"success": False, "detail": "All APIs failed"})
 
     except Exception as e:
         return JSONResponse({"success": False, "detail": str(e)})
+
 
 if __name__ == "__main__":
     import uvicorn
