@@ -349,8 +349,38 @@ async function fetchYahoo(stockId){
     const q=result.indicators?.quote?.[0]||{};
     const closes=(q.close||[]).filter(c=>c!=null);
     const volumes=(q.volume||[]).filter(v=>v!=null);
-    return{closes,volumes,price:meta.regularMarketPrice||closes[closes.length-1]||0,high52:meta.fiftyTwoWeekHigh||0,low52:meta.fiftyTwoWeekLow||0};
+    return{closes,volumes,price:meta.regularMarketPrice||closes[closes.length-1]||0,high52:meta.fiftyTwoWeekHigh||0,low52:meta.fiftyTwoWeekLow||0,source:'yahoo'};
   }catch(e){return null;}
+}
+
+// ── FinMind Price（主要來源）─────────────────────────────────────
+const fmPriceCache={};
+async function fetchFinMindPrice(stockId){
+  if(fmPriceCache[stockId])return fmPriceCache[stockId];
+  try{
+    const start=new Date(Date.now()-270*24*60*60*1000).toISOString().slice(0,10);
+    const url=`${PROXY}/api/finmind/price/${stockId}?token=${FINMIND_TOKEN}&start_date=${start}`;
+    const r=await fetch(url);
+    if(!r.ok)return null;
+    const d=await r.json();
+    if(d.status!==200||!d.data?.length)return null;
+    const rows=d.data.filter(x=>x.close!=null).sort((a,b)=>a.date.localeCompare(b.date));
+    const closes=rows.map(x=>x.close);
+    const volumes=rows.map(x=>x.Trading_Volume||0);
+    const price=closes[closes.length-1]||0;
+    const high52=Math.max(...closes);
+    const low52=Math.min(...closes);
+    const result={closes,volumes,price,high52,low52,source:'finmind'};
+    fmPriceCache[stockId]=result;
+    return result;
+  }catch(e){return null;}
+}
+
+// ── 統一抓價入口：FinMind 優先，失敗才 fallback Yahoo ────────────
+async function fetchStockData(stockId){
+  const fm=await fetchFinMindPrice(stockId);
+  if(fm)return fm;
+  return await fetchYahoo(stockId);
 }
 
 // ── FinMind Institutional ─────────────────────────────────────
@@ -447,8 +477,9 @@ async function loadStocks(){
   for(let i=0;i<total;i+=10){
     const batch=candidates.slice(i,i+10);
     await Promise.all(batch.map(async s=>{
-      const y=await fetchYahoo(s.id);
+      const y=await fetchStockData(s.id);
       priceMap[s.id]=y?.price||0;
+      if(y)fmPriceCache[s.id]=y;  // 快取，評分階段直接複用
     }));
     showProgress(Math.min(i+10,total),total,'抓取股價');
   }
@@ -460,7 +491,7 @@ async function loadStocks(){
     priceFailed: !priceMap[s.id],
     marketCap: (priceMap[s.id]||0) * (s.shares||0)
   }));
-  // price>0 先排（依市值降序），price=0 排後段（依 shares 估計順序保留）
+  // price>0 依市值降序排前段；price=0 依 shares 保留在後段不直接消失
   const withPrice=withCap.filter(s=>s.price>0).sort((a,b)=>b.marketCap-a.marketCap);
   const noPrice=withCap.filter(s=>s.price===0).sort((a,b)=>(b.shares||0)-(a.shares||0));
   allStocks=[...withPrice,...noPrice].slice(0,100);
@@ -473,7 +504,7 @@ async function loadStocks(){
   for(let i=0;i<allStocks.length;i++){
     const s=allStocks[i];
     try{
-      const ydata=await fetchYahoo(s.id);
+      const ydata=fmPriceCache[s.id]||await fetchStockData(s.id);
       allScores[s.id]=scoreStock(s.id,ydata);
     }catch(e){allScores[s.id]=scoreStock(s.id,null);}
     showProgress(i+1,allStocks.length,'評分');
@@ -503,7 +534,7 @@ function renderStockList(){
         <div style="display:flex;align-items:center;gap:5px">
           <span style="font-size:9px;color:var(--muted);width:20px">#${rank}</span>
           <span class="s-id">${s.id}</span>
-          ${s.priceFailed?'<span style="font-size:9px;color:#f59e0b" title="Yahoo Finance 取價失敗">⚠</span>':''}
+          ${s.priceFailed?'<span style="font-size:9px;color:#f59e0b" title="取價失敗">⚠</span>':''}
         </div>
         <div class="s-name" style="padding-left:25px">${s.name}</div>
       </div>
