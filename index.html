@@ -218,6 +218,7 @@ const CANDIDATES = [
   {id:"2301",name:"光寶科",sector:"電子製造",shares:3070000},
   {id:"2354",name:"鴻準",sector:"機殼",shares:1100000},
   {id:"2324",name:"仁寶",sector:"電子製造",shares:8640000},
+  {id:"3231",name:"緯創",sector:"電子製造",shares:8680000},
   {id:"2325",name:"矽品",sector:"半導體",shares:4750000},
   {id:"2498",name:"宏達電",sector:"電腦",shares:1350000},
   {id:"2603",name:"長榮",sector:"航運",shares:13780000},
@@ -307,7 +308,7 @@ const FUNDAMENTAL = {
   "3034":{eps:45.0,roe:30.5,yoy:18.5,div:25.0},"2356":{eps:3.5,roe:9.2,yoy:5.5,div:2.0},
   "2409":{eps:0.8,roe:4.5,yoy:-5.2,div:0.0},"3481":{eps:0.5,roe:3.2,yoy:-8.5,div:0.0},
   "2301":{eps:4.5,roe:11.2,yoy:6.5,div:3.0},"2354":{eps:8.5,roe:15.5,yoy:5.2,div:6.0},
-  "2324":{eps:2.8,roe:8.5,yoy:3.2,div:2.0},"2603":{eps:12.5,roe:18.5,yoy:-25.0,div:8.0},
+  "2324":{eps:2.8,roe:8.5,yoy:3.2,div:2.0},"3231":{eps:8.2,roe:15.5,yoy:28.5,div:4.5},"2603":{eps:12.5,roe:18.5,yoy:-25.0,div:8.0},
   "2609":{eps:8.5,roe:15.2,yoy:-30.0,div:5.0},"2615":{eps:6.5,roe:12.5,yoy:-22.0,div:4.0},
   "2618":{eps:5.2,roe:11.5,yoy:8.5,div:1.5},"1101":{eps:1.8,roe:6.5,yoy:-2.5,div:1.5},
   "1590":{eps:45.0,roe:25.5,yoy:12.5,div:20.0},"6669":{eps:65.0,roe:35.2,yoy:28.5,div:30.0},
@@ -456,11 +457,13 @@ async function loadStocks(){
   const withCap=candidates.map(s=>({
     ...s,
     price: priceMap[s.id]||0,
+    priceFailed: !priceMap[s.id],
     marketCap: (priceMap[s.id]||0) * (s.shares||0)
-  })).filter(s=>s.price>0);
-
-  withCap.sort((a,b)=>b.marketCap-a.marketCap);
-  allStocks=withCap.slice(0,100);
+  }));
+  // price>0 先排（依市值降序），price=0 排後段（依 shares 估計順序保留）
+  const withPrice=withCap.filter(s=>s.price>0).sort((a,b)=>b.marketCap-a.marketCap);
+  const noPrice=withCap.filter(s=>s.price===0).sort((a,b)=>(b.shares||0)-(a.shares||0));
+  allStocks=[...withPrice,...noPrice].slice(0,100);
 
   document.getElementById('stockCount').textContent=`(${allStocks.length})`;
   showToast(`✓ 市值排序完成，前${allStocks.length}大已載入，開始評分…`);
@@ -500,6 +503,7 @@ function renderStockList(){
         <div style="display:flex;align-items:center;gap:5px">
           <span style="font-size:9px;color:var(--muted);width:20px">#${rank}</span>
           <span class="s-id">${s.id}</span>
+          ${s.priceFailed?'<span style="font-size:9px;color:#f59e0b" title="Yahoo Finance 取價失敗">⚠</span>':''}
         </div>
         <div class="s-name" style="padding-left:25px">${s.name}</div>
       </div>
