@@ -185,6 +185,27 @@ async def yahoo_proxy(stock_id: str, range: str = "1y"):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/finmind/price/{stock_id}")
+async def finmind_price_proxy(stock_id: str, token: str = "", start_date: str = ""):
+    """Proxy FinMind TaiwanStockPrice for technical analysis"""
+    from fastapi.responses import JSONResponse
+    if not start_date:
+        from datetime import datetime, timedelta
+        start_date = (datetime.today() - timedelta(days=270)).strftime("%Y-%m-%d")
+    url = (
+        f"https://api.finmindtrade.com/api/v4/data"
+        f"?dataset=TaiwanStockPrice"
+        f"&data_id={stock_id}"
+        f"&start_date={start_date}"
+        f"&token={token}"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(url)
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+        
 @app.get("/api/finmind/{stock_id}")
 async def finmind_proxy(stock_id: str, token: str = "", start_date: str = "2026-03-01"):
     """Proxy FinMind to bypass CORS"""
