@@ -135,7 +135,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
         <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       <h2>台股中長期選股儀表板</h2>
-      <p style="max-width:400px;line-height:1.8">動態抓取市值前100大 × Yahoo Finance即時資料 × 基本面 × 技術面 × 估值面 × NVIDIA AI 分析</p>
+      <p style="max-width:400px;line-height:1.8">波段選股模式 × FinMind資料 × 基本面20 × 技術面80 × 估值面20 × NVIDIA AI 分析</p>
       <div class="step-cards">
         <div class="step-card"><div class="step-num">1</div><div class="step-text">點「載入前100大」</div></div>
         <div class="step-card"><div class="step-num">2</div><div class="step-text">依市值自動排序</div></div>
@@ -218,7 +218,6 @@ const CANDIDATES = [
   {id:"2301",name:"光寶科",sector:"電子製造",shares:3070000},
   {id:"2354",name:"鴻準",sector:"機殼",shares:1100000},
   {id:"2324",name:"仁寶",sector:"電子製造",shares:8640000},
-  {id:"3231",name:"緯創",sector:"電子製造",shares:8680000},
   {id:"2325",name:"矽品",sector:"半導體",shares:4750000},
   {id:"2498",name:"宏達電",sector:"電腦",shares:1350000},
   {id:"2603",name:"長榮",sector:"航運",shares:13780000},
@@ -308,7 +307,7 @@ const FUNDAMENTAL = {
   "3034":{eps:45.0,roe:30.5,yoy:18.5,div:25.0},"2356":{eps:3.5,roe:9.2,yoy:5.5,div:2.0},
   "2409":{eps:0.8,roe:4.5,yoy:-5.2,div:0.0},"3481":{eps:0.5,roe:3.2,yoy:-8.5,div:0.0},
   "2301":{eps:4.5,roe:11.2,yoy:6.5,div:3.0},"2354":{eps:8.5,roe:15.5,yoy:5.2,div:6.0},
-  "2324":{eps:2.8,roe:8.5,yoy:3.2,div:2.0},"3231":{eps:8.2,roe:15.5,yoy:28.5,div:4.5},"2603":{eps:12.5,roe:18.5,yoy:-25.0,div:8.0},
+  "2324":{eps:2.8,roe:8.5,yoy:3.2,div:2.0},"2603":{eps:12.5,roe:18.5,yoy:-25.0,div:8.0},
   "2609":{eps:8.5,roe:15.2,yoy:-30.0,div:5.0},"2615":{eps:6.5,roe:12.5,yoy:-22.0,div:4.0},
   "2618":{eps:5.2,roe:11.5,yoy:8.5,div:1.5},"1101":{eps:1.8,roe:6.5,yoy:-2.5,div:1.5},
   "1590":{eps:45.0,roe:25.5,yoy:12.5,div:20.0},"6669":{eps:65.0,roe:35.2,yoy:28.5,div:30.0},
@@ -349,38 +348,8 @@ async function fetchYahoo(stockId){
     const q=result.indicators?.quote?.[0]||{};
     const closes=(q.close||[]).filter(c=>c!=null);
     const volumes=(q.volume||[]).filter(v=>v!=null);
-    return{closes,volumes,price:meta.regularMarketPrice||closes[closes.length-1]||0,high52:meta.fiftyTwoWeekHigh||0,low52:meta.fiftyTwoWeekLow||0,source:'yahoo'};
+    return{closes,volumes,price:meta.regularMarketPrice||closes[closes.length-1]||0,high52:meta.fiftyTwoWeekHigh||0,low52:meta.fiftyTwoWeekLow||0};
   }catch(e){return null;}
-}
-
-// ── FinMind Price（主要來源）─────────────────────────────────────
-const fmPriceCache={};
-async function fetchFinMindPrice(stockId){
-  if(fmPriceCache[stockId])return fmPriceCache[stockId];
-  try{
-    const start=new Date(Date.now()-270*24*60*60*1000).toISOString().slice(0,10);
-    const url=`${PROXY}/api/finmind/price/${stockId}?token=${FINMIND_TOKEN}&start_date=${start}`;
-    const r=await fetch(url);
-    if(!r.ok)return null;
-    const d=await r.json();
-    if(d.status!==200||!d.data?.length)return null;
-    const rows=d.data.filter(x=>x.close!=null).sort((a,b)=>a.date.localeCompare(b.date));
-    const closes=rows.map(x=>x.close);
-    const volumes=rows.map(x=>x.Trading_Volume||0);
-    const price=closes[closes.length-1]||0;
-    const high52=Math.max(...closes);
-    const low52=Math.min(...closes);
-    const result={closes,volumes,price,high52,low52,source:'finmind'};
-    fmPriceCache[stockId]=result;
-    return result;
-  }catch(e){return null;}
-}
-
-// ── 統一抓價入口：FinMind 優先，失敗才 fallback Yahoo ────────────
-async function fetchStockData(stockId){
-  const fm=await fetchFinMindPrice(stockId);
-  if(fm)return fm;
-  return await fetchYahoo(stockId);
 }
 
 // ── FinMind Institutional ─────────────────────────────────────
@@ -439,26 +408,27 @@ function scoreStock(id,ydata){
     t.pos52=high52!==low52?(price-low52)/(high52-low52)*100:50;
     if(closes.length>=120)t.trend6m=(price-closes[closes.length-121])/closes[closes.length-121]*100;
   }
+  // 【波段模式】基本面 20分（僅作為底層篩選，不主導評分）
   let fScore=0,fDetail={};
-  const epsS=Math.min(Math.max(f.eps/10*15,0),15);fScore+=epsS;fDetail.eps=epsS;
-  const roeS=Math.min(Math.max(f.roe/20*15,0),15);fScore+=roeS;fDetail.roe=roeS;
-  const yoyS=f.yoy>0?Math.min(f.yoy/20*10,10):0;fScore+=yoyS;fDetail.yoy=yoyS;
+  const epsS=Math.min(Math.max(f.eps/10*6,0),6);fScore+=epsS;fDetail.eps=epsS;
+  const roeS=Math.min(Math.max(f.roe/20*6,0),6);fScore+=roeS;fDetail.roe=roeS;
+  const yoyS=f.yoy>0?Math.min(f.yoy/20*4,4):0;fScore+=yoyS;fDetail.yoy=yoyS;
   const divYield=price>0&&f.div>0?f.div/price*100:0;
-  const divS=Math.min(divYield/5*10,10);fScore+=divS;fDetail.div=divS;fDetail.divYield=divYield;
+  const divS=Math.min(divYield/5*4,4);fScore+=divS;fDetail.div=divS;fDetail.divYield=divYield;
+  // 【波段模式】技術面 80分
   let tScore=0,tDetail={};
-  let maS=0;if(price>0&&t.ma5>0){if(price>t.ma5)maS+=5;if(t.ma5>t.ma20)maS+=5;if(t.ma20>t.ma60)maS+=5;if(t.ma60>t.ma120&&t.ma120>0)maS+=5;}
+  // 均線多頭 25分
+  let maS=0;if(price>0&&t.ma5>0){if(price>t.ma5)maS+=7;if(t.ma5>t.ma20)maS+=7;if(t.ma20>t.ma60)maS+=6;if(t.ma60>t.ma120&&t.ma120>0)maS+=5;}
   tScore+=maS;tDetail.ma=maS;
-  const rsiS=t.rsi>=50&&t.rsi<=70?10:t.rsi>70&&t.rsi<=80?6:t.rsi>80?2:t.rsi>=40?7:t.rsi>=30?5:2;
+  // RSI 20分：波段最重要指標，50~70得高分，>80扣重分
+  const rsiS=t.rsi>=55&&t.rsi<=70?20:t.rsi>=50&&t.rsi<55?16:t.rsi>70&&t.rsi<=78?12:t.rsi>78?4:t.rsi>=40?10:t.rsi>=30?6:2;
   tScore+=rsiS;tDetail.rsi=rsiS;
-  let macdS=0;if(t.macd>0)macdS+=4;if(t.macdHist>0)macdS+=4;tScore+=macdS;tDetail.macd=macdS;
-  const volS=t.volRatio>=1.3?7:t.volRatio>=1?5:t.volRatio>=0.7?3:0;tScore+=volS;tDetail.vol=volS;
+  // MACD 20分：動能轉折
+  let macdS=0;if(t.macd>0)macdS+=10;if(t.macdHist>0)macdS+=10;tScore+=macdS;tDetail.macd=macdS;
+  // 成交量 10分：突破要有量
+  const volS=t.volRatio>=1.5?10:t.volRatio>=1.3?8:t.volRatio>=1?6:t.volRatio>=0.7?3:0;tScore+=volS;tDetail.vol=volS;
+  // 6M趨勢 5分
   const trendS=t.trend6m>=20?5:t.trend6m>=10?4:t.trend6m>=0?3:t.trend6m>=-10?1:0;tScore+=trendS;tDetail.trend=trendS;
-  // 短期突破加分：近5日漲幅（捕捉強勢突破，最高+8分，但不超過技術面上限50）
-  const price5dAgo=closes.length>=6?closes[closes.length-6]:closes[0];
-  const gain5d=price5dAgo>0?(price-price5dAgo)/price5dAgo*100:0;
-  const breakS=gain5d>=9?8:gain5d>=6?6:gain5d>=3?4:gain5d>=1?2:0;
-  tScore+=breakS;tDetail.break5d=breakS;t.gain5d=gain5d;
-  tScore=Math.min(tScore,50); // 技術面上限50分
   const pe=price>0&&f.eps>0?price/f.eps:null;
   const avgPE=SECTOR_PE[sector]||18;const peVs=pe?Math.round((pe/avgPE-1)*100):null;
   let vScore=0,vDetail={pe,avgPE,peVs,divYield:fDetail.divYield};
@@ -466,8 +436,9 @@ function scoreStock(id,ydata){
   vScore+=peS;vDetail.peScore=peS;
   const dyS=divYield>=5?8:divYield>=3?6:divYield>=1.5?4:1;vScore+=dyS;vDetail.dyScore=dyS;
   const total=Math.round((fScore+tScore+vScore)*10)/10;
-  const grade=total>=95?"A+":total>=80?"A":total>=65?"B":total>=50?"C":"D";
-  const suggestion=total>=95?"強力買進":total>=80?"強烈建議關注":total>=65?"值得追蹤":total>=50?"中性觀望":"暫不建議";
+  // 【波段模式】總分120，技術面佔80→門檻下移
+  const grade=total>=100?"A+":total>=85?"A":total>=70?"B":total>=55?"C":"D";
+  const suggestion=total>=100?"強力波段買進":total>=85?"建議波段布局":total>=70?"值得追蹤":total>=55?"中性觀望":"暫不建議";
   return{id,name:stock.name,sector,total,fScore:Math.round(fScore*10)/10,tScore:Math.round(tScore*10)/10,vScore:Math.round(vScore*10)/10,grade,suggestion,f,t,fDetail,tDetail,vDetail};
 }
 
@@ -483,9 +454,8 @@ async function loadStocks(){
   for(let i=0;i<total;i+=10){
     const batch=candidates.slice(i,i+10);
     await Promise.all(batch.map(async s=>{
-      const y=await fetchStockData(s.id);
+      const y=await fetchYahoo(s.id);
       priceMap[s.id]=y?.price||0;
-      if(y)fmPriceCache[s.id]=y;  // 快取，評分階段直接複用
     }));
     showProgress(Math.min(i+10,total),total,'抓取股價');
   }
@@ -494,13 +464,11 @@ async function loadStocks(){
   const withCap=candidates.map(s=>({
     ...s,
     price: priceMap[s.id]||0,
-    priceFailed: !priceMap[s.id],
     marketCap: (priceMap[s.id]||0) * (s.shares||0)
-  }));
-  // price>0 依市值降序排前段；price=0 依 shares 保留在後段不直接消失
-  const withPrice=withCap.filter(s=>s.price>0).sort((a,b)=>b.marketCap-a.marketCap);
-  const noPrice=withCap.filter(s=>s.price===0).sort((a,b)=>(b.shares||0)-(a.shares||0));
-  allStocks=[...withPrice,...noPrice].slice(0,100);
+  })).filter(s=>s.price>0);
+
+  withCap.sort((a,b)=>b.marketCap-a.marketCap);
+  allStocks=withCap.slice(0,100);
 
   document.getElementById('stockCount').textContent=`(${allStocks.length})`;
   showToast(`✓ 市值排序完成，前${allStocks.length}大已載入，開始評分…`);
@@ -510,7 +478,7 @@ async function loadStocks(){
   for(let i=0;i<allStocks.length;i++){
     const s=allStocks[i];
     try{
-      const ydata=fmPriceCache[s.id]||await fetchStockData(s.id);
+      const ydata=await fetchYahoo(s.id);
       allScores[s.id]=scoreStock(s.id,ydata);
     }catch(e){allScores[s.id]=scoreStock(s.id,null);}
     showProgress(i+1,allStocks.length,'評分');
@@ -540,7 +508,6 @@ function renderStockList(){
         <div style="display:flex;align-items:center;gap:5px">
           <span style="font-size:9px;color:var(--muted);width:20px">#${rank}</span>
           <span class="s-id">${s.id}</span>
-          ${s.priceFailed?'<span style="font-size:9px;color:#f59e0b" title="取價失敗">⚠</span>':''}
         </div>
         <div class="s-name" style="padding-left:25px">${s.name}</div>
       </div>
@@ -578,8 +545,8 @@ function showDetail(id){
     </div>
     <div class="score-overview">
       <div class="score-card"><div class="val" style="color:${gc}">${sc.total}</div><div class="lbl">綜合 /120</div></div>
-      <div class="score-card"><div class="val" style="color:var(--accent)">${sc.fScore}</div><div class="lbl">基本面 /50</div></div>
-      <div class="score-card"><div class="val" style="color:var(--accent2)">${sc.tScore}</div><div class="lbl">技術面 /50</div></div>
+      <div class="score-card"><div class="val" style="color:var(--accent)">${sc.fScore}</div><div class="lbl">基本面 /20</div></div>
+      <div class="score-card"><div class="val" style="color:var(--accent2)">${sc.tScore}</div><div class="lbl">技術面 /80</div></div>
       <div class="score-card"><div class="val" style="color:var(--warn)">${sc.vScore}</div><div class="lbl">估值面 /20</div></div>
       <div class="score-card"><div class="val" style="color:${gc};font-size:16px;padding-top:6px">${sc.suggestion}</div><div class="lbl">建議</div></div>
     </div>
@@ -612,7 +579,6 @@ function showDetail(id){
         ${metric('MA20/MA60/MA120',`${t.ma20.toFixed(1)} / ${t.ma60.toFixed(1)} / ${t.ma120.toFixed(1)}`,'')}
         ${metric('RSI14',t.rsi.toFixed(1),'',td.rsi)}
         ${metric('MACD Hist',t.macdHist.toFixed(3),'',td.macd)}
-        ${metric('5日漲幅',`${t.gain5d!=null?t.gain5d.toFixed(1):0}%`,'',td.break5d)}
         ${metric('量比(5/20日)',t.volRatio.toFixed(2)+'x','',td.vol)}
         ${metric('6個月漲跌幅',t.trend6m.toFixed(1)+'%','',td.trend)}
         ${metric('52週位置',t.pos52.toFixed(1)+'%','')}
@@ -629,7 +595,7 @@ function showDetail(id){
         ${bar('營收YoY',fd.yoy.toFixed(1),10)}${bar('股利殖利率',fd.div.toFixed(1),10)}
         <div style="margin:10px 0 8px;font-size:10px;color:var(--muted)">技術面</div>
         ${bar('均線多頭',td.ma,20,'#3b82f6')}${bar('RSI',td.rsi,10,'#3b82f6')}
-        ${bar('MACD',td.macd,8,'#3b82f6')}${bar('成交量',td.vol,7,'#3b82f6')}${bar('6M趨勢',td.trend,5,'#3b82f6')}${bar('5日突破',td.break5d||0,8,'#818cf8')}
+        ${bar('MACD',td.macd,8,'#3b82f6')}${bar('成交量',td.vol,7,'#3b82f6')}${bar('6M趨勢',td.trend,5,'#3b82f6')}
         <div style="margin:10px 0 8px;font-size:10px;color:var(--muted)">估值面</div>
         ${bar('PE合理性',vd.peScore,12,'#f59e0b')}${bar('股息吸引力',vd.dyScore,8,'#f59e0b')}
       </div>
@@ -676,7 +642,6 @@ async function runAI(id){
 • 股價：${t.price}元（52週 ${t.high52}/${t.low52}，位置${t.pos52.toFixed(0)}%）
 • MA20/60/120：${t.ma20.toFixed(1)}/${t.ma60.toFixed(1)}/${t.ma120.toFixed(1)}
 • RSI14：${t.rsi.toFixed(1)}  MACD Hist：${t.macdHist.toFixed(3)}
-• 5日漲幅：${t.gain5d!=null?t.gain5d.toFixed(1):0}%（突破加分：${td.break5d||0}）
 • 量比：${t.volRatio.toFixed(2)}x  6M漲跌：${t.trend6m.toFixed(1)}%
 
 ═══ 法人籌碼 ═══
