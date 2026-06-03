@@ -453,6 +453,12 @@ function scoreStock(id,ydata){
   let macdS=0;if(t.macd>0)macdS+=4;if(t.macdHist>0)macdS+=4;tScore+=macdS;tDetail.macd=macdS;
   const volS=t.volRatio>=1.3?7:t.volRatio>=1?5:t.volRatio>=0.7?3:0;tScore+=volS;tDetail.vol=volS;
   const trendS=t.trend6m>=20?5:t.trend6m>=10?4:t.trend6m>=0?3:t.trend6m>=-10?1:0;tScore+=trendS;tDetail.trend=trendS;
+  // 短期突破加分：近5日漲幅（捕捉強勢突破，最高+8分，但不超過技術面上限50）
+  const price5dAgo=closes.length>=6?closes[closes.length-6]:closes[0];
+  const gain5d=price5dAgo>0?(price-price5dAgo)/price5dAgo*100:0;
+  const breakS=gain5d>=9?8:gain5d>=6?6:gain5d>=3?4:gain5d>=1?2:0;
+  tScore+=breakS;tDetail.break5d=breakS;t.gain5d=gain5d;
+  tScore=Math.min(tScore,50); // 技術面上限50分
   const pe=price>0&&f.eps>0?price/f.eps:null;
   const avgPE=SECTOR_PE[sector]||18;const peVs=pe?Math.round((pe/avgPE-1)*100):null;
   let vScore=0,vDetail={pe,avgPE,peVs,divYield:fDetail.divYield};
@@ -606,6 +612,7 @@ function showDetail(id){
         ${metric('MA20/MA60/MA120',`${t.ma20.toFixed(1)} / ${t.ma60.toFixed(1)} / ${t.ma120.toFixed(1)}`,'')}
         ${metric('RSI14',t.rsi.toFixed(1),'',td.rsi)}
         ${metric('MACD Hist',t.macdHist.toFixed(3),'',td.macd)}
+        ${metric('5日漲幅',`${t.gain5d!=null?t.gain5d.toFixed(1):0}%`,'',td.break5d)}
         ${metric('量比(5/20日)',t.volRatio.toFixed(2)+'x','',td.vol)}
         ${metric('6個月漲跌幅',t.trend6m.toFixed(1)+'%','',td.trend)}
         ${metric('52週位置',t.pos52.toFixed(1)+'%','')}
@@ -622,7 +629,7 @@ function showDetail(id){
         ${bar('營收YoY',fd.yoy.toFixed(1),10)}${bar('股利殖利率',fd.div.toFixed(1),10)}
         <div style="margin:10px 0 8px;font-size:10px;color:var(--muted)">技術面</div>
         ${bar('均線多頭',td.ma,20,'#3b82f6')}${bar('RSI',td.rsi,10,'#3b82f6')}
-        ${bar('MACD',td.macd,8,'#3b82f6')}${bar('成交量',td.vol,7,'#3b82f6')}${bar('6M趨勢',td.trend,5,'#3b82f6')}
+        ${bar('MACD',td.macd,8,'#3b82f6')}${bar('成交量',td.vol,7,'#3b82f6')}${bar('6M趨勢',td.trend,5,'#3b82f6')}${bar('5日突破',td.break5d||0,8,'#818cf8')}
         <div style="margin:10px 0 8px;font-size:10px;color:var(--muted)">估值面</div>
         ${bar('PE合理性',vd.peScore,12,'#f59e0b')}${bar('股息吸引力',vd.dyScore,8,'#f59e0b')}
       </div>
@@ -669,6 +676,7 @@ async function runAI(id){
 • 股價：${t.price}元（52週 ${t.high52}/${t.low52}，位置${t.pos52.toFixed(0)}%）
 • MA20/60/120：${t.ma20.toFixed(1)}/${t.ma60.toFixed(1)}/${t.ma120.toFixed(1)}
 • RSI14：${t.rsi.toFixed(1)}  MACD Hist：${t.macdHist.toFixed(3)}
+• 5日漲幅：${t.gain5d!=null?t.gain5d.toFixed(1):0}%（突破加分：${td.break5d||0}）
 • 量比：${t.volRatio.toFixed(2)}x  6M漲跌：${t.trend6m.toFixed(1)}%
 
 ═══ 法人籌碼 ═══
