@@ -135,7 +135,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
         <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       <h2>台股中長期選股儀表板</h2>
-      <p style="max-width:400px;line-height:1.8">波段選股模式 × FinMind資料 × 基本面20 × 技術面80 × 估值面20 × NVIDIA AI 分析</p>
+      <p style="max-width:400px;line-height:1.8">平衡持股模式（半年）× FinMind資料 × 基本面35 × 技術面65 × 估值面20 × NVIDIA AI 分析</p>
       <div class="step-cards">
         <div class="step-card"><div class="step-num">1</div><div class="step-text">點「載入前100大」</div></div>
         <div class="step-card"><div class="step-num">2</div><div class="step-text">依市值自動排序</div></div>
@@ -408,37 +408,46 @@ function scoreStock(id,ydata){
     t.pos52=high52!==low52?(price-low52)/(high52-low52)*100:50;
     if(closes.length>=120)t.trend6m=(price-closes[closes.length-121])/closes[closes.length-121]*100;
   }
-  // 【波段模式】基本面 20分（僅作為底層篩選，不主導評分）
+  // 【平衡模式】基本面 35分：防雷為主，確保獲利能力
   let fScore=0,fDetail={};
-  const epsS=Math.min(Math.max(f.eps/10*6,0),6);fScore+=epsS;fDetail.eps=epsS;
-  const roeS=Math.min(Math.max(f.roe/20*6,0),6);fScore+=roeS;fDetail.roe=roeS;
-  const yoyS=f.yoy>0?Math.min(f.yoy/20*4,4):0;fScore+=yoyS;fDetail.yoy=yoyS;
+  // EPS 10分：有獲利才有支撐，虧損股重扣
+  const epsS=f.eps<=0?0:Math.min(Math.max(f.eps/10*10,1),10);fScore+=epsS;fDetail.eps=epsS;
+  // ROE 10分：資本效率，>=15%得滿分
+  const roeS=Math.min(Math.max(f.roe/20*10,0),10);fScore+=roeS;fDetail.roe=roeS;
+  // 營收年增率 10分：半年內成長動能支撐股價
+  const yoyS=f.yoy>0?Math.min(f.yoy/20*10,10):0;fScore+=yoyS;fDetail.yoy=yoyS;
+  // 殖利率 5分：半年持有配息意義不大，低權重
   const divYield=price>0&&f.div>0?f.div/price*100:0;
-  const divS=Math.min(divYield/5*4,4);fScore+=divS;fDetail.div=divS;fDetail.divYield=divYield;
-  // 【波段模式】技術面 80分
+  const divS=Math.min(divYield/5*5,5);fScore+=divS;fDetail.div=divS;fDetail.divYield=divYield;
+  // 【平衡模式】技術面 65分：確認中期趨勢方向
   let tScore=0,tDetail={};
-  // 均線多頭 25分
-  let maS=0;if(price>0&&t.ma5>0){if(price>t.ma5)maS+=7;if(t.ma5>t.ma20)maS+=7;if(t.ma20>t.ma60)maS+=6;if(t.ma60>t.ma120&&t.ma120>0)maS+=5;}
+  // 均線多頭 25分：MA20>MA60>MA120 是半年趨勢最可靠訊號
+  let maS=0;if(price>0&&t.ma5>0){
+    if(price>t.ma20)maS+=8;       // 股價站上月線
+    if(t.ma20>t.ma60)maS+=9;      // 月線>季線：中期趨勢向上
+    if(t.ma60>t.ma120&&t.ma120>0)maS+=8; // 季線>半年線：長趨勢確認
+  }
   tScore+=maS;tDetail.ma=maS;
-  // RSI 20分：波段最重要指標，50~70得高分，>80扣重分
-  const rsiS=t.rsi>=55&&t.rsi<=70?20:t.rsi>=50&&t.rsi<55?16:t.rsi>70&&t.rsi<=78?12:t.rsi>78?4:t.rsi>=40?10:t.rsi>=30?6:2;
+  // RSI 20分：40~65 是半年布局最佳區間（不過熱不過冷）
+  const rsiS=t.rsi>=40&&t.rsi<=65?20:t.rsi>65&&t.rsi<=72?14:t.rsi>=35&&t.rsi<40?12:t.rsi>72&&t.rsi<=80?6:t.rsi>80?2:2;
   tScore+=rsiS;tDetail.rsi=rsiS;
-  // MACD 20分：動能轉折
-  let macdS=0;if(t.macd>0)macdS+=10;if(t.macdHist>0)macdS+=10;tScore+=macdS;tDetail.macd=macdS;
-  // 成交量 10分：突破要有量
-  const volS=t.volRatio>=1.5?10:t.volRatio>=1.3?8:t.volRatio>=1?6:t.volRatio>=0.7?3:0;tScore+=volS;tDetail.vol=volS;
-  // 6M趨勢 5分
-  const trendS=t.trend6m>=20?5:t.trend6m>=10?4:t.trend6m>=0?3:t.trend6m>=-10?1:0;tScore+=trendS;tDetail.trend=trendS;
+  // MACD 12分：動能方向確認
+  let macdS=0;if(t.macd>0)macdS+=6;if(t.macdHist>0)macdS+=6;tScore+=macdS;tDetail.macd=macdS;
+  // 成交量 8分：有量才有持續上漲動能
+  const volS=t.volRatio>=1.5?8:t.volRatio>=1.3?6:t.volRatio>=1?4:t.volRatio>=0.7?2:0;tScore+=volS;tDetail.vol=volS;
+  // 估值面 20分：避免追高，確保有安全邊際
   const pe=price>0&&f.eps>0?price/f.eps:null;
   const avgPE=SECTOR_PE[sector]||18;const peVs=pe?Math.round((pe/avgPE-1)*100):null;
   let vScore=0,vDetail={pe,avgPE,peVs,divYield:fDetail.divYield};
-  let peS=5;if(pe!==null){if(peVs<=-30)peS=12;else if(peVs<=-10)peS=9;else if(peVs<=10)peS=6;else if(peVs<=30)peS=3;else peS=0;}
+  // PE vs 產業均值 12分：低於均值代表還有上漲空間
+  let peS=0;if(pe!==null){if(peVs<=-30)peS=12;else if(peVs<=-10)peS=10;else if(peVs<=10)peS=7;else if(peVs<=30)peS=3;else peS=0;}
   vScore+=peS;vDetail.peScore=peS;
-  const dyS=divYield>=5?8:divYield>=3?6:divYield>=1.5?4:1;vScore+=dyS;vDetail.dyScore=dyS;
+  // 殖利率 8分：提高權重，配息提供持有期間保護
+  const dyS=divYield>=5?8:divYield>=3.5?6:divYield>=2?4:divYield>=1?2:0;vScore+=dyS;vDetail.dyScore=dyS;
   const total=Math.round((fScore+tScore+vScore)*10)/10;
-  // 【波段模式】總分120，技術面佔80→門檻下移
-  const grade=total>=100?"A+":total>=85?"A":total>=70?"B":total>=55?"C":"D";
-  const suggestion=total>=100?"強力波段買進":total>=85?"建議波段布局":total>=70?"值得追蹤":total>=55?"中性觀望":"暫不建議";
+  // 【平衡模式】總分120，A+需要基本面+技術面雙強
+  const grade=total>=95?"A+":total>=80?"A":total>=65?"B":total>=50?"C":"D";
+  const suggestion=total>=95?"強烈建議布局（半年）":total>=80?"建議買進觀察":total>=65?"值得追蹤":total>=50?"中性觀望":"暫不建議";
   return{id,name:stock.name,sector,total,fScore:Math.round(fScore*10)/10,tScore:Math.round(tScore*10)/10,vScore:Math.round(vScore*10)/10,grade,suggestion,f,t,fDetail,tDetail,vDetail};
 }
 
@@ -545,8 +554,8 @@ function showDetail(id){
     </div>
     <div class="score-overview">
       <div class="score-card"><div class="val" style="color:${gc}">${sc.total}</div><div class="lbl">綜合 /120</div></div>
-      <div class="score-card"><div class="val" style="color:var(--accent)">${sc.fScore}</div><div class="lbl">基本面 /20</div></div>
-      <div class="score-card"><div class="val" style="color:var(--accent2)">${sc.tScore}</div><div class="lbl">技術面 /80</div></div>
+      <div class="score-card"><div class="val" style="color:var(--accent)">${sc.fScore}</div><div class="lbl">基本面 /35</div></div>
+      <div class="score-card"><div class="val" style="color:var(--accent2)">${sc.tScore}</div><div class="lbl">技術面 /65</div></div>
       <div class="score-card"><div class="val" style="color:var(--warn)">${sc.vScore}</div><div class="lbl">估值面 /20</div></div>
       <div class="score-card"><div class="val" style="color:${gc};font-size:16px;padding-top:6px">${sc.suggestion}</div><div class="lbl">建議</div></div>
     </div>
@@ -601,6 +610,10 @@ function showDetail(id){
       </div>
     </div>
     <div class="disclaimer">⚠ 資料來源：Yahoo Finance / FinMind / 公開財報，僅供參考，不構成投資建議。</div>
+    <div style="margin:12px 16px 0;padding:10px 14px;background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.2);border-radius:8px;font-size:11px;color:#fbbf24;line-height:2">
+      📌 半年持股出場參考：
+      <span style="color:var(--muted)">停利 — 漲幅達 20～30% 可分批出場　｜　停損 — 跌破 MA60 且 RSI &lt; 40 建議出場　｜　到期 — 持滿6個月重新評分決定去留</span>
+    </div>
   `;
 
   // 載入法人資料
