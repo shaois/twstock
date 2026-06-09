@@ -595,6 +595,14 @@ async function loadStocks(){
         if(fmF.yoy!==undefined)FUNDAMENTAL[s.id].yoy=fmF.yoy;
       }
       allScores[s.id]=scoreStock(s.id,ydata);
+      // 基本面更新後，若目前正在看這支股票，靜默更新分數卡（不重建DOM，避免法人閃掉）
+      if(currentStock===s.id){
+        const sc2=allScores[s.id];
+        const el=document.getElementById('scoreTotal');if(el)el.textContent=sc2.total;
+        const ef=document.getElementById('scoreFund');if(ef)ef.textContent=sc2.fScore;
+        const et=document.getElementById('scoreTech');if(et)et.textContent=sc2.tScore;
+        const ev=document.getElementById('scoreVal');if(ev)ev.textContent=sc2.vScore;
+      }
     }catch(e){allScores[s.id]=scoreStock(s.id,null);}
     showProgress(i+1,allStocks.length,'評分');
     renderStockList();
@@ -660,10 +668,10 @@ function showDetail(id){
       </div>
     </div>
     <div class="score-overview">
-      <div class="score-card"><div class="val" style="color:${gc}">${sc.total}</div><div class="lbl">綜合 /120</div></div>
-      <div class="score-card"><div class="val" style="color:var(--accent)">${sc.fScore}</div><div class="lbl">基本面 /35</div></div>
-      <div class="score-card"><div class="val" style="color:var(--accent2)">${sc.tScore}</div><div class="lbl">技術面 /65</div></div>
-      <div class="score-card"><div class="val" style="color:var(--warn)">${sc.vScore}</div><div class="lbl">估值面 /20</div></div>
+      <div class="score-card"><div class="val" id="scoreTotal" style="color:${gc}">${sc.total}</div><div class="lbl">綜合 /120</div></div>
+      <div class="score-card"><div class="val" id="scoreFund" style="color:var(--accent)">${sc.fScore}</div><div class="lbl">基本面 /35</div></div>
+      <div class="score-card"><div class="val" id="scoreTech" style="color:var(--accent2)">${sc.tScore}</div><div class="lbl">技術面 /65</div></div>
+      <div class="score-card"><div class="val" id="scoreVal" style="color:var(--warn)">${sc.vScore}</div><div class="lbl">估值面 /20</div></div>
       <div class="score-card"><div class="val" style="color:${gc};font-size:16px;padding-top:6px">${sc.suggestion}</div><div class="lbl">建議</div></div>
     </div>
     <div id="aiPanel" style="display:none" class="ai-panel">
