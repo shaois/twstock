@@ -429,7 +429,27 @@ function scoreStock(id,ydata){
   }
   tScore+=maS;tDetail.ma=maS;
   // RSI 20分：40~65 是半年布局最佳區間（不過熱不過冷）
-  const rsiS=t.rsi>=40&&t.rsi<=65?20:t.rsi>65&&t.rsi<=72?14:t.rsi>=35&&t.rsi<40?12:t.rsi>72&&t.rsi<=80?6:t.rsi>80?2:2;
+  // RSI 漸進式評分（滿分20，無硬切邊界）
+  // 最佳區間 40~65，往兩端平滑遞減
+  let rsiS;
+  const rsi=t.rsi;
+  if(rsi>=40&&rsi<=65){
+    // 40~65 核心區：以 52.5 為最高點，兩側平滑遞減，最低得 14 分
+    rsiS=20-Math.abs(rsi-52.5)/12.5*6;
+  }else if(rsi>65&&rsi<=80){
+    // 65~80 偏熱：從 14 線性降到 3
+    rsiS=14-(rsi-65)/15*11;
+  }else if(rsi>80){
+    // >80 嚴重過熱
+    rsiS=2;
+  }else if(rsi>=35&&rsi<40){
+    // 35~40 偏弱：從 12 降到 8
+    rsiS=12-(40-rsi)/5*4;
+  }else{
+    // <35 趨勢可能已壞
+    rsiS=2;
+  }
+  rsiS=Math.round(Math.max(2,Math.min(20,rsiS))*10)/10;
   tScore+=rsiS;tDetail.rsi=rsiS;
   // MACD 12分：動能方向確認
   let macdS=0;if(t.macd>0)macdS+=6;if(t.macdHist>0)macdS+=6;tScore+=macdS;tDetail.macd=macdS;
