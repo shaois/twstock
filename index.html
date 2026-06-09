@@ -729,22 +729,24 @@ function showDetail(id){
       📌 半年持股出場參考：
       <span style="color:var(--muted)">停利 — 漲幅達 20～30% 可分批出場　｜　停損 — 跌破 MA60 且 RSI &lt; 40 建議出場　｜　到期 — 持滿6個月重新評分決定去留</span>
     </div>
-    <div style="margin:12px 16px 0;padding:10px 14px;background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.2);border-radius:8px;font-size:11px;color:#fbbf24;line-height:2">
-      📌 半年持股出場參考：
-      <span style="color:var(--muted)">停利 — 漲幅達 20～30% 可分批出場　｜　停損 — 跌破 MA60 且 RSI &lt; 40 建議出場　｜　到期 — 持滿6個月重新評分決定去留</span>
-    </div>
   `;
 
   // 載入法人資料
   const instPanel=document.getElementById('instPanel');
   instPanel.style.display='block';
   fetchInstitutional(id).then(inst=>{
-    if(!inst){instPanel.style.display='none';return;}
-    document.getElementById('instDate').textContent=inst.date;
+    // 確認使用者還在看同一支股票才更新，避免異步競態問題
+    if(currentStock!==id)return;
+    const panel=document.getElementById('instPanel');
+    if(!panel)return;
+    if(!inst){panel.style.display='none';return;}
+    panel.style.display='block';
+    const dateEl=document.getElementById('instDate');
+    if(dateEl)dateEl.textContent=inst.date;
     function colorNum(v){const color=v>0?'var(--green)':v<0?'var(--red)':'var(--muted)';const sign=v>0?'+':'';return`<span style="color:${color}">${sign}${v.toLocaleString()}</span>`;}
-    document.getElementById('inst_foreign').innerHTML=colorNum(inst.foreign);
-    document.getElementById('inst_trust').innerHTML=colorNum(inst.trust);
-    document.getElementById('inst_total').innerHTML=colorNum(inst.total);
+    const fe=document.getElementById('inst_foreign');if(fe)fe.innerHTML=colorNum(inst.foreign);
+    const te=document.getElementById('inst_trust');if(te)te.innerHTML=colorNum(inst.trust);
+    const tot=document.getElementById('inst_total');if(tot)tot.innerHTML=colorNum(inst.total);
   });
 }
 
