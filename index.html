@@ -528,6 +528,9 @@ function scoreStock(id,ydata){
   let macdS=0;if(t.macd>0)macdS+=6;if(t.macdHist>0)macdS+=6;tScore+=macdS;tDetail.macd=macdS;
   // 成交量 8分：有量才有持續上漲動能
   const volS=t.volRatio>=1.5?8:t.volRatio>=1.3?6:t.volRatio>=1?4:t.volRatio>=0.7?2:0;tScore+=volS;tDetail.vol=volS;
+  // 6M趨勢 5分
+  const trendS=t.trend6m>=20?5:t.trend6m>=10?4:t.trend6m>=0?3:t.trend6m>=-10?1:0;
+  tScore+=trendS;tDetail.trend=trendS;
   // 估值面 20分：避免追高，確保有安全邊際
   const pe=price>0&&f.eps>0?price/f.eps:null;
   const avgPE=SECTOR_PE[sector]||18;const peVs=pe?Math.round((pe/avgPE-1)*100):null;
