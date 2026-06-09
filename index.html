@@ -218,6 +218,7 @@ const CANDIDATES = [
   {id:"2301",name:"光寶科",sector:"電子製造",shares:3070000},
   {id:"2354",name:"鴻準",sector:"機殼",shares:1100000},
   {id:"2324",name:"仁寶",sector:"電子製造",shares:8640000},
+  {id:"3231",name:"緯創",sector:"電子製造",shares:8680000},
   {id:"2325",name:"矽品",sector:"半導體",shares:4750000},
   {id:"2498",name:"宏達電",sector:"電腦",shares:1350000},
   {id:"2603",name:"長榮",sector:"航運",shares:13780000},
@@ -307,7 +308,7 @@ const FUNDAMENTAL = {
   "3034":{eps:45.0,roe:30.5,yoy:18.5,div:25.0},"2356":{eps:3.5,roe:9.2,yoy:5.5,div:2.0},
   "2409":{eps:0.8,roe:4.5,yoy:-5.2,div:0.0},"3481":{eps:0.5,roe:3.2,yoy:-8.5,div:0.0},
   "2301":{eps:4.5,roe:11.2,yoy:6.5,div:3.0},"2354":{eps:8.5,roe:15.5,yoy:5.2,div:6.0},
-  "2324":{eps:2.8,roe:8.5,yoy:3.2,div:2.0},"2603":{eps:12.5,roe:18.5,yoy:-25.0,div:8.0},
+  "2324":{eps:2.8,roe:8.5,yoy:3.2,div:2.0},"3231":{eps:8.2,roe:15.5,yoy:28.5,div:4.5},"2603":{eps:12.5,roe:18.5,yoy:-25.0,div:8.0},
   "2609":{eps:8.5,roe:15.2,yoy:-30.0,div:5.0},"2615":{eps:6.5,roe:12.5,yoy:-22.0,div:4.0},
   "2618":{eps:5.2,roe:11.5,yoy:8.5,div:1.5},"1101":{eps:1.8,roe:6.5,yoy:-2.5,div:1.5},
   "1590":{eps:45.0,roe:25.5,yoy:12.5,div:20.0},"6669":{eps:65.0,roe:35.2,yoy:28.5,div:30.0},
@@ -348,8 +349,74 @@ async function fetchYahoo(stockId){
     const q=result.indicators?.quote?.[0]||{};
     const closes=(q.close||[]).filter(c=>c!=null);
     const volumes=(q.volume||[]).filter(v=>v!=null);
-    return{closes,volumes,price:meta.regularMarketPrice||closes[closes.length-1]||0,high52:meta.fiftyTwoWeekHigh||0,low52:meta.fiftyTwoWeekLow||0};
+    return{closes,volumes,price:meta.regularMarketPrice||closes[closes.length-1]||0,high52:meta.fiftyTwoWeekHigh||0,low52:meta.fiftyTwoWeekLow||0,source:'yahoo'};
   }catch(e){return null;}
+}
+
+// ── FinMind 基本面自動抓取 ──────────────────────────────────────
+const fmFundamentalCache={};
+async function fetchFinMindFundamental(stockId){
+  if(fmFundamentalCache[stockId])return fmFundamentalCache[stockId];
+  try{
+    const [fsRes,revRes]=await Promise.all([
+      fetch(`${PROXY}/api/finmind/fundamental/${stockId}?token=${FINMIND_TOKEN}`),
+      fetch(`${PROXY}/api/finmind/revenue/${stockId}?token=${FINMIND_TOKEN}`)
+    ]);
+    const fsData=await fsRes.json();
+    const revData=await revRes.json();
+    let eps=0;
+    if(fsData.status===200&&fsData.data?.length){
+      const epsRows=fsData.data.filter(r=>r.type==='EPS').sort((a,b)=>b.date.localeCompare(a.date)).slice(0,4);
+      eps=Math.round(epsRows.reduce((s,r)=>s+(r.value||0),0)*100)/100;
+    }
+    let roe=0;
+    if(fsData.status===200&&fsData.data?.length){
+      const roeRow=fsData.data.filter(r=>r.type==='ROE').sort((a,b)=>b.date.localeCompare(a.date))[0];
+      if(roeRow)roe=Math.round((roeRow.value||0)*100)/100;
+    }
+    let yoy=0;
+    if(revData.status===200&&revData.data?.length){
+      const revRows=revData.data.sort((a,b)=>b.date.localeCompare(a.date));
+      if(revRows.length>=13){
+        const thisMonth=revRows[0].revenue||0;
+        const lastYear=revRows[12].revenue||0;
+        yoy=lastYear>0?Math.round((thisMonth-lastYear)/lastYear*1000)/10:0;
+      }
+    }
+    const result={eps,roe,yoy,auto:true};
+    fmFundamentalCache[stockId]=result;
+    return result;
+  }catch(e){return null;}
+}
+
+// ── FinMind Price（主要來源）───────────────────────────────────
+const fmPriceCache={};
+async function fetchFinMindPrice(stockId){
+  if(fmPriceCache[stockId])return fmPriceCache[stockId];
+  try{
+    const start=new Date(Date.now()-270*24*60*60*1000).toISOString().slice(0,10);
+    const url=`${PROXY}/api/finmind/price/${stockId}?token=${FINMIND_TOKEN}&start_date=${start}`;
+    const r=await fetch(url);
+    if(!r.ok)return null;
+    const d=await r.json();
+    if(d.status!==200||!d.data?.length)return null;
+    const rows=d.data.filter(x=>x.close!=null).sort((a,b)=>a.date.localeCompare(b.date));
+    const closes=rows.map(x=>x.close);
+    const volumes=rows.map(x=>x.Trading_Volume||0);
+    const price=closes[closes.length-1]||0;
+    const high52=Math.max(...closes);
+    const low52=Math.min(...closes);
+    const result={closes,volumes,price,high52,low52,source:'finmind'};
+    fmPriceCache[stockId]=result;
+    return result;
+  }catch(e){return null;}
+}
+
+// ── 統一抓價入口：FinMind 優先，失敗才 fallback Yahoo ──────────
+async function fetchStockData(stockId){
+  const fm=await fetchFinMindPrice(stockId);
+  if(fm)return fm;
+  return await fetchYahoo(stockId);
 }
 
 // ── FinMind Institutional ─────────────────────────────────────
@@ -483,8 +550,9 @@ async function loadStocks(){
   for(let i=0;i<total;i+=10){
     const batch=candidates.slice(i,i+10);
     await Promise.all(batch.map(async s=>{
-      const y=await fetchYahoo(s.id);
+      const y=await fetchStockData(s.id);
       priceMap[s.id]=y?.price||0;
+      if(y)fmPriceCache[s.id]=y;
     }));
     showProgress(Math.min(i+10,total),total,'抓取股價');
   }
@@ -493,11 +561,12 @@ async function loadStocks(){
   const withCap=candidates.map(s=>({
     ...s,
     price: priceMap[s.id]||0,
+    priceFailed: !priceMap[s.id],
     marketCap: (priceMap[s.id]||0) * (s.shares||0)
-  })).filter(s=>s.price>0);
-
-  withCap.sort((a,b)=>b.marketCap-a.marketCap);
-  allStocks=withCap.slice(0,100);
+  }));
+  const withPrice=withCap.filter(s=>s.price>0).sort((a,b)=>b.marketCap-a.marketCap);
+  const noPrice=withCap.filter(s=>s.price===0).sort((a,b)=>(b.shares||0)-(a.shares||0));
+  allStocks=[...withPrice,...noPrice].slice(0,100);
 
   document.getElementById('stockCount').textContent=`(${allStocks.length})`;
   showToast(`✓ 市值排序完成，前${allStocks.length}大已載入，開始評分…`);
@@ -507,7 +576,15 @@ async function loadStocks(){
   for(let i=0;i<allStocks.length;i++){
     const s=allStocks[i];
     try{
-      const ydata=await fetchYahoo(s.id);
+      const ydata=fmPriceCache[s.id]||await fetchStockData(s.id);
+      // 自動抓 FinMind 基本面，更新靜態資料
+      const fmF=await fetchFinMindFundamental(s.id);
+      if(fmF&&fmF.eps!==0){
+        if(!FUNDAMENTAL[s.id])FUNDAMENTAL[s.id]={};
+        if(fmF.eps)FUNDAMENTAL[s.id].eps=fmF.eps;
+        if(fmF.roe)FUNDAMENTAL[s.id].roe=fmF.roe;
+        if(fmF.yoy!==undefined)FUNDAMENTAL[s.id].yoy=fmF.yoy;
+      }
       allScores[s.id]=scoreStock(s.id,ydata);
     }catch(e){allScores[s.id]=scoreStock(s.id,null);}
     showProgress(i+1,allStocks.length,'評分');
@@ -537,6 +614,7 @@ function renderStockList(){
         <div style="display:flex;align-items:center;gap:5px">
           <span style="font-size:9px;color:var(--muted);width:20px">#${rank}</span>
           <span class="s-id">${s.id}</span>
+          ${s.priceFailed?'<span style="font-size:9px;color:#f59e0b" title="取價失敗">⚠</span>':''}
         </div>
         <div class="s-name" style="padding-left:25px">${s.name}</div>
       </div>
@@ -630,6 +708,10 @@ function showDetail(id){
       </div>
     </div>
     <div class="disclaimer">⚠ 資料來源：Yahoo Finance / FinMind / 公開財報，僅供參考，不構成投資建議。</div>
+    <div style="margin:12px 16px 0;padding:10px 14px;background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.2);border-radius:8px;font-size:11px;color:#fbbf24;line-height:2">
+      📌 半年持股出場參考：
+      <span style="color:var(--muted)">停利 — 漲幅達 20～30% 可分批出場　｜　停損 — 跌破 MA60 且 RSI &lt; 40 建議出場　｜　到期 — 持滿6個月重新評分決定去留</span>
+    </div>
     <div style="margin:12px 16px 0;padding:10px 14px;background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.2);border-radius:8px;font-size:11px;color:#fbbf24;line-height:2">
       📌 半年持股出場參考：
       <span style="color:var(--muted)">停利 — 漲幅達 20～30% 可分批出場　｜　停損 — 跌破 MA60 且 RSI &lt; 40 建議出場　｜　到期 — 持滿6個月重新評分決定去留</span>
