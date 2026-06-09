@@ -378,9 +378,15 @@ async function fetchFinMindFundamental(stockId){
     if(revData.status===200&&revData.data?.length){
       const revRows=revData.data.sort((a,b)=>b.date.localeCompare(a.date));
       if(revRows.length>=13){
+        // 足夠資料：當月 vs 去年同月 YoY
         const thisMonth=revRows[0].revenue||0;
         const lastYear=revRows[12].revenue||0;
         yoy=lastYear>0?Math.round((thisMonth-lastYear)/lastYear*1000)/10:0;
+      } else if(revRows.length>=2){
+        // 資料不足13筆：用最近3個月平均 vs 再前3個月平均，估算趨勢
+        const recent=revRows.slice(0,3).reduce((s,r)=>s+(r.revenue||0),0)/Math.min(3,revRows.length);
+        const prev=revRows.slice(3,6).reduce((s,r)=>s+(r.revenue||0),0)/Math.min(3,Math.max(0,revRows.length-3));
+        yoy=prev>0?Math.round((recent-prev)/prev*1000)/10:0;
       }
     }
     const result={eps,roe,yoy,auto:true};
