@@ -678,17 +678,7 @@ function showDetail(id){
       <div class="ai-header"><div class="panel-title" style="margin:0">AI 中長期分析</div><span class="ai-badge">llama-3.3-70b · NVIDIA NIM</span></div>
       <div id="aiContent" class="ai-content"></div>
     </div>
-    <div id="instPanel" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:20px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <div class="panel-title" style="margin:0">法人籌碼（最新交易日）</div>
-        <span style="font-size:10px;color:var(--muted)" id="instDate"></span>
-      </div>
-      <div class="inst-grid">
-        <div class="inst-card"><div class="inst-lbl">外資買賣超</div><div class="inst-val" id="inst_foreign">載入中…</div><div style="font-size:9px;color:var(--muted)">張</div></div>
-        <div class="inst-card"><div class="inst-lbl">投信買賣超</div><div class="inst-val" id="inst_trust">載入中…</div><div style="font-size:9px;color:var(--muted)">張</div></div>
-        <div class="inst-card"><div class="inst-lbl">三大法人合計</div><div class="inst-val" id="inst_total">載入中…</div><div style="font-size:9px;color:var(--muted)">張</div></div>
-      </div>
-    </div>
+
     <div class="detail-grid">
       <div class="panel"><div class="panel-title">基本面指標</div>
         ${metric('EPS（元）',f.eps,'',fd.eps.toFixed(1))}
@@ -731,16 +721,23 @@ function showDetail(id){
     </div>
   `;
 
-  // 載入法人資料
-  const instPanel=document.getElementById('instPanel');
+  // 法人籌碼：動態插入到 detail 上方（在 innerHTML 外，避免被覆蓋）
+  const detailEl=document.getElementById('stockDetail');
+  let instPanel=document.getElementById('instPanel');
+  if(!instPanel){
+    instPanel=document.createElement('div');
+    instPanel.id='instPanel';
+    instPanel.style.cssText='background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:20px';
+    detailEl.insertBefore(instPanel,detailEl.firstChild);
+  }
+  instPanel.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div class="panel-title" style="margin:0">法人籌碼（最新交易日）</div><div id="instDate" style="font-size:11px;color:var(--muted)">載入中…</div></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px"><div class="inst-card"><div class="inst-lbl">外資買賣超</div><div class="inst-val" id="inst_foreign">…</div><div style="font-size:9px;color:var(--muted)">張</div></div><div class="inst-card"><div class="inst-lbl">投信買賣超</div><div class="inst-val" id="inst_trust">…</div><div style="font-size:9px;color:var(--muted)">張</div></div><div class="inst-card"><div class="inst-lbl">三大法人合計</div><div class="inst-val" id="inst_total">…</div><div style="font-size:9px;color:var(--muted)">張</div></div></div>';
   instPanel.style.display='block';
+
   fetchInstitutional(id).then(inst=>{
-    // 確認使用者還在看同一支股票才更新，避免異步競態問題
     if(currentStock!==id)return;
     const panel=document.getElementById('instPanel');
     if(!panel)return;
     if(!inst){panel.style.display='none';return;}
-    panel.style.display='block';
     const dateEl=document.getElementById('instDate');
     if(dateEl)dateEl.textContent=inst.date;
     function colorNum(v){const color=v>0?'var(--green)':v<0?'var(--red)':'var(--muted)';const sign=v>0?'+':'';return`<span style="color:${color}">${sign}${v.toLocaleString()}</span>`;}
