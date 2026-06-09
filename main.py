@@ -185,6 +185,47 @@ async def yahoo_proxy(stock_id: str, range: str = "1y"):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/finmind/fundamental/{stock_id}")
+async def finmind_fundamental_proxy(stock_id: str, token: str = ""):
+    """Proxy FinMind TaiwanStockFinancialStatements for EPS/ROE"""
+    from fastapi.responses import JSONResponse
+    import datetime
+    start_date = (datetime.date.today() - datetime.timedelta(days=540)).strftime("%Y-%m-%d")
+    url = (
+        f"https://api.finmindtrade.com/api/v4/data"
+        f"?dataset=TaiwanStockFinancialStatements"
+        f"&data_id={stock_id}"
+        f"&start_date={start_date}"
+        f"&token={token}"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(url)
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/finmind/revenue/{stock_id}")
+async def finmind_revenue_proxy(stock_id: str, token: str = ""):
+    """Proxy FinMind TaiwanStockMonthRevenue for YoY growth"""
+    from fastapi.responses import JSONResponse
+    import datetime
+    start_date = (datetime.date.today() - datetime.timedelta(days=400)).strftime("%Y-%m-%d")
+    url = (
+        f"https://api.finmindtrade.com/api/v4/data"
+        f"?dataset=TaiwanStockMonthRevenue"
+        f"&data_id={stock_id}"
+        f"&start_date={start_date}"
+        f"&token={token}"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(url)
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/finmind/price/{stock_id}")
 async def finmind_price_proxy(stock_id: str, token: str = "", start_date: str = ""):
     """Proxy FinMind TaiwanStockPrice for technical analysis"""
