@@ -588,13 +588,23 @@ async function loadStocks(){
       const ydata=fmPriceCache[s.id]||await fetchStockData(s.id);
       // 自動抓 FinMind 基本面，更新靜態資料
       const fmF=await fetchFinMindFundamental(s.id);
-      if(fmF&&fmF.eps!==0){
+      if(fmF){
         if(!FUNDAMENTAL[s.id])FUNDAMENTAL[s.id]={};
-        if(fmF.eps)FUNDAMENTAL[s.id].eps=fmF.eps;
-        if(fmF.roe)FUNDAMENTAL[s.id].roe=fmF.roe;
-        if(fmF.yoy!==undefined)FUNDAMENTAL[s.id].yoy=fmF.yoy;
+        // 修正：eps/roe 只要有值（含0）就更新，避免漏更新邊界值
+        if(fmF.eps!=null&&fmF.eps!==0)FUNDAMENTAL[s.id].eps=fmF.eps;
+        if(fmF.roe!=null)FUNDAMENTAL[s.id].roe=fmF.roe;
+        if(fmF.yoy!=null)FUNDAMENTAL[s.id].yoy=fmF.yoy;
+        // Debug log（開發用，確認數值來源）
+        if(s.id==='2615'){
+          console.log('[2615] FinMind回傳:',JSON.stringify(fmF));
+          console.log('[2615] 更新後FUNDAMENTAL:',JSON.stringify(FUNDAMENTAL['2615']));
+        }
       }
+      // 基本面確定後才算分（避免用到舊靜態資料）
       allScores[s.id]=scoreStock(s.id,ydata);
+      if(s.id==='2615'){
+        console.log('[2615] 最終分數:',allScores['2615']?.total,'基本面:',allScores['2615']?.fScore,'技術面:',allScores['2615']?.tScore,'估值:',allScores['2615']?.vScore);
+      }
       // 基本面更新後，若目前正在看這支股票，靜默更新分數卡（不重建DOM，避免法人閃掉）
       if(currentStock===s.id){
         const sc2=allScores[s.id];
