@@ -1,1 +1,27 @@
+name: Daily FinMind Cache Refresh
 
+on:
+  schedule:
+    # UTC 18:00 = 台灣時間 02:00，週一到週五
+    - cron: '0 18 * * 1-5'
+  workflow_dispatch:  # 允許手動觸發（測試用）
+
+jobs:
+  refresh-cache:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render cache refresh
+        run: |
+          curl -s -X POST \
+            "https://twstock-app.onrender.com/api/admin/refresh-cache?secret=${{ secrets.CRON_SECRET }}" \
+            -o response.json
+          cat response.json
+
+      - name: Check response
+        run: |
+          if grep -q "快取更新已開始" response.json; then
+            echo "✅ 快取更新成功觸發"
+          else
+            echo "❌ 觸發失敗，請檢查"
+            exit 1
+          fi
