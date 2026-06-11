@@ -164,11 +164,14 @@ async def cache_status():
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    html_path = Path(__file__).parent / "static" / "index.html"
-    return HTMLResponse(
-        content=html_path.read_text(encoding="utf-8"),
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
-    )
+    for p in ["static/index.html", "index.html"]:
+        html_path = Path(__file__).parent / p
+        if html_path.exists():
+            return HTMLResponse(
+                content=html_path.read_text(encoding="utf-8"),
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+            )
+    return HTMLResponse("<h1>Frontend not found</h1>", status_code=404)
 
 @app.get("/health")
 async def health():
