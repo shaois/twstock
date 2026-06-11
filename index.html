@@ -372,7 +372,13 @@ async function fetchFinMindFundamental(stockId){
     let roe=0;
     if(fsData.status===200&&fsData.data?.length){
       const roeRow=fsData.data.filter(r=>r.type==='ROE').sort((a,b)=>b.date.localeCompare(a.date))[0];
-      if(roeRow)roe=Math.round((roeRow.value||0)*100)/100;
+      if(roeRow){
+        let roeVal=roeRow.value||0;
+        // FinMind ROE 有時是小數格式(0.285)有時是百分比(28.5)
+        // 絕對值 < 2 且非0 視為小數，乘100轉換
+        if(Math.abs(roeVal)<2&&roeVal!==0)roeVal=roeVal*100;
+        roe=Math.round(roeVal*100)/100;
+      }
     }
     let yoy=0;
     if(revData.status===200&&revData.data?.length){
@@ -389,7 +395,9 @@ async function fetchFinMindFundamental(stockId){
         yoy=prev>0?Math.round((recent-prev)/prev*1000)/10:0;
       }
     }
-    const result={eps,roe,yoy,auto:true};
+    // 品質防呆：eps/roe 同時為0代表API沒回有效資料，保留靜態
+    const lowConfidence=(eps===0&&roe===0);
+    const result={eps,roe,yoy,auto:true,lowConfidence};
     fmFundamentalCache[stockId]=result;
     return result;
   }catch(e){return null;}
@@ -588,17 +596,22 @@ async function loadStocks(){
       const ydata=fmPriceCache[s.id]||await fetchStockData(s.id);
       // 自動抓 FinMind 基本面，更新靜態資料
       const fmF=await fetchFinMindFundamental(s.id);
-      if(fmF){
+      if(fmF&&!fmF.lowConfidence){
         if(!FUNDAMENTAL[s.id])FUNDAMENTAL[s.id]={};
-        // 修正：eps/roe 只要有值（含0）就更新，避免漏更新邊界值
+        // eps/roe 有實際值才覆蓋靜態資料（lowConfidence=true 時整段跳過，保留靜態）
         if(fmF.eps!=null&&fmF.eps!==0)FUNDAMENTAL[s.id].eps=fmF.eps;
-        if(fmF.roe!=null)FUNDAMENTAL[s.id].roe=fmF.roe;
+        if(fmF.roe!=null&&fmF.roe!==0)FUNDAMENTAL[s.id].roe=fmF.roe;
         if(fmF.yoy!=null)FUNDAMENTAL[s.id].yoy=fmF.yoy;
-        // Debug log（開發用，確認數值來源）
+        // Debug log（確認數值來源）
         if(s.id==='2615'){
           console.log('[2615] FinMind回傳:',JSON.stringify(fmF));
           console.log('[2615] 更新後FUNDAMENTAL:',JSON.stringify(FUNDAMENTAL['2615']));
         }
+      } else if(fmF?.lowConfidence){
+        // FinMind沒拿到有效eps/roe，只更新yoy，eps/roe保留靜態資料
+        if(!FUNDAMENTAL[s.id])FUNDAMENTAL[s.id]={};
+        if(fmF.yoy!=null)FUNDAMENTAL[s.id].yoy=fmF.yoy;
+        if(s.id==='2615')console.log('[2615] lowConfidence，保留靜態eps/roe，僅更新yoy:',fmF.yoy);
       }
       // 基本面確定後才算分（避免用到舊靜態資料）
       allScores[s.id]=scoreStock(s.id,ydata);
