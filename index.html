@@ -602,22 +602,20 @@ async function loadStocks(){
         if(fmF.eps!=null&&fmF.eps!==0)FUNDAMENTAL[s.id].eps=fmF.eps;
         if(fmF.roe!=null&&fmF.roe!==0)FUNDAMENTAL[s.id].roe=fmF.roe;
         if(fmF.yoy!=null)FUNDAMENTAL[s.id].yoy=fmF.yoy;
-        // Debug log（確認數值來源）
-        if(s.id==='2615'){
-          console.log('[2615] FinMind回傳:',JSON.stringify(fmF));
-          console.log('[2615] 更新後FUNDAMENTAL:',JSON.stringify(FUNDAMENTAL['2615']));
-        }
+        // Debug log（前20支都印，方便比對FinMind資料品質）
+        console.log(`[FM] ${s.id} ${s.name} eps:${fmF.eps} roe:${fmF.roe} yoy:${fmF.yoy} lowConf:${fmF.lowConfidence}`);
       } else if(fmF?.lowConfidence){
         // FinMind沒拿到有效eps/roe，只更新yoy，eps/roe保留靜態資料
         if(!FUNDAMENTAL[s.id])FUNDAMENTAL[s.id]={};
         if(fmF.yoy!=null)FUNDAMENTAL[s.id].yoy=fmF.yoy;
-        if(s.id==='2615')console.log('[2615] lowConfidence，保留靜態eps/roe，僅更新yoy:',fmF.yoy);
+        console.log(`[FM-LC] ${s.id} ${s.name} eps/roe無效，僅更新yoy:${fmF.yoy}`);
+      } else {
+        console.log(`[FM-NULL] ${s.id} ${s.name} FinMind無回傳，使用靜態資料`);
       }
       // 基本面確定後才算分（避免用到舊靜態資料）
       allScores[s.id]=scoreStock(s.id,ydata);
-      if(s.id==='2615'){
-        console.log('[2615] 最終分數:',allScores['2615']?.total,'基本面:',allScores['2615']?.fScore,'技術面:',allScores['2615']?.tScore,'估值:',allScores['2615']?.vScore);
-      }
+      // 每支都印最終分數，方便比對
+      console.log(`[SCORE] ${s.id} ${s.name} 總:${allScores[s.id]?.total} 基本:${allScores[s.id]?.fScore} 技術:${allScores[s.id]?.tScore} 估值:${allScores[s.id]?.vScore} | eps:${FUNDAMENTAL[s.id]?.eps} roe:${FUNDAMENTAL[s.id]?.roe} yoy:${FUNDAMENTAL[s.id]?.yoy}`);
       // 基本面更新後，若目前正在看這支股票，靜默更新分數卡（不重建DOM，避免法人閃掉）
       if(currentStock===s.id){
         const sc2=allScores[s.id];
