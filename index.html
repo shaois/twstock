@@ -362,6 +362,11 @@ async function fetchFinMindFundamental(stockId){
       fetch(`${PROXY}/api/finmind/fundamental/${stockId}?token=${FINMIND_TOKEN}`),
       fetch(`${PROXY}/api/finmind/revenue/${stockId}?token=${FINMIND_TOKEN}`)
     ]);
+    // 402 = FinMind Token 超過免費額度，直接回 null，保留靜態資料
+    if(fsRes.status===402||revRes.status===402){
+      console.warn(`[FinMind 402] ${stockId} Token超量，使用靜態資料`);
+      return null;
+    }
     const fsData=await fsRes.json();
     const revData=await revRes.json();
     let eps=0;
@@ -411,6 +416,8 @@ async function fetchFinMindPrice(stockId){
     const start=new Date(Date.now()-270*24*60*60*1000).toISOString().slice(0,10);
     const url=`${PROXY}/api/finmind/price/${stockId}?token=${FINMIND_TOKEN}&start_date=${start}`;
     const r=await fetch(url);
+    // 402 = Token超量，不 fallback Yahoo（避免大量 404），直接回 null
+    if(r.status===402){console.warn(`[FinMind Price 402] ${stockId} Token超量`);return null;}
     if(!r.ok)return null;
     const d=await r.json();
     if(d.status!==200||!d.data?.length)return null;
@@ -605,10 +612,11 @@ async function loadStocks(){
         // Debug log（前20支都印，方便比對FinMind資料品質）
         console.log(`[FM] ${s.id} ${s.name} eps:${fmF.eps} roe:${fmF.roe} yoy:${fmF.yoy} lowConf:${fmF.lowConfidence}`);
       } else if(fmF?.lowConfidence){
-        // FinMind沒拿到有效eps/roe，只更新yoy，eps/roe保留靜態資料
+        // FinMind沒拿到有效eps/roe（可能是402超量），整段保留靜態資料
+        // yoy=0 視為無效（402回傳空值），不覆蓋靜態的負值
         if(!FUNDAMENTAL[s.id])FUNDAMENTAL[s.id]={};
-        if(fmF.yoy!=null)FUNDAMENTAL[s.id].yoy=fmF.yoy;
-        console.log(`[FM-LC] ${s.id} ${s.name} eps/roe無效，僅更新yoy:${fmF.yoy}`);
+        if(fmF.yoy!=null&&fmF.yoy!==0)FUNDAMENTAL[s.id].yoy=fmF.yoy;
+        console.log(`[FM-LC] ${s.id} ${s.name} 低信心(可能402)，yoy${fmF.yoy!==0?'更新:'+fmF.yoy:'=0跳過，保留靜態:'+FUNDAMENTAL[s.id]?.yoy}`);
       } else {
         console.log(`[FM-NULL] ${s.id} ${s.name} FinMind無回傳，使用靜態資料`);
       }
