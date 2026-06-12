@@ -511,7 +511,7 @@ async function fetchInstitutional(stockId){
       else if(n==='Investment_Trust')trust+=net;
       else if(n==='Dealer_Self'||n==='Dealer_self'||n==='Dealer_Hedging')dealer+=net;
     }
-    const result={foreign,trust,dealer,total:foreign+trust+dealer,date:latest};
+    const result={foreign:Math.round(foreign/1000),trust:Math.round(trust/1000),dealer:Math.round(dealer/1000),total:Math.round((foreign+trust+dealer)/1000),date:latest};
     instCache[stockId]=result;return result;
   }catch(e){return null;}
 }
