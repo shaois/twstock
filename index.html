@@ -530,7 +530,7 @@ function avg(arr,n){const a=arr.slice(-n);return a.reduce((s,v)=>s+v,0)/a.length
 
 // ── Scoring ───────────────────────────────────────────────────
 function scoreStock(id,ydata){
-  const f=FUNDAMENTAL[id]||{eps:0,roe:0,yoy:0,div:0};
+  const f={eps:0,roe:0,yoy:0,div:0,...(FUNDAMENTAL[id]||{})};
   const stock=STOCK_LIST.find(s=>s.id===id)||{sector:"其他",name:id};
   const sector=stock.sector;
   const closes=ydata?.closes||[];const volumes=ydata?.volumes||[];
