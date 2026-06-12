@@ -4,24 +4,32 @@ on:
   schedule:
     # UTC 18:00 = 台灣時間 02:00，週一到週五
     - cron: '0 18 * * 1-5'
-  workflow_dispatch:  # 允許手動觸發（測試用）
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   refresh-cache:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Render cache refresh
-        run: |
-          curl -s -X POST \
-            "https://twstock-app.onrender.com/api/admin/refresh-cache?secret=${{ secrets.CRON_SECRET }}" \
-            -o response.json
-          cat response.json
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - name: Check response
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Fetch FinMind data
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        run: python fetch_cache.py
+
+      - name: Commit and push cache
         run: |
-          if grep -q "快取更新已開始" response.json; then
-            echo "✅ 快取更新成功觸發"
-          else
-            echo "❌ 觸發失敗，請檢查"
-            exit 1
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add cache/*.json
+          git diff --staged --quiet || git commit -m "chore: update FinMind cache $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
