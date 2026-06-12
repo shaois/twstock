@@ -637,7 +637,7 @@ async function loadStocks(){
     ...s,
     price: priceMap[s.id]||0,
     priceFailed: !priceMap[s.id],
-    marketCap: (priceMap[s.id]||0) * (s.shares||0)
+    marketCap: (priceMap[s.id]||0) * (s.shares||0) * 1000
   }));
   const withPrice=withCap.filter(s=>s.price>0).sort((a,b)=>b.marketCap-a.marketCap);
   const noPrice=withCap.filter(s=>s.price===0).sort((a,b)=>(b.shares||0)-(a.shares||0));
