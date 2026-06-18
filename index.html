@@ -318,6 +318,32 @@ const FUNDAMENTAL = {
   "2049":{eps:22.5,roe:18.5,yoy:8.5,div:10.0},"1476":{eps:28.5,roe:25.5,yoy:5.5,div:15.0},
 };
 
+// ── 除息日函數（資料來自 GitHub 每日快取 cache/exdiv.json，全自動）───────
+
+// 計算距離除息日的天數（負數代表已除息）
+function daysToExDiv(stockId){
+  const ex = ghCache?.exdiv?.[stockId];
+  if(!ex) return null;
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const exDate = new Date(ex.date);
+  return Math.round((exDate - today) / (1000*60*60*24));
+}
+
+// 取得除息警示文字（從 ghCache.exdiv 讀取，每日自動更新）
+function getExDivWarning(stockId){
+  const ex = ghCache?.exdiv?.[stockId];
+  if(!ex) return null;
+  const days = daysToExDiv(stockId);
+  if(days === null) return null;
+  if(days < -30) return null; // 除息超過30天前不顯示
+  if(days < 0) return {text:`已除息 ${ex.div}元（${ex.date}）`, color:'#64748b', icon:'✓'};
+  if(days === 0) return {text:`⚠️ 今日除息 ${ex.div}元`, color:'#ef4444', icon:'🔴'};
+  if(days <= 7) return {text:`⚠️ ${days}天後除息 ${ex.div}元（${ex.date}）`, color:'#ef4444', icon:'🔴'};
+  if(days <= 30) return {text:`📅 ${days}天後除息 ${ex.div}元（${ex.date}）`, color:'#f59e0b', icon:'🟡'};
+  return null;
+}
+
 const SECTOR_PE = {
   "半導體":22,"IC設計":25,"電子製造":15,"電腦":18,"工業電腦":28,"工業自動化":30,
   "電子零組件":20,"光學":35,"機殼":14,"金融":12,"電信":18,"石化":12,"鋼鐵":10,
@@ -360,17 +386,19 @@ let ghCache = {fundamental:null, revenue:null, price:null, loaded:false};
 async function loadGitHubCache(){
   if(ghCache.loaded)return ghCache;
   try{
-    const [f,r,p] = await Promise.all([
+    const [f,r,p,ex] = await Promise.all([
       fetch(`${GH_CACHE_BASE}/fundamental.json?t=${Date.now()}`).then(x=>x.ok?x.json():null).catch(()=>null),
       fetch(`${GH_CACHE_BASE}/revenue.json?t=${Date.now()}`).then(x=>x.ok?x.json():null).catch(()=>null),
       fetch(`${GH_CACHE_BASE}/price.json?t=${Date.now()}`).then(x=>x.ok?x.json():null).catch(()=>null),
+      fetch(`${GH_CACHE_BASE}/exdiv.json?t=${Date.now()}`).then(x=>x.ok?x.json():null).catch(()=>null),
     ]);
     ghCache.fundamental = f?.data || {};
     ghCache.revenue = r?.data || {};
     ghCache.price = p?.data || {};
+    ghCache.exdiv = ex?.data || {};  // 除息資料
     ghCache.savedAt = f?._saved_at || null;
     ghCache.loaded = true;
-    console.log(`[GH Cache] 載入完成 fundamental:${Object.keys(ghCache.fundamental).length} revenue:${Object.keys(ghCache.revenue).length} price:${Object.keys(ghCache.price).length} (${ghCache.savedAt})`);
+    console.log(`[GH Cache] 載入完成 fundamental:${Object.keys(ghCache.fundamental).length} revenue:${Object.keys(ghCache.revenue).length} price:${Object.keys(ghCache.price).length} exdiv:${Object.keys(ghCache.exdiv).length} (${ghCache.savedAt})`);
   }catch(e){
     console.warn('[GH Cache] 載入失敗，將直接使用 FinMind API', e);
     ghCache.fundamental={};ghCache.revenue={};ghCache.price={};ghCache.loaded=true;
@@ -610,7 +638,8 @@ function scoreStock(id,ydata){
   // 【平衡模式】總分120，A+需要基本面+技術面雙強
   const grade=total>=95?"A+":total>=80?"A":total>=65?"B":total>=50?"C":"D";
   const suggestion=total>=95?"強烈建議布局（半年）":total>=80?"建議買進觀察":total>=65?"值得追蹤":total>=50?"中性觀望":"暫不建議";
-  return{id,name:stock.name,sector,total,fScore:Math.round(fScore*10)/10,tScore:Math.round(tScore*10)/10,vScore:Math.round(vScore*10)/10,grade,suggestion,f,t,fDetail,tDetail,vDetail};
+  const exDivWarning=getExDivWarning(id);
+  return{id,name:stock.name,sector,total,fScore:Math.round(fScore*10)/10,tScore:Math.round(tScore*10)/10,vScore:Math.round(vScore*10)/10,grade,suggestion,exDivWarning,f,t,fDetail,tDetail,vDetail};
 }
 
 // ── Load & Sort by Market Cap ─────────────────────────────────
@@ -754,6 +783,14 @@ function showDetail(id){
       <div class="score-card"><div class="val" id="scoreVal" style="color:var(--warn)">${sc.vScore}</div><div class="lbl">估值面 /20</div></div>
       <div class="score-card"><div class="val" style="color:${gc};font-size:16px;padding-top:6px">${sc.suggestion}</div><div class="lbl">建議</div></div>
     </div>
+    ${sc.exDivWarning ? `<div style="margin:-10px 0 18px;padding:11px 16px;background:${sc.exDivWarning.color==='#ef4444'?'rgba(239,68,68,0.12)':sc.exDivWarning.color==='#f59e0b'?'rgba(245,158,11,0.1)':'rgba(100,116,139,0.1)'};border:1px solid ${sc.exDivWarning.color};border-radius:8px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:18px">${sc.exDivWarning.icon}</span>
+      <div>
+        <div style="font-size:13px;font-weight:600;color:${sc.exDivWarning.color}">${sc.exDivWarning.text}</div>
+        ${daysToExDiv(sc.id)!==null&&daysToExDiv(sc.id)>=0&&daysToExDiv(sc.id)<=30?'<div style="font-size:11px;color:var(--muted);margin-top:3px">除息後股價將直接下調，請確認歷年填息能力再決定是否於除息前買入</div>':''}
+        ${daysToExDiv(sc.id)!==null&&daysToExDiv(sc.id)<0?'<div style="font-size:11px;color:var(--muted);margin-top:3px">目前股價已反映除息，請留意填息進度</div>':''}
+      </div>
+    </div>` : ''}
     <div id="aiPanel" style="display:none" class="ai-panel">
       <div class="ai-header"><div class="panel-title" style="margin:0">AI 中長期分析</div><span class="ai-badge">llama-3.3-70b · NVIDIA NIM</span></div>
       <div id="aiContent" class="ai-content"></div>
@@ -914,7 +951,10 @@ function runScreener(){
             <td class="td-mono"><span style="color:${rsiColor};font-weight:700">${rsi.toFixed(1)}</span> <span style="font-size:10px;color:${rsiColor}">${rsiTag}</span></td>
             <td class="td-mono">${sc.vDetail.pe?sc.vDetail.pe.toFixed(1)+'x':'—'}</td>
             <td class="td-mono">${sc.vDetail.divYield.toFixed(2)}%</td>
-            <td style="font-size:11px">${sc.suggestion}</td>
+            <td style="font-size:11px">
+              ${sc.suggestion}
+              ${sc.exDivWarning?`<div style="margin-top:4px;font-size:10px;padding:2px 6px;border-radius:3px;display:inline-block;background:${sc.exDivWarning.color==='#ef4444'?'rgba(239,68,68,0.15)':sc.exDivWarning.color==='#f59e0b'?'rgba(245,158,11,0.15)':'rgba(100,116,139,0.15)'};color:${sc.exDivWarning.color}">${sc.exDivWarning.text}</div>`:''}
+            </td>
           </tr>`;}).join('')}
         </tbody>
       </table>
