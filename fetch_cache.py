@@ -91,10 +91,11 @@ def build_exdiv_map(all_exdiv_data: dict) -> dict:
             continue
         candidates = []
         for row in rows:
-            # FinMind TaiwanStockDividend 欄位：
-            # date(除息日)、CashDividend(現金股利)、StockDividend(股票股利)
-            ex_date_str = row.get("ExDividendTradingDate") or row.get("date", "")
-            cash_div = float(row.get("CashDividend") or row.get("cash_dividend") or 0)
+            # FinMind TaiwanStockDividend 正確欄位：
+            # CashExDividendTradingDate(除息交易日)、CashEarningsDistribution(現金股利:盈餘)
+            # CashStatutorySurplus(現金股利:公積) 兩者相加才是完整現金股利
+            ex_date_str = row.get("CashExDividendTradingDate", "")
+            cash_div = float(row.get("CashEarningsDistribution") or 0) + float(row.get("CashStatutorySurplus") or 0)
             if not ex_date_str or cash_div <= 0:
                 continue
             try:
@@ -158,6 +159,8 @@ def main():
         ex_data = fetch_exdiv(sid)
         if ex_data and ex_data.get("_error") != 402 and ex_data.get("status") == 200:
             result_exdiv_raw[sid] = ex_data.get("data", [])
+            if i == 0 and result_exdiv_raw[sid]:
+                print(f"  [DEBUG] {sid} 除息原始資料範例: {result_exdiv_raw[sid][-1]}")
         elif ex_data and ex_data.get("_error") == 402:
             print(f"  [exdiv 402] {sid} 除息資料超量，跳過但繼續")
         time.sleep(0.8)
