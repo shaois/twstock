@@ -557,7 +557,11 @@ function calcMACD(closes){if(closes.length<26)return{macd:0,signal:0,hist:0};con
 function avg(arr,n){const a=arr.slice(-n);return a.reduce((s,v)=>s+v,0)/a.length;}
 
 // ── Scoring ───────────────────────────────────────────────────
-function scoreStock(id,ydata){
+// 景氣循環股產業：獲利/股價隨產業景氣大幅波動，基本面數字在景氣高點時最漂亮，
+// 此時反而是風險最高的時候，故對這些產業的基本面評分做衰減處理
+const CYCLICAL_SECTORS = new Set(["航運","航空","鋼鐵","石化","面板","水泥","紡織"]);
+
+function scoreStock(id,ydata,instData){
   const f={eps:0,roe:0,yoy:0,div:0,...(FUNDAMENTAL[id]||{})};
   const stock=STOCK_LIST.find(s=>s.id===id)||{sector:"其他",name:id};
   const sector=stock.sector;
@@ -577,69 +581,88 @@ function scoreStock(id,ydata){
   }
   // 【平衡模式】基本面 35分：防雷為主，確保獲利能力
   let fScore=0,fDetail={};
+  const isCyclical=CYCLICAL_SECTORS.has(sector);
+  // 循環股折扣係數：景氣循環股的EPS/YoY在景氣高點時最漂亮，反而是風險訊號，故打折
+  // 0.65 = 折36%，避免循環股因短期爆發性獲利而虛胖評分
+  const cyclicalDiscount=isCyclical?0.65:1;
   // EPS 10分：有獲利才有支撐，虧損股重扣
-  const epsS=f.eps<=0?0:Math.min(Math.max(f.eps/10*10,1),10);fScore+=epsS;fDetail.eps=epsS;
-  // ROE 10分：資本效率，>=15%得滿分
-  const roeS=Math.min(Math.max(f.roe/20*10,0),10);fScore+=roeS;fDetail.roe=roeS;
-  // 營收年增率 10分：半年內成長動能支撐股價
-  const yoyS=f.yoy>0?Math.min(f.yoy/20*10,10):0;fScore+=yoyS;fDetail.yoy=yoyS;
-  // 殖利率 5分：半年持有配息意義不大，低權重
+  const epsS=(f.eps<=0?0:Math.min(Math.max(f.eps/10*10,1),10))*cyclicalDiscount;fScore+=epsS;fDetail.eps=epsS;
+  // ROE 10分：資本效率，>=15%得滿分（循環股ROE同樣易失真，但影響較小，折扣較輕）
+  const roeS=Math.min(Math.max(f.roe/20*10,0),10)*(isCyclical?0.85:1);fScore+=roeS;fDetail.roe=roeS;
+  // 營收年增率 10分：半年內成長動能支撐股價（循環股YoY最易暴衝，折扣最重）
+  const yoyS=(f.yoy>0?Math.min(f.yoy/20*10,10):0)*cyclicalDiscount;fScore+=yoyS;fDetail.yoy=yoyS;
+  // 殖利率 5分：半年持有配息意義不大，低權重（殖利率不受景氣循環失真影響，不折扣）
   const divYield=price>0&&f.div>0?f.div/price*100:0;
-  const divS=Math.min(divYield/5*5,5);fScore+=divS;fDetail.div=divS;fDetail.divYield=divYield;
-  // 【平衡模式】技術面 65分：確認中期趨勢方向
+  const divS=Math.min(divYield/5*5,5);fScore+=divS;fDetail.div=divS;fDetail.divYield=divYield;fDetail.isCyclical=isCyclical;
+  // 【中長期模式 v2】技術面 53分：確認中期趨勢方向，但降低權重避免追高動能股
+  // （原65分→48分，少掉的17分轉移到基本面與估值面，更符合半年持有邏輯）
   let tScore=0,tDetail={};
-  // 均線多頭 25分：MA20>MA60>MA120 是半年趨勢最可靠訊號
+  // 均線多頭 16分（原25分）：MA20>MA60>MA120 是半年趨勢最可靠訊號
   let maS=0;if(price>0&&t.ma5>0){
-    if(price>t.ma20)maS+=8;       // 股價站上月線
-    if(t.ma20>t.ma60)maS+=9;      // 月線>季線：中期趨勢向上
-    if(t.ma60>t.ma120&&t.ma120>0)maS+=8; // 季線>半年線：長趨勢確認
+    if(price>t.ma20)maS+=5;       // 股價站上月線
+    if(t.ma20>t.ma60)maS+=6;      // 月線>季線：中期趨勢向上
+    if(t.ma60>t.ma120&&t.ma120>0)maS+=5; // 季線>半年線：長趨勢確認
   }
   tScore+=maS;tDetail.ma=maS;
-  // RSI 20分：40~65 是半年布局最佳區間（不過熱不過冷）
-  // RSI 漸進式評分（滿分20，無硬切邊界）
-  // 最佳區間 40~65，往兩端平滑遞減
+  // RSI 15分（原20分）：40~65 是半年布局最佳區間（不過熱不過冷）
   let rsiS;
   const rsi=t.rsi;
   if(rsi>=40&&rsi<=65){
-    // 40~65 核心區：以 52.5 為最高點，兩側平滑遞減，最低得 14 分
-    rsiS=20-Math.abs(rsi-52.5)/12.5*6;
+    rsiS=15-Math.abs(rsi-52.5)/12.5*4.5;
   }else if(rsi>65&&rsi<=80){
-    // 65~80 偏熱：從 14 線性降到 3
-    rsiS=14-(rsi-65)/15*11;
+    rsiS=10.5-(rsi-65)/15*8;
   }else if(rsi>80){
-    // >80 嚴重過熱
-    rsiS=2;
+    rsiS=1.5;
   }else if(rsi>=35&&rsi<40){
-    // 35~40 偏弱：從 12 降到 8
-    rsiS=12-(40-rsi)/5*4;
+    rsiS=9-(40-rsi)/5*3;
   }else{
-    // <35 趨勢可能已壞
-    rsiS=2;
+    rsiS=1.5;
   }
-  rsiS=Math.round(Math.max(2,Math.min(20,rsiS))*10)/10;
+  rsiS=Math.round(Math.max(1.5,Math.min(15,rsiS))*10)/10;
   tScore+=rsiS;tDetail.rsi=rsiS;
-  // MACD 12分：動能方向確認
-  let macdS=0;if(t.macd>0)macdS+=6;if(t.macdHist>0)macdS+=6;tScore+=macdS;tDetail.macd=macdS;
-  // 成交量 8分：有量才有持續上漲動能
-  const volS=t.volRatio>=1.5?8:t.volRatio>=1.3?6:t.volRatio>=1?4:t.volRatio>=0.7?2:0;tScore+=volS;tDetail.vol=volS;
-  // 6M趨勢 5分
-  const trendS=t.trend6m>=20?5:t.trend6m>=10?4:t.trend6m>=0?3:t.trend6m>=-10?1:0;
-  tScore+=trendS;tDetail.trend=trendS;
-  // 估值面 20分：避免追高，確保有安全邊際
+  // MACD 8分（原12分）：動能方向確認
+  let macdS=0;if(t.macd>0)macdS+=4;if(t.macdHist>0)macdS+=4;tScore+=macdS;tDetail.macd=macdS;
+  // 成交量 5分（原8分）：有量才有持續上漲動能
+  const volS=t.volRatio>=1.5?5:t.volRatio>=1.3?3.5:t.volRatio>=1?2.5:t.volRatio>=0.7?1:0;tScore+=volS;tDetail.vol=volS;
+  // 6M趨勢：±漲幅評分（滿分3），新增「漲幅過熱」扣分機制，避免追高
+  // 適度上漲給分最高；漲幅過大(>50%)視為追高風險，倒扣
+  let trendS;
+  if(t.trend6m>=50)trendS=-3;            // 半年漲超過50%，追高風險警示，倒扣
+  else if(t.trend6m>=30)trendS=0.5;      // 漲幅已大，加分趨緩
+  else if(t.trend6m>=10)trendS=3;        // 健康上升趨勢，給最高分
+  else if(t.trend6m>=0)trendS=1.8;
+  else if(t.trend6m>=-10)trendS=0.8;
+  else trendS=0;
+  tScore+=trendS;tDetail.trend=trendS;tDetail.trendHot=t.trend6m>=50;
+  // 法人籌碼 6分（新增）：近期買超視為長線資金認同，賣超扣分
+  let instS=3,instDetail=null; // 預設中性3分（無資料時不偏不倚）
+  if(instData&&instData.total!=null){
+    const t3=instData.total;
+    if(t3>3000)instS=6;
+    else if(t3>500)instS=5;
+    else if(t3>=-500)instS=3;
+    else if(t3>=-3000)instS=1;
+    else instS=0;
+    instDetail={total:t3,foreign:instData.foreign,trust:instData.trust};
+  }
+  tScore+=instS;tDetail.inst=instS;tDetail.instDetail=instDetail;
+
+  // 【中長期模式 v2】估值面 32分（原20分）：避免追高，確保有安全邊際，提高權重符合半年持有邏輯
   const pe=price>0&&f.eps>0?price/f.eps:null;
   const avgPE=SECTOR_PE[sector]||18;const peVs=pe?Math.round((pe/avgPE-1)*100):null;
   let vScore=0,vDetail={pe,avgPE,peVs,divYield:fDetail.divYield};
-  // PE vs 產業均值 12分：低於均值代表還有上漲空間
-  let peS=0;if(pe!==null){if(peVs<=-30)peS=12;else if(peVs<=-10)peS=10;else if(peVs<=10)peS=7;else if(peVs<=30)peS=3;else peS=0;}
+  // PE vs 產業均值 19分（原12分）：低於均值代表還有上漲空間
+  let peS=0;if(pe!==null){if(peVs<=-30)peS=19;else if(peVs<=-10)peS=16;else if(peVs<=10)peS=11;else if(peVs<=30)peS=5;else peS=0;}
   vScore+=peS;vDetail.peScore=peS;
-  // 殖利率 8分：提高權重，配息提供持有期間保護
-  const dyS=divYield>=5?8:divYield>=3.5?6:divYield>=2?4:divYield>=1?2:0;vScore+=dyS;vDetail.dyScore=dyS;
+  // 殖利率 13分（原8分）：提高權重，配息提供持有期間保護
+  const dyS=divYield>=5?13:divYield>=3.5?10:divYield>=2?6:divYield>=1?3:0;vScore+=dyS;vDetail.dyScore=dyS;
   const total=Math.round((fScore+tScore+vScore)*10)/10;
-  // 【平衡模式】總分120，A+需要基本面+技術面雙強
+  // 總分120分制不變（基本面35+技術面53+估值面32=120）
   const grade=total>=95?"A+":total>=80?"A":total>=65?"B":total>=50?"C":"D";
   const suggestion=total>=95?"強烈建議布局（半年）":total>=80?"建議買進觀察":total>=65?"值得追蹤":total>=50?"中性觀望":"暫不建議";
   const exDivWarning=getExDivWarning(id);
-  return{id,name:stock.name,sector,total,fScore:Math.round(fScore*10)/10,tScore:Math.round(tScore*10)/10,vScore:Math.round(vScore*10)/10,grade,suggestion,exDivWarning,f,t,fDetail,tDetail,vDetail};
+  const overheatWarning=t.trend6m>=50?{text:`⚠️ 半年漲幅達${t.trend6m.toFixed(0)}%，追高風險偏高`,color:'#f97316'}:null;
+  return{id,name:stock.name,sector,total,fScore:Math.round(fScore*10)/10,tScore:Math.round(tScore*10)/10,vScore:Math.round(vScore*10)/10,grade,suggestion,exDivWarning,overheatWarning,isCyclical,f,t,fDetail,tDetail,vDetail};
 }
 
 // ── Load & Sort by Market Cap ─────────────────────────────────
@@ -700,8 +723,10 @@ async function loadStocks(){
       } else {
         console.log(`[FM-NULL] ${s.id} ${s.name} FinMind無回傳，使用靜態資料`);
       }
+      // 抓最新一日法人籌碼，納入技術面評分（fetchInstitutional 內建快取，重複呼叫不重複打API）
+      const instData=await fetchInstitutional(s.id).catch(()=>null);
       // 基本面確定後才算分（避免用到舊靜態資料）
-      allScores[s.id]=scoreStock(s.id,ydata);
+      allScores[s.id]=scoreStock(s.id,ydata,instData);
       // 每支都印最終分數，方便比對
       console.log(`[SCORE] ${s.id} ${s.name} 總:${allScores[s.id]?.total} 基本:${allScores[s.id]?.fScore} 技術:${allScores[s.id]?.tScore} 估值:${allScores[s.id]?.vScore} | eps:${FUNDAMENTAL[s.id]?.eps} roe:${FUNDAMENTAL[s.id]?.roe} yoy:${FUNDAMENTAL[s.id]?.yoy}`);
       // 基本面更新後，若目前正在看這支股票，靜默更新分數卡（不重建DOM，避免法人閃掉）
@@ -761,7 +786,7 @@ function showDetail(id){
   const mktCap=allStocks.find(x=>x.id===id)?.marketCap||0;
   const mktCapStr=mktCap>1e12?`${(mktCap/1e12).toFixed(1)}兆`:mktCap>1e8?`${(mktCap/1e8).toFixed(0)}億`:'—';
   function metric(name,val,unit='',score=null){const s=score!=null?`<span class="metric-score">+${score}</span>`:'';return`<div class="metric-row"><span class="metric-name">${name}</span><span class="metric-val">${val}${unit}${s}</span></div>`;}
-  function bar(label,val,max,color='#00d4aa'){const pct=Math.min(val/max*100,100);return`<div class="bar-row"><div class="bar-label">${label}</div><div class="bar-wrap"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div><div class="bar-val" style="color:${color}">${val}</div></div>`;}
+  function bar(label,val,max,color='#00d4aa'){const pct=Math.max(0,Math.min(val/max*100,100));const barColor=val<0?'#ef4444':color;return`<div class="bar-row"><div class="bar-label">${label}</div><div class="bar-wrap"><div class="bar-fill" style="width:${pct}%;background:${barColor}"></div></div><div class="bar-val" style="color:${barColor}">${val}</div></div>`;}
 
   detail.innerHTML=`
     <div class="stock-header">
@@ -779,10 +804,16 @@ function showDetail(id){
     <div class="score-overview">
       <div class="score-card"><div class="val" id="scoreTotal" style="color:${gc}">${sc.total}</div><div class="lbl">綜合 /120</div></div>
       <div class="score-card"><div class="val" id="scoreFund" style="color:var(--accent)">${sc.fScore}</div><div class="lbl">基本面 /35</div></div>
-      <div class="score-card"><div class="val" id="scoreTech" style="color:var(--accent2)">${sc.tScore}</div><div class="lbl">技術面 /65</div></div>
-      <div class="score-card"><div class="val" id="scoreVal" style="color:var(--warn)">${sc.vScore}</div><div class="lbl">估值面 /20</div></div>
+      <div class="score-card"><div class="val" id="scoreTech" style="color:var(--accent2)">${sc.tScore}</div><div class="lbl">技術面 /53</div></div>
+      <div class="score-card"><div class="val" id="scoreVal" style="color:var(--warn)">${sc.vScore}</div><div class="lbl">估值面 /32</div></div>
       <div class="score-card"><div class="val" style="color:${gc};font-size:16px;padding-top:6px">${sc.suggestion}</div><div class="lbl">建議</div></div>
     </div>
+    ${sc.isCyclical ? `<div style="margin:-10px 0 12px;padding:9px 16px;background:rgba(249,115,22,0.08);border:1px solid rgba(249,115,22,0.3);border-radius:8px;font-size:12px;color:#f97316">
+      🔄 景氣循環股：${sc.sector}產業獲利隨景氣大幅波動，基本面評分已做衰減處理，請留意獲利高點風險
+    </div>` : ''}
+    ${sc.overheatWarning ? `<div style="margin:-10px 0 12px;padding:9px 16px;background:rgba(249,115,22,0.08);border:1px solid rgba(249,115,22,0.3);border-radius:8px;font-size:12px;color:${sc.overheatWarning.color}">
+      ${sc.overheatWarning.text}，技術面評分已反映追高風險
+    </div>` : ''}
     ${sc.exDivWarning ? `<div style="margin:-10px 0 18px;padding:11px 16px;background:${sc.exDivWarning.color==='#ef4444'?'rgba(239,68,68,0.12)':sc.exDivWarning.color==='#f59e0b'?'rgba(245,158,11,0.1)':'rgba(100,116,139,0.1)'};border:1px solid ${sc.exDivWarning.color};border-radius:8px;display:flex;align-items:center;gap:10px">
       <span style="font-size:18px">${sc.exDivWarning.icon}</span>
       <div>
@@ -821,14 +852,15 @@ function showDetail(id){
         ${metric('股息殖利率',vd.divYield.toFixed(2)+'%','',vd.dyScore)}
       </div>
       <div class="panel"><div class="panel-title">評分細項</div>
-        <div style="margin-bottom:8px;font-size:10px;color:var(--muted)">基本面</div>
-        ${bar('EPS',fd.eps.toFixed(1),15)}${bar('ROE',fd.roe.toFixed(1),15)}
-        ${bar('營收YoY',fd.yoy.toFixed(1),10)}${bar('股利殖利率',fd.div.toFixed(1),10)}
+        <div style="margin-bottom:8px;font-size:10px;color:var(--muted)">基本面${sc.isCyclical?' <span style="color:#f97316">（循環股已衰減）</span>':''}</div>
+        ${bar('EPS',fd.eps.toFixed(1),10)}${bar('ROE',fd.roe.toFixed(1),10)}
+        ${bar('營收YoY',fd.yoy.toFixed(1),10)}${bar('股利殖利率',fd.div.toFixed(1),5)}
         <div style="margin:10px 0 8px;font-size:10px;color:var(--muted)">技術面</div>
-        ${bar('均線多頭',td.ma,20,'#3b82f6')}${bar('RSI',td.rsi,10,'#3b82f6')}
-        ${bar('MACD',td.macd,8,'#3b82f6')}${bar('成交量',td.vol,7,'#3b82f6')}${bar('6M趨勢',td.trend,5,'#3b82f6')}
+        ${bar('均線多頭',td.ma,16,'#3b82f6')}${bar('RSI',td.rsi,15,'#3b82f6')}
+        ${bar('MACD',td.macd,8,'#3b82f6')}${bar('成交量',td.vol,5,'#3b82f6')}
+        ${bar('6M趨勢',td.trend,3,'#3b82f6')}${bar('法人籌碼',td.inst,6,'#3b82f6')}
         <div style="margin:10px 0 8px;font-size:10px;color:var(--muted)">估值面</div>
-        ${bar('PE合理性',vd.peScore,12,'#f59e0b')}${bar('股息吸引力',vd.dyScore,8,'#f59e0b')}
+        ${bar('PE合理性',vd.peScore,19,'#f59e0b')}${bar('股息吸引力',vd.dyScore,13,'#f59e0b')}
       </div>
     </div>
     <div class="disclaimer">⚠ 資料來源：Yahoo Finance / FinMind / 公開財報，僅供參考，不構成投資建議。</div>
@@ -944,7 +976,7 @@ function runScreener(){
           const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
           return`<tr onclick="showDetail('${sc.id}')">
             <td class="td-mono" style="color:var(--muted)">#${rank}</td>
-            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--muted)">${sc.name}</span></td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--muted)">${sc.name}</span>${sc.isCyclical?'<span style="font-size:9px;color:#f97316;margin-left:4px;padding:1px 4px;border:1px solid #f97316;border-radius:3px" title="景氣循環股，基本面評分已做衰減處理">循環</span>':''}</td>
             <td><span class="grade-badge g${sc.grade.replace('+','p')}">${sc.grade}</span></td>
             <td class="td-mono" style="color:${gc[sc.grade]||'var(--text)'}">${sc.total}</td>
             <td class="td-mono">${sc.fScore}</td><td class="td-mono">${sc.tScore}</td><td class="td-mono">${sc.vScore}</td>
@@ -954,6 +986,7 @@ function runScreener(){
             <td style="font-size:11px">
               ${sc.suggestion}
               ${sc.exDivWarning?`<div style="margin-top:4px;font-size:10px;padding:2px 6px;border-radius:3px;display:inline-block;background:${sc.exDivWarning.color==='#ef4444'?'rgba(239,68,68,0.15)':sc.exDivWarning.color==='#f59e0b'?'rgba(245,158,11,0.15)':'rgba(100,116,139,0.15)'};color:${sc.exDivWarning.color}">${sc.exDivWarning.text}</div>`:''}
+              ${sc.overheatWarning?`<div style="margin-top:4px;font-size:10px;padding:2px 6px;border-radius:3px;display:inline-block;background:rgba(249,115,22,0.15);color:${sc.overheatWarning.color}">${sc.overheatWarning.text}</div>`:''}
             </td>
           </tr>`;}).join('')}
         </tbody>
