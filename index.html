@@ -643,7 +643,7 @@ function scoreStock(id,ydata,instData){
     else if(t3>=-500)instS=3;
     else if(t3>=-3000)instS=1;
     else instS=0;
-    instDetail={total:t3,foreign:instData.foreign,trust:instData.trust};
+    instDetail={total:t3,foreign:instData.foreign,trust:instData.trust,dealer:instData.dealer};
   }
   tScore+=instS;tDetail.inst=instS;tDetail.instDetail=instDetail;
 
@@ -881,7 +881,7 @@ function showDetail(id){
     instPanel.style.cssText='background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:20px';
     detailEl.insertBefore(instPanel,detailEl.firstChild);
   }
-  instPanel.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div class="panel-title" style="margin:0">法人籌碼（最新交易日）</div><div id="instDate" style="font-size:11px;color:var(--muted)">載入中…</div></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px"><div class="inst-card"><div class="inst-lbl">外資買賣超</div><div class="inst-val" id="inst_foreign">…</div><div style="font-size:9px;color:var(--muted)">張</div></div><div class="inst-card"><div class="inst-lbl">投信買賣超</div><div class="inst-val" id="inst_trust">…</div><div style="font-size:9px;color:var(--muted)">張</div></div><div class="inst-card"><div class="inst-lbl">三大法人合計</div><div class="inst-val" id="inst_total">…</div><div style="font-size:9px;color:var(--muted)">張</div></div></div>';
+  instPanel.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div class="panel-title" style="margin:0">法人籌碼（最新交易日）</div><div id="instDate" style="font-size:11px;color:var(--muted)">載入中…</div></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px"><div class="inst-card"><div class="inst-lbl">外資買賣超</div><div class="inst-val" id="inst_foreign">…</div><div style="font-size:9px;color:var(--muted)">張</div></div><div class="inst-card"><div class="inst-lbl">投信買賣超</div><div class="inst-val" id="inst_trust">…</div><div style="font-size:9px;color:var(--muted)">張</div></div><div class="inst-card"><div class="inst-lbl">自營商買賣超</div><div class="inst-val" id="inst_dealer">…</div><div style="font-size:9px;color:var(--muted)">張</div></div><div class="inst-card"><div class="inst-lbl">三大法人合計</div><div class="inst-val" id="inst_total">…</div><div style="font-size:9px;color:var(--muted)">張</div></div></div>';
   instPanel.style.display='block';
 
   fetchInstitutional(id).then(inst=>{
@@ -894,6 +894,7 @@ function showDetail(id){
     function colorNum(v){const color=v>0?'var(--green)':v<0?'var(--red)':'var(--muted)';const sign=v>0?'+':'';return`<span style="color:${color}">${sign}${v.toLocaleString()}</span>`;}
     const fe=document.getElementById('inst_foreign');if(fe)fe.innerHTML=colorNum(inst.foreign);
     const te=document.getElementById('inst_trust');if(te)te.innerHTML=colorNum(inst.trust);
+    const de=document.getElementById('inst_dealer');if(de)de.innerHTML=colorNum(inst.dealer);
     const tot=document.getElementById('inst_total');if(tot)tot.innerHTML=colorNum(inst.total);
   });
 }
@@ -909,7 +910,7 @@ async function runAI(id){
   const f=sc.f,t=sc.t,vd=sc.vDetail;
   const inst=await fetchInstitutional(id);
   let instStr='無法取得即時資料';
-  if(inst){const sign=v=>v>0?`買超${v.toLocaleString()}張`:v<0?`賣超${Math.abs(v).toLocaleString()}張`:'持平';instStr=`外資${sign(inst.foreign)}，投信${sign(inst.trust)}，三大合計${sign(inst.total)}（${inst.date}）`;}
+  if(inst){const sign=v=>v>0?`買超${v.toLocaleString()}張`:v<0?`賣超${Math.abs(v).toLocaleString()}張`:'持平';instStr=`外資${sign(inst.foreign)}，投信${sign(inst.trust)}，自營商${sign(inst.dealer)}，三大合計${sign(inst.total)}（${inst.date}）`;}
   const rank=allStocks.findIndex(x=>x.id===id)+1;
   const prompt=`你是一位資深台股分析師，請對 ${id} ${sc.name}（市值排名第${rank}）進行全方位中長期（6~18個月）投資分析。
 
