@@ -450,6 +450,21 @@ async function fetchFinMindFundamental(stockId){
         roe=Math.round(roeVal*100)/100;
       }
     }
+    // 毛利率：用最近一季 GrossProfit(營業毛利) / (GrossProfit+CostOfGoodsSold)(=營收) 計算
+    // 不依賴Revenue欄位，避免財報資料集缺少該type時無法計算
+    let grossMargin=0;
+    if(fsData.status===200&&fsData.data?.length){
+      const dates=[...new Set(fsData.data.map(r=>r.date))].sort((a,b)=>b.localeCompare(a));
+      const latestDate=dates[0];
+      if(latestDate){
+        const latestRows=fsData.data.filter(r=>r.date===latestDate);
+        const gp=latestRows.find(r=>r.type==='GrossProfit')?.value;
+        const cogs=latestRows.find(r=>r.type==='CostOfGoodsSold')?.value;
+        if(gp!=null&&cogs!=null&&(gp+cogs)>0){
+          grossMargin=Math.round(gp/(gp+cogs)*1000)/10;
+        }
+      }
+    }
     let yoy=0;
     if(revData.status===200&&revData.data?.length){
       const revRows=revData.data.sort((a,b)=>b.date.localeCompare(a.date));
@@ -467,7 +482,7 @@ async function fetchFinMindFundamental(stockId){
     }
     // 品質防呆：eps/roe 同時為0代表API沒回有效資料，保留靜態
     const lowConfidence=(eps===0&&roe===0);
-    const result={eps,roe,yoy,auto:true,lowConfidence};
+    const result={eps,roe,yoy,grossMargin,auto:true,lowConfidence};
     fmFundamentalCache[stockId]=result;
     return result;
   }catch(e){return null;}
@@ -529,22 +544,48 @@ async function fetchInstitutional(stockId){
     const r=await fetch(url);if(!r.ok)return null;
     const d=await r.json();
     if(d.status!==200||!d.data?.length)return null;
-    const latest=d.data[d.data.length-1].date;
-    const rows=d.data.filter(x=>x.date===latest);
-    // Debug：列出本次抓到的所有法人分類名稱，便於確認是否有遺漏的官方分類
-    if(rows.length)console.log(`[法人籌碼] ${stockId} ${latest} 原始分類:`,[...new Set(rows.map(r=>r.name))]);
-    let foreign=0,trust=0,dealer=0;
-    for(const row of rows){
-      const net=(row.buy||0)-(row.sell||0);
-      const n=row.name;
-      // 外資及陸資 + 外資自營商，兩者皆屬「外資」範疇，合併計算避免低估外資動向
-      if(n==='Foreign_Investor'||n==='Foreign_Dealer_Self')foreign+=net;
-      else if(n==='Investment_Trust')trust+=net;
-      else if(n==='Dealer_Self'||n==='Dealer_self'||n==='Dealer_Hedging')dealer+=net;
+
+    // 取得近30天內所有交易日，由新到舊排序
+    const allDates=[...new Set(d.data.map(x=>x.date))].sort((a,b)=>b.localeCompare(a));
+    const latest=allDates[0];
+    const last5Dates=allDates.slice(0,5); // 近5個交易日（用於評分趨勢判斷）
+
+    function sumByDates(dates){
+      const rows=d.data.filter(x=>dates.includes(x.date));
+      let foreign=0,trust=0,dealer=0;
+      for(const row of rows){
+        const net=(row.buy||0)-(row.sell||0);
+        const n=row.name;
+        // 外資及陸資 + 外資自營商，兩者皆屬「外資」範疇，合併計算避免低估外資動向
+        if(n==='Foreign_Investor'||n==='Foreign_Dealer_Self')foreign+=net;
+        else if(n==='Investment_Trust')trust+=net;
+        else if(n==='Dealer_Self'||n==='Dealer_self'||n==='Dealer_Hedging')dealer+=net;
+      }
+      return {foreign:Math.round(foreign/1000),trust:Math.round(trust/1000),dealer:Math.round(dealer/1000),total:Math.round((foreign+trust+dealer)/1000)};
     }
-    // Debug：印出換算前的原始股數，確認問題出在原始資料還是 /1000 換算
-    console.log(`[法人籌碼-原始股數] ${stockId} foreign:${foreign} trust:${trust} dealer:${dealer}`);
-    const result={foreign:Math.round(foreign/1000),trust:Math.round(trust/1000),dealer:Math.round(dealer/1000),total:Math.round((foreign+trust+dealer)/1000),date:latest};
+
+    const todayData=sumByDates([latest]);       // 單日（UI卡片顯示用）
+    const trend5d=sumByDates(last5Dates);        // 近5日加總（評分用，平滑單日雜訊）
+
+    // 連續買超天數：從最新日往前數，三大法人合計連續為正的天數（用於籌碼動向判斷）
+    let consecutiveBuyDays=0;
+    for(const dt of last5Dates){
+      const dayData=sumByDates([dt]);
+      if(dayData.total>0)consecutiveBuyDays++;
+      else break;
+    }
+    let consecutiveSellDays=0;
+    for(const dt of last5Dates){
+      const dayData=sumByDates([dt]);
+      if(dayData.total<0)consecutiveSellDays++;
+      else break;
+    }
+
+    const result={
+      foreign:todayData.foreign, trust:todayData.trust, dealer:todayData.dealer, total:todayData.total, date:latest,
+      foreign5d:trend5d.foreign, trust5d:trend5d.trust, dealer5d:trend5d.dealer, total5d:trend5d.total,
+      consecutiveBuyDays, consecutiveSellDays, datesCovered:last5Dates.length
+    };
     instCache[stockId]=result;return result;
   }catch(e){return null;}
 }
@@ -584,21 +625,26 @@ function scoreStock(id,ydata,instData){
     t.pos52=high52!==low52?(price-low52)/(high52-low52)*100:50;
     if(closes.length>=120)t.trend6m=(price-closes[closes.length-121])/closes[closes.length-121]*100;
   }
-  // 【平衡模式】基本面 35分：防雷為主，確保獲利能力
+  // 【中長期模式 v3】基本面 35分：防雷為主，確保獲利能力，新增毛利率衡量產品競爭力
   let fScore=0,fDetail={};
   const isCyclical=CYCLICAL_SECTORS.has(sector);
   // 循環股折扣係數：景氣循環股的EPS/YoY在景氣高點時最漂亮，反而是風險訊號，故打折
   // 0.65 = 折36%，避免循環股因短期爆發性獲利而虛胖評分
   const cyclicalDiscount=isCyclical?0.65:1;
-  // EPS 10分：有獲利才有支撐，虧損股重扣
-  const epsS=(f.eps<=0?0:Math.min(Math.max(f.eps/10*10,1),10))*cyclicalDiscount;fScore+=epsS;fDetail.eps=epsS;
-  // ROE 10分：資本效率，>=15%得滿分（循環股ROE同樣易失真，但影響較小，折扣較輕）
-  const roeS=Math.min(Math.max(f.roe/20*10,0),10)*(isCyclical?0.85:1);fScore+=roeS;fDetail.roe=roeS;
-  // 營收年增率 10分：半年內成長動能支撐股價（循環股YoY最易暴衝，折扣最重）
-  const yoyS=(f.yoy>0?Math.min(f.yoy/20*10,10):0)*cyclicalDiscount;fScore+=yoyS;fDetail.yoy=yoyS;
-  // 殖利率 5分：半年持有配息意義不大，低權重（殖利率不受景氣循環失真影響，不折扣）
+  // EPS 8分（原10分）：有獲利才有支撐，虧損股重扣
+  const epsS=(f.eps<=0?0:Math.min(Math.max(f.eps/10*8,1),8))*cyclicalDiscount;fScore+=epsS;fDetail.eps=epsS;
+  // ROE 8分（原10分）：資本效率，>=15%得滿分
+  const roeS=Math.min(Math.max(f.roe/20*8,0),8)*(isCyclical?0.85:1);fScore+=roeS;fDetail.roe=roeS;
+  // 營收年增率 8分（原10分）：半年內成長動能支撐股價（循環股YoY最易暴衝，折扣最重）
+  const yoyS=(f.yoy>0?Math.min(f.yoy/20*8,8):0)*cyclicalDiscount;fScore+=yoyS;fDetail.yoy=yoyS;
+  // 毛利率 7分（新增）：產品競爭力/議價能力指標，高毛利通常代表技術門檻或品牌優勢
+  // 不受景氣循環影響折扣，因為毛利率波動本身比EPS/YoY溫和，較能反映長期競爭力
+  const gm=f.grossMargin||0;
+  const gmS=gm>=40?7:gm>=30?5.5:gm>=20?4:gm>=10?2:gm>0?1:0;
+  fScore+=gmS;fDetail.grossMargin=gmS;fDetail.grossMarginValue=gm;
+  // 殖利率 4分（原5分）：半年持有配息意義不大，低權重（殖利率不受景氣循環失真影響，不折扣）
   const divYield=price>0&&f.div>0?f.div/price*100:0;
-  const divS=Math.min(divYield/5*5,5);fScore+=divS;fDetail.div=divS;fDetail.divYield=divYield;fDetail.isCyclical=isCyclical;
+  const divS=Math.min(divYield/5*4,4);fScore+=divS;fDetail.div=divS;fDetail.divYield=divYield;fDetail.isCyclical=isCyclical;
   // 【中長期模式 v2】技術面 53分：確認中期趨勢方向，但降低權重避免追高動能股
   // （原65分→48分，少掉的17分轉移到基本面與估值面，更符合半年持有邏輯）
   let tScore=0,tDetail={};
@@ -639,16 +685,25 @@ function scoreStock(id,ydata,instData){
   else if(t.trend6m>=-10)trendS=0.8;
   else trendS=0;
   tScore+=trendS;tDetail.trend=trendS;tDetail.trendHot=t.trend6m>=50;
-  // 法人籌碼 6分（新增）：近期買超視為長線資金認同，賣超扣分
+  // 法人籌碼 6分：改用「近5日累計買賣超」取代單日，避免單日雜訊（如隔日沖、單日對作）誤導評分
+  // 並加入「連續買超/賣超天數」的微調，連續趨勢比單一數字更能反映法人真實動向
   let instS=3,instDetail=null; // 預設中性3分（無資料時不偏不倚）
-  if(instData&&instData.total!=null){
-    const t3=instData.total;
-    if(t3>3000)instS=6;
-    else if(t3>500)instS=5;
-    else if(t3>=-500)instS=3;
-    else if(t3>=-3000)instS=1;
-    else instS=0;
-    instDetail={total:t3,foreign:instData.foreign,trust:instData.trust,dealer:instData.dealer};
+  if(instData&&instData.total5d!=null){
+    const t5=instData.total5d; // 近5日三大法人合計（張）
+    // 基礎分數：依5日累計買賣超量級評分（門檻較單日寬，因為是5日加總）
+    if(t5>8000)instS=5;
+    else if(t5>2000)instS=4.2;
+    else if(t5>=-2000)instS=3;
+    else if(t5>=-8000)instS=1.8;
+    else instS=0.5;
+    // 連續性加成：連續3天以上買超額外加分，連續3天以上賣超額外扣分（上限±1分，避免過度放大）
+    if(instData.consecutiveBuyDays>=3)instS=Math.min(6,instS+1);
+    else if(instData.consecutiveSellDays>=3)instS=Math.max(0,instS-1);
+    instDetail={
+      total:instData.total,foreign:instData.foreign,trust:instData.trust,dealer:instData.dealer,
+      total5d:t5,foreign5d:instData.foreign5d,trust5d:instData.trust5d,
+      consecutiveBuyDays:instData.consecutiveBuyDays,consecutiveSellDays:instData.consecutiveSellDays
+    };
   }
   tScore+=instS;tDetail.inst=instS;tDetail.instDetail=instDetail;
 
@@ -669,7 +724,12 @@ function scoreStock(id,ydata,instData){
   const suggestion=total>=88?"強烈建議布局（半年）":total>=72?"建議買進觀察":total>=55?"值得追蹤":total>=40?"中性觀望":"暫不建議";
   const exDivWarning=getExDivWarning(id);
   const overheatWarning=t.trend6m>=50?{text:`⚠️ 半年漲幅達${t.trend6m.toFixed(0)}%，追高風險偏高`,color:'#f97316'}:null;
-  return{id,name:stock.name,sector,total,fScore:Math.round(fScore*10)/10,tScore:Math.round(tScore*10)/10,vScore:Math.round(vScore*10)/10,grade,suggestion,exDivWarning,overheatWarning,isCyclical,f,t,fDetail,tDetail,vDetail};
+  // 週期股低本益比警示：景氣循環股PE過低(<8倍)常代表獲利處於景氣高峰，而非真正便宜
+  // 與EPS/YoY折扣機制是兩件事——折扣處理「分數虛胖」，這裡額外提示「PE騙局」風險
+  const cyclicalPeWarning=(isCyclical&&pe!==null&&pe<8)
+    ?{text:`⚠️ 循環股PE僅${pe.toFixed(1)}倍，可能為獲利高點，非真正低估`,color:'#f97316'}
+    :null;
+  return{id,name:stock.name,sector,total,fScore:Math.round(fScore*10)/10,tScore:Math.round(tScore*10)/10,vScore:Math.round(vScore*10)/10,grade,suggestion,exDivWarning,overheatWarning,cyclicalPeWarning,isCyclical,f,t,fDetail,tDetail,vDetail};
 }
 
 // ── Load & Sort by Market Cap ─────────────────────────────────
@@ -719,6 +779,7 @@ async function loadStocks(){
         if(fmF.eps!=null&&fmF.eps!==0)FUNDAMENTAL[s.id].eps=fmF.eps;
         if(fmF.roe!=null&&fmF.roe!==0)FUNDAMENTAL[s.id].roe=fmF.roe;
         if(fmF.yoy!=null)FUNDAMENTAL[s.id].yoy=fmF.yoy;
+        if(fmF.grossMargin!=null&&fmF.grossMargin!==0)FUNDAMENTAL[s.id].grossMargin=fmF.grossMargin;
         // Debug log（前20支都印，方便比對FinMind資料品質）
         console.log(`[FM] ${s.id} ${s.name} eps:${fmF.eps} roe:${fmF.roe} yoy:${fmF.yoy} lowConf:${fmF.lowConfidence}`);
       } else if(fmF?.lowConfidence){
@@ -821,6 +882,9 @@ function showDetail(id){
     ${sc.overheatWarning ? `<div style="margin:-10px 0 12px;padding:9px 16px;background:rgba(249,115,22,0.08);border:1px solid rgba(249,115,22,0.3);border-radius:8px;font-size:12px;color:${sc.overheatWarning.color}">
       ${sc.overheatWarning.text}，技術面評分已反映追高風險
     </div>` : ''}
+    ${sc.cyclicalPeWarning ? `<div style="margin:-10px 0 12px;padding:9px 16px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.35);border-radius:8px;font-size:12px;color:#ef4444">
+      ${sc.cyclicalPeWarning.text}，循環股獲利高點時PE反而最低，建議留意景氣位階而非單純追求低本益比
+    </div>` : ''}
     ${sc.exDivWarning ? `<div style="margin:-10px 0 18px;padding:11px 16px;background:${sc.exDivWarning.color==='#ef4444'?'rgba(239,68,68,0.12)':sc.exDivWarning.color==='#f59e0b'?'rgba(245,158,11,0.1)':'rgba(100,116,139,0.1)'};border:1px solid ${sc.exDivWarning.color};border-radius:8px;display:flex;align-items:center;gap:10px">
       <span style="font-size:18px">${sc.exDivWarning.icon}</span>
       <div>
@@ -839,6 +903,7 @@ function showDetail(id){
         ${metric('EPS（元）',f.eps,'',fd.eps.toFixed(1))}
         ${metric('ROE（%）',f.roe+'%','',fd.roe.toFixed(1))}
         ${metric('月營收年增率',f.yoy+'%','',fd.yoy.toFixed(1))}
+        ${metric('毛利率',(fd.grossMarginValue||0).toFixed(1)+'%','',fd.grossMargin.toFixed(1))}
         ${metric('現金股利（元）',f.div,'')}
         ${metric('股息殖利率',fd.divYield.toFixed(2)+'%','',fd.div.toFixed(1))}
       </div>
@@ -860,12 +925,13 @@ function showDetail(id){
       </div>
       <div class="panel"><div class="panel-title">評分細項</div>
         <div style="margin-bottom:8px;font-size:10px;color:var(--muted)">基本面${sc.isCyclical?' <span style="color:#f97316">（循環股已衰減）</span>':''}</div>
-        ${bar('EPS',fd.eps.toFixed(1),10)}${bar('ROE',fd.roe.toFixed(1),10)}
-        ${bar('營收YoY',fd.yoy.toFixed(1),10)}${bar('股利殖利率',fd.div.toFixed(1),5)}
+        ${bar('EPS',fd.eps.toFixed(1),8)}${bar('ROE',fd.roe.toFixed(1),8)}
+        ${bar('營收YoY',fd.yoy.toFixed(1),8)}${bar('毛利率',fd.grossMargin.toFixed(1),7)}
+        ${bar('股利殖利率',fd.div.toFixed(1),4)}
         <div style="margin:10px 0 8px;font-size:10px;color:var(--muted)">技術面</div>
         ${bar('均線多頭',td.ma,16,'#3b82f6')}${bar('RSI',td.rsi,15,'#3b82f6')}
         ${bar('MACD',td.macd,8,'#3b82f6')}${bar('成交量',td.vol,5,'#3b82f6')}
-        ${bar('6M趨勢',td.trend,3,'#3b82f6')}${bar('法人籌碼',td.inst,6,'#3b82f6')}
+        ${bar('6M趨勢',td.trend,3,'#3b82f6')}${bar('法人籌碼(5日)',td.inst,6,'#3b82f6')}
         <div style="margin:10px 0 8px;font-size:10px;color:var(--muted)">估值面</div>
         ${bar('PE合理性',vd.peScore,19,'#f59e0b')}${bar('股息吸引力',vd.dyScore,13,'#f59e0b')}
       </div>
@@ -886,7 +952,7 @@ function showDetail(id){
     instPanel.style.cssText='background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:20px';
     detailEl.insertBefore(instPanel,detailEl.firstChild);
   }
-  instPanel.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div class="panel-title" style="margin:0">法人籌碼（最新交易日）</div><div id="instDate" style="font-size:11px;color:var(--muted)">載入中…</div></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px"><div class="inst-card"><div class="inst-lbl">外資買賣超</div><div class="inst-val" id="inst_foreign">…</div><div style="font-size:9px;color:var(--muted)">張</div></div><div class="inst-card"><div class="inst-lbl">投信買賣超</div><div class="inst-val" id="inst_trust">…</div><div style="font-size:9px;color:var(--muted)">張</div></div><div class="inst-card"><div class="inst-lbl">自營商買賣超</div><div class="inst-val" id="inst_dealer">…</div><div style="font-size:9px;color:var(--muted)">張</div></div><div class="inst-card"><div class="inst-lbl">三大法人合計</div><div class="inst-val" id="inst_total">…</div><div style="font-size:9px;color:var(--muted)">張</div></div></div>';
+  instPanel.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div class="panel-title" style="margin:0">法人籌碼（最新交易日）</div><div id="instDate" style="font-size:11px;color:var(--muted)">載入中…</div></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px"><div class="inst-card"><div class="inst-lbl">外資買賣超</div><div class="inst-val" id="inst_foreign">…</div><div style="font-size:9px;color:var(--muted)">張</div></div><div class="inst-card"><div class="inst-lbl">投信買賣超</div><div class="inst-val" id="inst_trust">…</div><div style="font-size:9px;color:var(--muted)">張</div></div><div class="inst-card"><div class="inst-lbl">自營商買賣超</div><div class="inst-val" id="inst_dealer">…</div><div style="font-size:9px;color:var(--muted)">張</div></div><div class="inst-card"><div class="inst-lbl">三大法人合計</div><div class="inst-val" id="inst_total">…</div><div style="font-size:9px;color:var(--muted)">張</div></div></div><div id="inst5dRow" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;font-size:12px"><span style="color:var(--muted)">近5日累計：<span id="inst_total5d" style="font-weight:600">…</span> 張</span><span id="inst_streak" style="color:var(--muted)"></span></div>';
   instPanel.style.display='block';
 
   fetchInstitutional(id).then(inst=>{
@@ -901,6 +967,13 @@ function showDetail(id){
     const te=document.getElementById('inst_trust');if(te)te.innerHTML=colorNum(inst.trust);
     const de=document.getElementById('inst_dealer');if(de)de.innerHTML=colorNum(inst.dealer);
     const tot=document.getElementById('inst_total');if(tot)tot.innerHTML=colorNum(inst.total);
+    const tot5=document.getElementById('inst_total5d');if(tot5)tot5.innerHTML=colorNum(inst.total5d);
+    const streakEl=document.getElementById('inst_streak');
+    if(streakEl){
+      if(inst.consecutiveBuyDays>=3)streakEl.innerHTML=`<span style="color:var(--green)">🔥 連續買超${inst.consecutiveBuyDays}日</span>`;
+      else if(inst.consecutiveSellDays>=3)streakEl.innerHTML=`<span style="color:var(--red)">⚠️ 連續賣超${inst.consecutiveSellDays}日</span>`;
+      else streakEl.textContent='';
+    }
   });
 }
 
@@ -915,16 +988,22 @@ async function runAI(id){
   const f=sc.f,t=sc.t,vd=sc.vDetail;
   const inst=await fetchInstitutional(id);
   let instStr='無法取得即時資料';
-  if(inst){const sign=v=>v>0?`買超${v.toLocaleString()}張`:v<0?`賣超${Math.abs(v).toLocaleString()}張`:'持平';instStr=`外資${sign(inst.foreign)}，投信${sign(inst.trust)}，自營商${sign(inst.dealer)}，三大合計${sign(inst.total)}（${inst.date}）`;}
+  if(inst){
+    const sign=v=>v>0?`買超${v.toLocaleString()}張`:v<0?`賣超${Math.abs(v).toLocaleString()}張`:'持平';
+    instStr=`單日：外資${sign(inst.foreign)}，投信${sign(inst.trust)}，自營商${sign(inst.dealer)}，三大合計${sign(inst.total)}（${inst.date}）；近5日累計：三大合計${sign(inst.total5d)}`;
+    if(inst.consecutiveBuyDays>=3)instStr+=`，連續買超${inst.consecutiveBuyDays}日`;
+    else if(inst.consecutiveSellDays>=3)instStr+=`，連續賣超${inst.consecutiveSellDays}日`;
+  }
   const rank=allStocks.findIndex(x=>x.id===id)+1;
-  const prompt=`你是一位資深台股分析師，請對 ${id} ${sc.name}（市值排名第${rank}）進行全方位中長期（6~18個月）投資分析。
+  const cyclicalNote=sc.isCyclical?`（注意：${sc.sector}為景氣循環產業，基本面評分已做衰減處理，PE過低可能代表獲利位於景氣高點而非真正低估）`:'';
+  const prompt=`你是一位資深台股分析師，請對 ${id} ${sc.name}（市值排名第${rank}）${cyclicalNote}進行全方位中長期（6~18個月）投資分析。
 
 ═══ 估值面 ═══
 • PE：${vd.pe?vd.pe.toFixed(1):'N/A'}倍（產業均${vd.avgPE}倍，相對${vd.peVs!=null?(vd.peVs>0?'溢價':'折價')+Math.abs(vd.peVs)+'%':'N/A'}）
 • 股息殖利率：${vd.divYield.toFixed(2)}%
 
 ═══ 基本面 ═══
-• EPS：${f.eps}元  ROE：${f.roe}%  營收年增率：${f.yoy}%  現金股利：${f.div}元
+• EPS：${f.eps}元  ROE：${f.roe}%  營收年增率：${f.yoy}%  毛利率：${(sc.fDetail.grossMarginValue||0).toFixed(1)}%  現金股利：${f.div}元
 
 ═══ 技術面 ═══
 • 股價：${t.price}元（52週 ${t.high52}/${t.low52}，位置${t.pos52.toFixed(0)}%）
@@ -995,6 +1074,7 @@ function runScreener(){
               ${sc.suggestion}
               ${sc.exDivWarning?`<div style="margin-top:4px;font-size:10px;padding:2px 6px;border-radius:3px;display:inline-block;background:${sc.exDivWarning.color==='#ef4444'?'rgba(239,68,68,0.15)':sc.exDivWarning.color==='#f59e0b'?'rgba(245,158,11,0.15)':'rgba(100,116,139,0.15)'};color:${sc.exDivWarning.color}">${sc.exDivWarning.text}</div>`:''}
               ${sc.overheatWarning?`<div style="margin-top:4px;font-size:10px;padding:2px 6px;border-radius:3px;display:inline-block;background:rgba(249,115,22,0.15);color:${sc.overheatWarning.color}">${sc.overheatWarning.text}</div>`:''}
+              ${sc.cyclicalPeWarning?`<div style="margin-top:4px;font-size:10px;padding:2px 6px;border-radius:3px;display:inline-block;background:rgba(239,68,68,0.15);color:${sc.cyclicalPeWarning.color}">${sc.cyclicalPeWarning.text}</div>`:''}
             </td>
           </tr>`;}).join('')}
         </tbody>
