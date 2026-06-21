@@ -531,11 +531,14 @@ async function fetchInstitutional(stockId){
     if(d.status!==200||!d.data?.length)return null;
     const latest=d.data[d.data.length-1].date;
     const rows=d.data.filter(x=>x.date===latest);
+    // Debug：列出本次抓到的所有法人分類名稱，便於確認是否有遺漏的官方分類
+    if(rows.length)console.log(`[法人籌碼] ${stockId} ${latest} 原始分類:`,[...new Set(rows.map(r=>r.name))]);
     let foreign=0,trust=0,dealer=0;
     for(const row of rows){
       const net=(row.buy||0)-(row.sell||0);
       const n=row.name;
-      if(n==='Foreign_Investor')foreign+=net;
+      // 外資及陸資 + 外資自營商，兩者皆屬「外資」範疇，合併計算避免低估外資動向
+      if(n==='Foreign_Investor'||n==='Foreign_Dealer_Self')foreign+=net;
       else if(n==='Investment_Trust')trust+=net;
       else if(n==='Dealer_Self'||n==='Dealer_self'||n==='Dealer_Hedging')dealer+=net;
     }
