@@ -542,6 +542,8 @@ async function fetchInstitutional(stockId){
       else if(n==='Investment_Trust')trust+=net;
       else if(n==='Dealer_Self'||n==='Dealer_self'||n==='Dealer_Hedging')dealer+=net;
     }
+    // Debug：印出換算前的原始股數，確認問題出在原始資料還是 /1000 換算
+    console.log(`[法人籌碼-原始股數] ${stockId} foreign:${foreign} trust:${trust} dealer:${dealer}`);
     const result={foreign:Math.round(foreign/1000),trust:Math.round(trust/1000),dealer:Math.round(dealer/1000),total:Math.round((foreign+trust+dealer)/1000),date:latest};
     instCache[stockId]=result;return result;
   }catch(e){return null;}
