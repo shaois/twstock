@@ -1,6 +1,10 @@
 """
-台股中長期選股建議 App - 後端
+台股中長期選股建議 App - 後端 (完整修復版)
 使用 TWSE Open Data + NVIDIA NIM AI 分析
+優化：
+1. 優先讀取 GitHub Actions 每日更新的 cache/*.json，避免 FinMind 402
+2. 法人籌碼 API 自動 Fallback 到 TWSE 免費官方 API，解決前端閃爍問題
+3. 清理重複程式碼，修復語法錯誤
 """
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -16,7 +20,7 @@ from data_fetcher import TWStockFetcher
 from scorer import StockScorer
 from ai_analyzer import AIAnalyzer, DataCache
 
-app = FastAPI(title="台股選股 App", version="1.0.0")
+app = FastAPI(title="台股選股 App", version="1.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,9 +34,12 @@ fetcher = TWStockFetcher()
 scorer = StockScorer()
 cache = DataCache()
 
-# 快取目錄
+# 快取目錄 (用於後端即時抓取的暫存)
 CACHE_DIR = Path("/tmp/twstock_cache")
 CACHE_DIR.mkdir(exist_ok=True)
+
+# GitHub Actions 每日更新的快取目錄 (專案根目錄下的 cache/)
+GH_CACHE_DIR = Path(__file__).parent / "cache"
 
 # 股票清單（與 fetch_cache.py 同步）
 STOCK_IDS = [
@@ -50,11 +57,26 @@ STOCK_IDS = [
 
 # ========== 快取輔助函數 ==========
 
+def _read_gh_cache(dtype: str, stock_id: str):
+    """從 GitHub Actions 每日更新的 cache/{dtype}.json 中讀取特定股票的資料"""
+    file_path = GH_CACHE_DIR / f"{dtype}.json"
+    if not file_path.exists():
+        return None
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+        # 格式: {"_saved_at": "...", "data": {"2330": [...], "2317": [...]}}
+        stock_data = data.get("data", {}).get(stock_id)
+        if stock_data:
+            return {"status": 200, "data": stock_data, "msg": "from_gh_cache"}
+    except Exception as e:
+        print(f"[WARN] 讀取 GH Cache {dtype} 失敗: {e}")
+    return None
+
 def _cache_path(stock_id: str, dtype: str) -> Path:
     return CACHE_DIR / f"{dtype}_{stock_id}.json"
 
 def _cache_read(stock_id: str, dtype: str) -> dict | None:
-    """讀取快取，超過25小時視為過期"""
+    """讀取本地 /tmp 快取，超過25小時視為過期"""
     p = _cache_path(stock_id, dtype)
     if not p.exists():
         return None
@@ -68,7 +90,7 @@ def _cache_read(stock_id: str, dtype: str) -> dict | None:
         return None
 
 def _cache_write(stock_id: str, dtype: str, payload: dict):
-    """寫入快取，附上時間戳"""
+    """寫入本地 /tmp 快取，附上時間戳"""
     payload["_saved_at"] = datetime.now().isoformat()
     _cache_path(stock_id, dtype).write_text(json.dumps(payload, ensure_ascii=False))
 
@@ -102,6 +124,50 @@ async def _fetch_finmind_raw(stock_id: str, dtype: str, token: str) -> dict:
         r = await client.get(url)
         return r.json()
 
+async def _fetch_twse_institutional(stock_id: str):
+    """從 TWSE 抓取最近一個交易日的三大法人買賣超，並轉換為 FinMind 格式"""
+    today = datetime.today()
+    # 往回找 7 天，確保能找到最近的交易日
+    for i in range(7): 
+        d = today - timedelta(days=i)
+        if d.weekday() >= 5: continue # 跳過假日
+        
+        date_str = d.strftime("%Y%m%d")
+        url = f"https://www.twse.com.tw/fund/T86?response=json&date={date_str}&selectType=ALLBUT0999"
+        try:
+            async with httpx.AsyncClient(timeout=10.0, headers={"User-Agent": "Mozilla/5.0"}) as client:
+                r = await client.get(url)
+                res = r.json()
+                if res.get("stat") == "OK" and res.get("data"):
+                    fm_data = []
+                    date_fmt = f"{d.year}-{d.month:02d}-{d.day:02d}"
+                    for row in res["data"]:
+                        if str(row[0]).strip() == stock_id:
+                            def si(v):
+                                try: return int(str(v).replace(",", ""))
+                                except: return 0
+                            
+                            # TWSE T86 欄位:
+                            # 2:外買(不含自營), 3:外賣, 5:外資自營買, 6:外資自營賣
+                            # 9:投信買, 10:投信賣
+                            # 12:自營買(自行), 13:自營賣(自行), 15:自營買(對沖), 16:自營賣(對沖)
+                            foreign_buy = si(row[2]) + si(row[5])
+                            foreign_sell = si(row[3]) + si(row[6])
+                            trust_buy = si(row[9])
+                            trust_sell = si(row[10])
+                            dealer_buy = si(row[12]) + si(row[15])
+                            dealer_sell = si(row[13]) + si(row[16])
+                            
+                            fm_data.append({"Date": date_fmt, "stock_id": stock_id, "buy": foreign_buy, "sell": foreign_sell, "name": "外資及陸資"})
+                            fm_data.append({"Date": date_fmt, "stock_id": stock_id, "buy": trust_buy, "sell": trust_sell, "name": "投信"})
+                            fm_data.append({"Date": date_fmt, "stock_id": stock_id, "buy": dealer_buy, "sell": dealer_sell, "name": "自營商"})
+                            break
+                    if fm_data:
+                        return {"status": 200, "data": fm_data, "msg": "from_twse_fallback"}
+        except Exception:
+            pass
+    return None
+
 # ========== API Routes ==========
 
 @app.get("/", response_class=HTMLResponse)
@@ -118,7 +184,13 @@ async def root():
 @app.get("/health")
 async def health():
     cached_count = len(list(CACHE_DIR.glob("*.json")))
-    return {"status": "ok", "time": datetime.now().isoformat(), "cached_files": cached_count}
+    gh_count = len(list(GH_CACHE_DIR.glob("*.json"))) if GH_CACHE_DIR.exists() else 0
+    return {
+        "status": "ok", 
+        "time": datetime.now().isoformat(), 
+        "tmp_cached_files": cached_count,
+        "gh_cached_files": gh_count
+    }
 
 @app.get("/api/top50")
 async def get_top50():
@@ -226,15 +298,21 @@ async def run_batch_scoring():
             except Exception as e:
                 print(f"[WARN] {sid} 評分失敗: {e}")
 
-# ========== FinMind Proxy APIs ==========
+# ========== FinMind Proxy APIs (優化：優先讀取 GH Cache，法人籌碼 Fallback TWSE) ==========
 
 @app.get("/api/finmind/fundamental/{stock_id}")
 async def finmind_fundamental_proxy(stock_id: str, token: str = ""):
-    # 1. 先查本地快取
+    # 1. 優先讀取 GitHub Actions 每日快取 (避免 402)
+    gh_data = _read_gh_cache("fundamental", stock_id)
+    if gh_data:
+        return JSONResponse(content=gh_data)
+    
+    # 2. 讀取本地 /tmp 快取
     cached = _cache_read(stock_id, "fundamental")
     if cached:
         return JSONResponse(content=cached)
-    # 2. 快取沒有，直接 proxy FinMind
+        
+    # 3. 最後嘗試 FinMind API
     import datetime as dt
     start_date = (dt.date.today() - dt.timedelta(days=540)).strftime("%Y-%m-%d")
     url = (f"https://api.finmindtrade.com/api/v4/data"
@@ -252,11 +330,18 @@ async def finmind_fundamental_proxy(stock_id: str, token: str = ""):
 
 @app.get("/api/finmind/price/{stock_id}")
 async def finmind_price_proxy(stock_id: str, token: str = "", start_date: str = ""):
+    # 1. 優先讀取 GitHub Actions 每日快取
+    gh_data = _read_gh_cache("price", stock_id)
+    if gh_data:
+        return JSONResponse(content=gh_data)
+        
+    # 2. 讀取本地 /tmp 快取
     cached = _cache_read(stock_id, "price")
     if cached:
         return JSONResponse(content=cached)
+        
+    # 3. 最後嘗試 FinMind API
     if not start_date:
-        from datetime import datetime, timedelta
         start_date = (datetime.today() - timedelta(days=270)).strftime("%Y-%m-%d")
     url = (f"https://api.finmindtrade.com/api/v4/data"
            f"?dataset=TaiwanStockPrice"
@@ -272,17 +357,32 @@ async def finmind_price_proxy(stock_id: str, token: str = "", start_date: str = 
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/finmind/{stock_id}")
-async def finmind_proxy(stock_id: str, token: str = "", start_date: str = "2026-03-01"):
-    """法人籌碼：不快取（需要即時性），直接 proxy"""
+async def finmind_proxy(stock_id: str, token: str = "", start_date: str = ""):
+    """法人籌碼：優先 FinMind，若 402 則 Fallback 到 TWSE 免費 API"""
+    if not start_date:
+        start_date = (datetime.today() - timedelta(days=30)).strftime("%Y-%m-%d")
+        
+    # 1. 嘗試 FinMind API
     url = (f"https://api.finmindtrade.com/api/v4/data"
            f"?dataset=TaiwanStockInstitutionalInvestorsBuySell"
            f"&data_id={stock_id}&start_date={start_date}&token={token}")
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             r = await client.get(url)
-            return JSONResponse(content=r.json(), status_code=r.status_code)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("status") == 200 and data.get("data"):
+                    return JSONResponse(content=data)
+    except Exception:
+        pass
+    
+    # 2. FinMind 失敗或 402，改用 TWSE 官方 API (免費且免 Token)
+    twse_data = await _fetch_twse_institutional(stock_id)
+    if twse_data:
+        return JSONResponse(content=twse_data)
+    
+    # 3. 都失敗，回傳空資料，避免前端報錯閃爍
+    return JSONResponse(content={"status": 200, "data": [], "msg": "法人資料暫時無法取得"}, status_code=200)
 
 @app.post("/api/nvidia")
 async def nvidia_proxy(request: dict):
@@ -306,12 +406,18 @@ async def nvidia_proxy(request: dict):
 async def cache_status():
     """查看快取狀態"""
     files = list(CACHE_DIR.glob("*.json"))
-    result = {"total_files": len(files), "stocks": {}}
+    gh_files = list(GH_CACHE_DIR.glob("*.json")) if GH_CACHE_DIR.exists() else []
+    result = {
+        "tmp_cached_files": len(files),
+        "gh_cached_files": len(gh_files),
+        "stocks": {}
+    }
     for sid in STOCK_IDS[:10]:  # 只顯示前10支
         status = {}
         for dtype in ["fundamental", "revenue", "price"]:
             cached = _cache_read(sid, dtype)
-            status[dtype] = "✓" if cached else "✗"
+            gh_cached = _read_gh_cache(dtype, sid)
+            status[dtype] = "✓(GH)" if gh_cached else ("✓" if cached else "✗")
         result["stocks"][sid] = status
     return result
 
