@@ -1,10 +1,10 @@
 """
-台股中長期選股建議 App - 後端 (完整修復版)
-使用 TWSE Open Data + NVIDIA NIM AI 分析
-優化：
-1. 優先讀取 GitHub Actions 每日更新的 cache/*.json，避免 FinMind 402
-2. 法人籌碼 API 自動 Fallback 到 TWSE 免費官方 API，解決前端閃爍問題
-3. 清理重複程式碼，修復語法錯誤
+台股中長期選股建議 App - 後端 (全面優化版 v2.0)
+優化項目：
+1. 批次評分速度優化 (asyncio.gather + Semaphore)
+2. 新增 Yahoo Finance Proxy (解決 404)
+3. 優先讀取 GitHub Actions 每日快取 (解決 FinMind 402)
+4. 清理重複程式碼
 """
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -20,7 +20,7 @@ from data_fetcher import TWStockFetcher
 from scorer import StockScorer
 from ai_analyzer import AIAnalyzer, DataCache
 
-app = FastAPI(title="台股選股 App", version="1.1.0")
+app = FastAPI(title="台股選股 App", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,11 +34,11 @@ fetcher = TWStockFetcher()
 scorer = StockScorer()
 cache = DataCache()
 
-# 快取目錄 (用於後端即時抓取的暫存)
+# 快取目錄
 CACHE_DIR = Path("/tmp/twstock_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
-# GitHub Actions 每日更新的快取目錄 (專案根目錄下的 cache/)
+# GitHub Actions 每日更新的快取目錄
 GH_CACHE_DIR = Path(__file__).parent / "cache"
 
 # 股票清單（與 fetch_cache.py 同步）
@@ -127,10 +127,9 @@ async def _fetch_finmind_raw(stock_id: str, dtype: str, token: str) -> dict:
 async def _fetch_twse_institutional(stock_id: str):
     """從 TWSE 抓取最近一個交易日的三大法人買賣超，並轉換為 FinMind 格式"""
     today = datetime.today()
-    # 往回找 7 天，確保能找到最近的交易日
     for i in range(7): 
         d = today - timedelta(days=i)
-        if d.weekday() >= 5: continue # 跳過假日
+        if d.weekday() >= 5: continue
         
         date_str = d.strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/fund/T86?response=json&date={date_str}&selectType=ALLBUT0999"
@@ -147,10 +146,6 @@ async def _fetch_twse_institutional(stock_id: str):
                                 try: return int(str(v).replace(",", ""))
                                 except: return 0
                             
-                            # TWSE T86 欄位:
-                            # 2:外買(不含自營), 3:外賣, 5:外資自營買, 6:外資自營賣
-                            # 9:投信買, 10:投信賣
-                            # 12:自營買(自行), 13:自營賣(自行), 15:自營買(對沖), 16:自營賣(對沖)
                             foreign_buy = si(row[2]) + si(row[5])
                             foreign_sell = si(row[3]) + si(row[6])
                             trust_buy = si(row[9])
@@ -272,33 +267,42 @@ async def run_screener(min_score: float = 60.0):
 @app.post("/api/batch-score")
 async def batch_score(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_batch_scoring)
-    return {"success": True, "message": "批次評分已開始，約需 2-3 分鐘，請稍後刷新"}
+    return {"success": True, "message": "批次評分已開始，約需 30-40 秒，請稍後刷新"}
 
+# ⚡ 優化：使用 asyncio.gather + Semaphore 加速批次評分
 async def run_batch_scoring():
-    """批次評分所有股票"""
+    """批次評分所有股票 (並發優化版)"""
+    semaphore = asyncio.Semaphore(5)  # 限制同時抓取 5 支股票
+    
+    async def score_single(stock):
+        async with semaphore:
+            sid = stock["stock_id"]
+            if not cache.get(f"score_{sid}"):
+                try:
+                    fundamental = await fetcher.fetch_fundamental(sid)
+                    technical = await fetcher.fetch_technical(sid)
+                    valuation = await fetcher.fetch_valuation(
+                        sid,
+                        technical.get("current_price", 0),
+                        fundamental.get("eps", 0),
+                        fundamental.get("cash_dividend", 0),
+                    )
+                    score_result = scorer.calculate(sid, fundamental, technical, valuation)
+                    cache.set(f"score_{sid}", score_result, ttl_hours=6)
+                    print(f"[SCORE] {sid} 完成")
+                except Exception as e:
+                    print(f"[WARN] {sid} 評分失敗: {e}")
+
     top50 = cache.get("top50")
     if not top50:
         top50 = await fetcher.fetch_top50_stocks()
         cache.set("top50", top50, ttl_hours=24)
-    for stock in top50:
-        sid = stock["stock_id"]
-        if not cache.get(f"score_{sid}"):
-            try:
-                fundamental = await fetcher.fetch_fundamental(sid)
-                technical = await fetcher.fetch_technical(sid)
-                valuation = await fetcher.fetch_valuation(
-                    sid,
-                    technical.get("current_price", 0),
-                    fundamental.get("eps", 0),
-                    fundamental.get("cash_dividend", 0),
-                )
-                score_result = scorer.calculate(sid, fundamental, technical, valuation)
-                cache.set(f"score_{sid}", score_result, ttl_hours=6)
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                print(f"[WARN] {sid} 評分失敗: {e}")
+    
+    # 並發執行所有股票的評分
+    await asyncio.gather(*(score_single(stock) for stock in top50))
+    print("[BATCH] 批次評分完成")
 
-# ========== FinMind Proxy APIs (優化：優先讀取 GH Cache，法人籌碼 Fallback TWSE) ==========
+# ========== FinMind Proxy APIs (優化：優先讀取 GH Cache) ==========
 
 @app.get("/api/finmind/fundamental/{stock_id}")
 async def finmind_fundamental_proxy(stock_id: str, token: str = ""):
@@ -376,13 +380,26 @@ async def finmind_proxy(stock_id: str, token: str = "", start_date: str = ""):
     except Exception:
         pass
     
-    # 2. FinMind 失敗或 402，改用 TWSE 官方 API (免費且免 Token)
+    # 2. FinMind 失敗或 402，改用 TWSE 官方 API
     twse_data = await _fetch_twse_institutional(stock_id)
     if twse_data:
         return JSONResponse(content=twse_data)
     
-    # 3. 都失敗，回傳空資料，避免前端報錯閃爍
+    # 3. 都失敗，回傳空資料
     return JSONResponse(content={"status": 200, "data": [], "msg": "法人資料暫時無法取得"}, status_code=200)
+
+# 🔗 新增：Yahoo Finance Proxy (解決前端 404 錯誤)
+@app.get("/api/yahoo/{stock_id}")
+async def yahoo_proxy(stock_id: str, range_: str = "1y"):
+    """Proxy Yahoo Finance API，解決 CORS 問題"""
+    try:
+        symbol = f"{stock_id}.TW"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range={range_}"
+        async with httpx.AsyncClient(timeout=20.0, headers={"User-Agent": "Mozilla/5.0"}) as client:
+            r = await client.get(url)
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/nvidia")
 async def nvidia_proxy(request: dict):
@@ -412,7 +429,7 @@ async def cache_status():
         "gh_cached_files": len(gh_files),
         "stocks": {}
     }
-    for sid in STOCK_IDS[:10]:  # 只顯示前10支
+    for sid in STOCK_IDS[:10]:
         status = {}
         for dtype in ["fundamental", "revenue", "price"]:
             cached = _cache_read(sid, dtype)
@@ -423,10 +440,6 @@ async def cache_status():
 
 @app.post("/api/admin/refresh-cache")
 async def refresh_cache(background_tasks: BackgroundTasks, secret: str = ""):
-    """
-    每日快取更新 endpoint，由 Render Cron Job 呼叫。
-    ⚠️ 安全性：必須從環境變數 CRON_SECRET 讀取，禁止硬編碼
-    """
     expected = os.environ.get("CRON_SECRET")
     if not expected:
         raise HTTPException(status_code=500, detail="CRON_SECRET 未設定")

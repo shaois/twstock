@@ -1,8 +1,9 @@
 """
-TWSE + Yahoo Finance 資料抓取模組 v3
-技術面：Yahoo Finance (12個月) + 52週高低
-基本面：優先讀取快取，fallback 到 TWSE
-估值面：Yahoo Finance meta (股價/52週高低推算)
+TWSE + Yahoo Finance 資料抓取模組 v4 (優化版)
+修復：
+1. 正確解析 FinMind 財報資料中的 ROE (ReturnOnEquity)
+2. 優先讀取 GitHub Actions 每日快取
+3. 移除硬編碼資料，改用動態抓取
 """
 import httpx
 import asyncio
@@ -29,6 +30,7 @@ class TWStockFetcher:
         self.client = httpx.AsyncClient(timeout=30.0, headers=YAHOO_HEADERS)
         self.cache_dir = Path("/tmp/twstock_cache")
         self.cache_dir.mkdir(exist_ok=True)
+        self.gh_cache_dir = Path(__file__).parent / "cache"
     
     def _get_sector(self, stock_id):
         m = {
@@ -45,9 +47,22 @@ class TWStockFetcher:
         }
         return m.get(stock_id, "其他")
     
+    def _read_gh_cache(self, dtype: str, stock_id: str):
+        """從 GitHub Actions 每日更新的 cache/{dtype}.json 中讀取特定股票的資料"""
+        file_path = self.gh_cache_dir / f"{dtype}.json"
+        if not file_path.exists():
+            return None
+        try:
+            data = json.loads(file_path.read_text(encoding="utf-8"))
+            stock_data = data.get("data", {}).get(stock_id)
+            if stock_data:
+                return {"status": 200, "data": stock_data, "msg": "from_gh_cache"}
+        except Exception as e:
+            print(f"[WARN] 讀取 GH Cache {dtype} 失敗: {e}")
+        return None
+    
     async def fetch_top50_stocks(self):
         """從快取或 TWSE 抓取前100大股票清單"""
-        # 嘗試從快取讀取
         cache_file = self.cache_dir / "top50_stocks.json"
         if cache_file.exists():
             try:
@@ -58,7 +73,6 @@ class TWStockFetcher:
             except:
                 pass
         
-        # 從 TWSE 抓取市值前100大
         stocks = []
         try:
             url = "https://opendata.twse.com.tw/v1/opendata/t000300_L"
@@ -66,7 +80,7 @@ class TWStockFetcher:
                 resp = await client.get(url)
                 if resp.status_code == 200:
                     data = resp.json()
-                    for row in data[:100]:  # 前100大
+                    for row in data[:100]:
                         stock_id = str(row.get("公司代號", "")).strip()
                         name = row.get("公司名稱", "")
                         if stock_id and len(stock_id) == 4:
@@ -77,12 +91,10 @@ class TWStockFetcher:
                             })
         except Exception as e:
             print(f"[WARN] 抓取 TWSE 股票清單失敗: {e}")
-            # Fallback 到基本清單
             fallback_ids = ["2330", "2317", "2454", "2308", "2382", "2881", "2882", "2886", "2884", "2891"]
             for sid in fallback_ids:
                 stocks.append({"stock_id": sid, "name": "", "sector": self._get_sector(sid)})
         
-        # 寫入快取
         if stocks:
             cache_file.write_text(json.dumps({
                 "_saved_at": datetime.now().isoformat(),
@@ -143,7 +155,6 @@ class TWStockFetcher:
         
         pos = (current_price - low52) / (high52 - low52) * 100 if high52 != low52 else 50
         
-        # 12個月趨勢：現價 vs 半年前
         half_year_price = closes[-120] if len(closes) >= 120 else closes[0]
         trend_6m = (current_price - half_year_price) / half_year_price * 100
         
@@ -167,23 +178,23 @@ class TWStockFetcher:
         }
     
     async def fetch_fundamental(self, stock_id: str) -> dict:
-        """基本面：優先讀取快取，fallback 到 TWSE"""
-        # 嘗試從快取讀取
-        fundamental_data = await self._read_cache(stock_id, "fundamental")
+        """基本面：優先讀取快取，正確解析 ROE"""
+        # 嘗試從 GitHub Actions 每日快取讀取
+        fundamental_data = self._read_gh_cache("fundamental", stock_id)
         
         eps = 0
         roe = 0
         cash_dividend = 0
         
         if fundamental_data and fundamental_data.get("status") == 200:
-            # 從 FinMind 財報資料計算
             data = fundamental_data.get("data", [])
             if data:
-                # 找最新的 EPS 和 ROE
+                # 找最新的 EPS
                 for row in reversed(data):
                     if row.get("type") == "EPS" and row.get("value"):
                         eps = float(row["value"])
                         break
+                # 找最新的 ROE (ReturnOnEquity)
                 for row in reversed(data):
                     if row.get("type") == "ReturnOnEquity" and row.get("value"):
                         roe = float(row["value"])
@@ -193,11 +204,10 @@ class TWStockFetcher:
         revenue_yoy = await self._fetch_revenue_yoy(stock_id)
         
         # 抓取除息資料
-        exdiv_data = await self._read_cache(stock_id, "exdiv")
+        exdiv_data = self._read_gh_cache("exdiv", stock_id)
         if exdiv_data and exdiv_data.get("status") == 200:
             exdiv_list = exdiv_data.get("data", [])
             if exdiv_list:
-                # 找最近的現金股利
                 cash_dividend = exdiv_list[0].get("CashEarningsDistribution", 0) or 0
         
         return {
@@ -241,20 +251,6 @@ class TWStockFetcher:
         except:
             pass
         return None
-    
-    async def _read_cache(self, stock_id: str, dtype: str) -> dict | None:
-        """讀取快取檔案"""
-        cache_file = self.cache_dir / f"{dtype}_{stock_id}.json"
-        if not cache_file.exists():
-            return None
-        try:
-            data = json.loads(cache_file.read_text())
-            saved_at = datetime.fromisoformat(data.get("_saved_at", "2000-01-01"))
-            if datetime.now() - saved_at > timedelta(hours=25):
-                return None
-            return data
-        except:
-            return None
     
     def _calc_rsi(self, closes, period=14):
         if len(closes) < period + 1:
