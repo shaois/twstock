@@ -1,10 +1,10 @@
 """
 股票評分模組 v3.0 (獲利空間優化版)
 總分 100 分：
-- 基本面（體質）40分：EPS(12) + ROE(12) + 營收成長(8) + 殖利率(8)
-- 技術面（動能）35分：均線多頭(12) + MACD(8) + RSI(7) + 量價(8)
-- 估值面（安全邊際）15分：PE合理性(10) + 殖利率(5)
-- 獲利空間（上漲潛力）10分：52周位置(4) + 技術突破(3) + 量能(3)
+- 基本面（體質）40分
+- 技術面（動能）35分
+- 估值面（安全邊際）15分
+- 獲利空間（上漲潛力）10分
 """
 
 class StockScorer:
@@ -52,6 +52,10 @@ class StockScorer:
         else:
             grade, suggestion = "D", "暫不建議"
         
+        current_price = technical.get("current_price", 1) or 1
+        cash_div = fundamental.get("cash_dividend", 0)
+        div_yield = (cash_div / current_price * 100) if current_price > 0 else 0
+        
         return {
             "stock_id": stock_id,
             "sector": sector,
@@ -59,14 +63,14 @@ class StockScorer:
             "fundamental_score": f_score,
             "technical_score": t_score,
             "valuation_score": v_score,
-            "upside_score": u_score,  # 新增：獲利空間分數
+            "upside_score": u_score,
             "grade": grade,
             "suggestion": suggestion,
             "fundamental": fundamental,
             "technical": technical,
             "valuation": valuation,
             "detail": {
-                "dividend_yield_pct": round(fundamental.get("cash_dividend", 0) / max(technical.get("current_price", 1), 0.01) * 100, 2),
+                "dividend_yield_pct": round(div_yield, 2),
                 "exdiv_date": fundamental.get("exdiv_date", ""),
                 "pe_ratio": valuation.get("pe"),
                 "price_position_52w": technical.get("price_position_52w", 0)
@@ -130,33 +134,33 @@ class StockScorer:
         
         # 1. 均線多頭排列 (12分)
         if price > ma5 > ma20 > ma60 and ma20 > 0:
-            score += 12  # 完美多頭
+            score += 12
         elif price > ma20 > ma60 and ma20 > 0:
-            score += 8   # 標準多頭
+            score += 8
         elif price > ma20 and ma20 > 0:
-            score += 4   # 初步多頭
+            score += 4
         
         # 2. MACD 動能 (8分)
         if macd_hist > 0:
-            score += 8   # 多頭動能
+            score += 8
         elif macd_hist > -1:
-            score += 4   # 動能轉強
+            score += 4
         
         # 3. RSI 健康區間 (7分)
         if 50 <= rsi <= 70:
-            score += 7   # 最佳區間
+            score += 7
         elif 40 <= rsi < 50:
-            score += 4   # 偏低可布局
+            score += 4
         elif 70 < rsi <= 80:
-            score += 3   # 偏高手
+            score += 3
         
         # 4. 量價配合 (8分)
         if vol_ratio > 1.5 and price > ma20:
-            score += 8   # 量增價漲
+            score += 8
         elif vol_ratio > 1.2 and price > ma20:
-            score += 5   # 量溫和放大
+            score += 5
         elif 0.8 <= vol_ratio <= 1.2:
-            score += 3   # 量平
+            score += 3
         
         return min(score, 35)
     
@@ -165,22 +169,23 @@ class StockScorer:
         score = 0
         pe = valuation.get("pe")
         pe_vs_sector = valuation.get("pe_vs_sector", 0)
-        div_yield = fundamental.get("cash_dividend", 0) / max(valuation.get("current_price", 1), 0.01) * 100 if valuation.get("current_price") else 0
+        cash_div = fundamental.get("cash_dividend", 0)
+        current_price = valuation.get("current_price", 1) or 1
+        div_yield = (cash_div / current_price * 100) if current_price > 0 else 0
         
         # 1. PE 合理性 (10分) - 即使貴也給分
         if pe_vs_sector is not None:
-            if pe_vs_sector <= -20:  # 折價20%以上
+            if pe_vs_sector <= -20:
                 score += 10
-            elif pe_vs_sector <= -5:  # 折價5-20%
+            elif pe_vs_sector <= -5:
                 score += 7
-            elif pe_vs_sector <= 10:  # 合理區間
+            elif pe_vs_sector <= 10:
                 score += 5
-            elif pe_vs_sector <= 30:  # 溢價10-30%
+            elif pe_vs_sector <= 30:
                 score += 3
-            else:  # 溢價30%以上
+            else:
                 score += 1  # 最低分，不是0分
         elif pe is not None:
-            # 無產業比較，用絕對值
             pe_threshold = 12 if sector == "金融" else 20
             if pe < pe_threshold * 0.7:
                 score += 10
@@ -202,17 +207,17 @@ class StockScorer:
         return min(score, 15)
     
     def _score_upside_potential(self, technical: dict, valuation: dict) -> int:
-        """獲利空間評分 (滿分 10) - 新增指標"""
+        """獲利空間評分 (滿分 10)"""
         score = 0
         
-        # 1. 52周位置 (4分) - 越低越有上漲空間
+        # 1. 52周位置 (4分)
         pos_52w = technical.get("price_position_52w", 50)
         if pos_52w < 30:
-            score += 4  # 低位，上漲空間大
+            score += 4
         elif pos_52w < 50:
-            score += 3  # 中低位
+            score += 3
         elif pos_52w < 70:
-            score += 1  # 中高位
+            score += 1
         
         # 2. 技術突破信號 (3分)
         price = technical.get("current_price", 0)
@@ -220,17 +225,17 @@ class StockScorer:
         high52 = technical.get("high52", 0)
         
         if price > ma60 and ma60 > 0:
-            score += 2  # 突破60日線
+            score += 2
         
         if price > high52 * 0.95:
-            score += 1  # 接近52周高，可能突破
+            score += 1
         
         # 3. 量能放大 (3分)
         vol_ratio = technical.get("vol_ratio_5_20", 1)
         if vol_ratio > 1.5:
-            score += 3  # 大量，資金進場
+            score += 3
         elif vol_ratio > 1.2:
-            score += 2  # 量增
+            score += 2
         elif vol_ratio > 1.0:
             score += 1
         
