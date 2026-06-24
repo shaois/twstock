@@ -28,9 +28,6 @@ fetcher = TWStockFetcher()
 scorer = StockScorer()
 cache = DataCache()
 
-CACHE_DIR = Path("/tmp/twstock_cache")
-CACHE_DIR.mkdir(exist_ok=True)
-
 @app.get("/", response_class=HTMLResponse)
 async def root():
     html_path = Path(__file__).parent / "index.html"
