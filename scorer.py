@@ -1,21 +1,80 @@
 class StockScorer:
-    SECTORS = {
-        "金融": ["2881", "2882", "2886", "2884", "2891", "2892", "5880", "2885", "2883", "2887", "2801", "5876", "2880", "2888", "2890", "2889", "2820", "2855"],
-        "科技": ["2330", "2454", "2317", "2308", "2382", "2303", "3711", "2357", "2395", "4938", "2379", "2408", "3008", "2474", "2327", "2356", "2344", "3034", "2376", "2385", "2301", "2324", "2353", "2354", "2383", "3037", "2449", "6669", "2360", "3443", "6415", "2367", "4958", "3533", "6488", "8046", "3189", "2049", "2377", "2404", "3673", "2496", "4966", "6278"],
-        "傳產": ["1301", "1303", "1326", "6505", "2002", "2207", "2201", "2105", "1402", "1216", "2912", "2347", "9910", "2603", "2609", "2615", "2618", "2006", "1101", "1102", "1590", "1476", "2542", "9945"]
-    }
-
-    def _get_sector(self, stock_id: str) -> str:
-        for sector, ids in self.SECTORS.items():
-            if stock_id in ids: return sector
-        return "其他"
-
     def calculate(self, stock_id: str, fundamental: dict, technical: dict, valuation: dict) -> dict:
-        sector = self._get_sector(stock_id)
-        f_score = self._score_fundamental(fundamental, technical, sector)
-        t_score = self._score_technical(technical)
-        v_score = self._score_valuation(valuation, fundamental, sector)
-        u_score = self._score_upside_potential(technical, valuation)
+        # 基本面評分 (40分)
+        f_score = 0
+        eps = fundamental.get("eps", 0)
+        roe = fundamental.get("roe", 0)
+        rev_yoy = fundamental.get("revenue_yoy", 0)
+        cash_div = fundamental.get("cash_dividend", 0)
+        current_price = technical.get("current_price", 1) or 1
+        div_yield = (cash_div / current_price * 100) if current_price > 0 else 0
+        
+        if eps > 8: f_score += 12
+        elif eps > 4: f_score += 8
+        elif eps > 0: f_score += 4
+        
+        if roe > 15: f_score += 12
+        elif roe > 10: f_score += 8
+        elif roe > 5: f_score += 4
+        
+        if rev_yoy > 20: f_score += 8
+        elif rev_yoy > 10: f_score += 5
+        elif rev_yoy > 0: f_score += 2
+        
+        if div_yield > 4: f_score += 8
+        elif div_yield > 2: f_score += 4
+        
+        # 技術面評分 (35分)
+        t_score = 0
+        price = technical.get("current_price", 0)
+        ma20 = technical.get("ma20", 0)
+        ma60 = technical.get("ma60", 0)
+        rsi = technical.get("rsi14", 50)
+        macd_hist = technical.get("macd_hist", 0)
+        vol_ratio = technical.get("vol_ratio_5_20", 1)
+        
+        if price > ma20 > ma60 and ma20 > 0: t_score += 12
+        elif price > ma20 and ma20 > 0: t_score += 8
+        
+        if macd_hist > 0: t_score += 8
+        elif macd_hist > -1: t_score += 4
+        
+        if 50 <= rsi <= 70: t_score += 7
+        elif 40 <= rsi < 50: t_score += 4
+        
+        if vol_ratio > 1.5 and price > ma20: t_score += 8
+        elif vol_ratio > 1.2 and price > ma20: t_score += 5
+        elif 0.8 <= vol_ratio <= 1.2: t_score += 3
+        
+        # 估值面評分 (15分)
+        v_score = 0
+        pe = valuation.get("pe")
+        pe_vs_sector = valuation.get("pe_vs_sector", 0)
+        
+        if pe_vs_sector is not None:
+            if pe_vs_sector <= -20: v_score += 10
+            elif pe_vs_sector <= -5: v_score += 7
+            elif pe_vs_sector <= 10: v_score += 5
+            elif pe_vs_sector <= 30: v_score += 3
+            else: v_score += 1
+        
+        if div_yield > 6: v_score += 5
+        elif div_yield > 4: v_score += 3
+        elif div_yield > 2: v_score += 1
+        
+        # 獲利空間 (10分)
+        u_score = 0
+        pos_52w = technical.get("price_position_52w", 50)
+        if pos_52w < 30: u_score += 4
+        elif pos_52w < 50: u_score += 3
+        elif pos_52w < 70: u_score += 1
+        
+        if price > ma60 and ma60 > 0: u_score += 2
+        
+        if vol_ratio > 1.5: u_score += 3
+        elif vol_ratio > 1.2: u_score += 2
+        elif vol_ratio > 1.0: u_score += 1
+        
         total = f_score + t_score + v_score + u_score
         
         if total >= 85: grade, suggestion = "A+", "強力買進"
@@ -25,106 +84,17 @@ class StockScorer:
         elif total >= 45: grade, suggestion = "C", "觀望"
         else: grade, suggestion = "D", "暫不建議"
         
-        current_price = technical.get("current_price", 1) or 1
-        cash_div = fundamental.get("cash_dividend", 0)
-        div_yield = (cash_div / current_price * 100) if current_price > 0 else 0
-        
         return {
-            "stock_id": stock_id, "sector": sector, "total_score": total,
-            "fundamental_score": f_score, "technical_score": t_score,
-            "valuation_score": v_score, "upside_score": u_score,
-            "grade": grade, "suggestion": suggestion,
-            "fundamental": fundamental, "technical": technical, "valuation": valuation,
-            "detail": {"dividend_yield_pct": round(div_yield, 2), "exdiv_date": fundamental.get("exdiv_date", ""), "pe_ratio": valuation.get("pe"), "price_position_52w": technical.get("price_position_52w", 0)}
+            "stock_id": stock_id,
+            "total_score": total,
+            "fundamental_score": f_score,
+            "technical_score": t_score,
+            "valuation_score": v_score,
+            "upside_score": u_score,
+            "grade": grade,
+            "suggestion": suggestion,
+            "fundamental": fundamental,
+            "technical": technical,
+            "valuation": valuation,
+            "detail": {"dividend_yield_pct": round(div_yield, 2)}
         }
-    
-    def _score_fundamental(self, fundamental: dict, technical: dict, sector: str) -> int:
-        score = 0
-        eps = fundamental.get("eps", 0); roe = fundamental.get("roe", 0)
-        rev_yoy = fundamental.get("revenue_yoy", 0)
-        current_price = technical.get("current_price", 1) or 1
-        cash_div = fundamental.get("cash_dividend", 0)
-        div_yield = (cash_div / current_price * 100) if current_price > 0 else 0
-        
-        if sector == "金融":
-            if roe > 10: score += 12
-            elif roe > 7: score += 8
-            elif roe > 5: score += 4
-            if div_yield > 5: score += 8
-            elif div_yield > 3: score += 5
-            elif div_yield > 1: score += 2
-            if eps > 3: score += 10
-            elif eps > 1: score += 5
-            score += 5
-        else:
-            if eps > 8: score += 12
-            elif eps > 4: score += 8
-            elif eps > 0: score += 4
-            if roe > 15: score += 12
-            elif roe > 10: score += 8
-            elif roe > 5: score += 4
-            if rev_yoy > 20: score += 8
-            elif rev_yoy > 10: score += 5
-            elif rev_yoy > 0: score += 2
-            if div_yield > 4: score += 8
-            elif div_yield > 2: score += 4
-        return min(score, 40)
-    
-    def _score_technical(self, technical: dict) -> int:
-        score = 0
-        price = technical.get("current_price", 0)
-        ma5 = technical.get("ma5", 0); ma20 = technical.get("ma20", 0); ma60 = technical.get("ma60", 0)
-        rsi = technical.get("rsi14", 50); macd_hist = technical.get("macd_hist", 0)
-        vol_ratio = technical.get("vol_ratio_5_20", 1)
-        
-        if price > ma5 and ma5 > ma20 and ma20 > ma60 and ma20 > 0: score += 12
-        elif price > ma20 and ma20 > ma60 and ma20 > 0: score += 8
-        elif price > ma20 and ma20 > 0: score += 4
-        if macd_hist > 0: score += 8
-        elif macd_hist > -1: score += 4
-        if 50 <= rsi <= 70: score += 7
-        elif 40 <= rsi < 50: score += 4
-        elif 70 < rsi <= 80: score += 3
-        if vol_ratio > 1.5 and price > ma20: score += 8
-        elif vol_ratio > 1.2 and price > ma20: score += 5
-        elif 0.8 <= vol_ratio <= 1.2: score += 3
-        return min(score, 35)
-    
-    def _score_valuation(self, valuation: dict, fundamental: dict, sector: str) -> int:
-        score = 0
-        pe = valuation.get("pe"); pe_vs_sector = valuation.get("pe_vs_sector", 0)
-        cash_div = fundamental.get("cash_dividend", 0)
-        current_price = valuation.get("current_price", 1) or 1
-        div_yield = (cash_div / current_price * 100) if current_price > 0 else 0
-        
-        if pe_vs_sector is not None:
-            if pe_vs_sector <= -20: score += 10
-            elif pe_vs_sector <= -5: score += 7
-            elif pe_vs_sector <= 10: score += 5
-            elif pe_vs_sector <= 30: score += 3
-            else: score += 1
-        elif pe is not None:
-            pe_threshold = 12 if sector == "金融" else 20
-            if pe < pe_threshold * 0.7: score += 10
-            elif pe < pe_threshold: score += 6
-            elif pe < pe_threshold * 1.5: score += 3
-            else: score += 1
-        if div_yield > 6: score += 5
-        elif div_yield > 4: score += 3
-        elif div_yield > 2: score += 1
-        return min(score, 15)
-    
-    def _score_upside_potential(self, technical: dict, valuation: dict) -> int:
-        score = 0
-        pos_52w = technical.get("price_position_52w", 50)
-        if pos_52w < 30: score += 4
-        elif pos_52w < 50: score += 3
-        elif pos_52w < 70: score += 1
-        price = technical.get("current_price", 0); ma60 = technical.get("ma60", 0); high52 = technical.get("high52", 0)
-        if price > ma60 and ma60 > 0: score += 2
-        if price > high52 * 0.95: score += 1
-        vol_ratio = technical.get("vol_ratio_5_20", 1)
-        if vol_ratio > 1.5: score += 3
-        elif vol_ratio > 1.2: score += 2
-        elif vol_ratio > 1.0: score += 1
-        return min(score, 10)
