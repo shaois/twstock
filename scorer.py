@@ -1,79 +1,159 @@
+"""
+股票評分引擎 v2
+滿分 120 分：
+  基本面 50分：EPS(15) + ROE(15) + 營收年增率(10) + 股息殖利率(10)
+  技術面 50分：均線多頭(20) + RSI(10) + MACD(8) + 成交量(7) + 6個月趨勢(5)
+  估值面 20分：PE合理性(12) + 股息殖利率吸引力(8)
+"""
+
 class StockScorer:
-    def calculate(self, stock_id: str, fundamental: dict, technical: dict, valuation: dict) -> dict:
-        f_score = 0
-        eps = fundamental.get("eps", 0)
-        roe = fundamental.get("roe", 0)
-        rev_yoy = fundamental.get("revenue_yoy", 0)
-        cash_div = fundamental.get("cash_dividend", 0)
-        current_price = technical.get("current_price", 1) or 1
-        div_yield = (cash_div / current_price * 100) if current_price > 0 else 0
-        
-        if eps > 8: f_score += 12
-        elif eps > 4: f_score += 8
-        elif eps > 0: f_score += 4
-        if roe > 15: f_score += 12
-        elif roe > 10: f_score += 8
-        elif roe > 5: f_score += 4
-        if rev_yoy > 20: f_score += 8
-        elif rev_yoy > 10: f_score += 5
-        elif rev_yoy > 0: f_score += 2
-        if div_yield > 4: f_score += 8
-        elif div_yield > 2: f_score += 4
-        
-        t_score = 0
-        price = technical.get("current_price", 0)
-        ma20 = technical.get("ma20", 0)
-        ma60 = technical.get("ma60", 0)
-        rsi = technical.get("rsi14", 50)
-        macd_hist = technical.get("macd_hist", 0)
-        vol_ratio = technical.get("vol_ratio_5_20", 1)
-        
-        if price > ma20 > ma60 and ma20 > 0: t_score += 12
-        elif price > ma20 and ma20 > 0: t_score += 8
-        if macd_hist > 0: t_score += 8
-        elif macd_hist > -1: t_score += 4
-        if 50 <= rsi <= 70: t_score += 7
-        elif 40 <= rsi < 50: t_score += 4
-        if vol_ratio > 1.5 and price > ma20: t_score += 8
-        elif vol_ratio > 1.2 and price > ma20: t_score += 5
-        elif 0.8 <= vol_ratio <= 1.2: t_score += 3
-        
-        v_score = 0
-        pe = valuation.get("pe")
-        pe_vs_sector = valuation.get("pe_vs_sector", 0)
-        if pe_vs_sector is not None:
-            if pe_vs_sector <= -20: v_score += 10
-            elif pe_vs_sector <= -5: v_score += 7
-            elif pe_vs_sector <= 10: v_score += 5
-            elif pe_vs_sector <= 30: v_score += 3
-            else: v_score += 1
-        if div_yield > 6: v_score += 5
-        elif div_yield > 4: v_score += 3
-        elif div_yield > 2: v_score += 1
-        
-        u_score = 0
-        pos_52w = technical.get("price_position_52w", 50)
-        if pos_52w < 30: u_score += 4
-        elif pos_52w < 50: u_score += 3
-        elif pos_52w < 70: u_score += 1
-        if price > ma60 and ma60 > 0: u_score += 2
-        if vol_ratio > 1.5: u_score += 3
-        elif vol_ratio > 1.2: u_score += 2
-        elif vol_ratio > 1.0: u_score += 1
-        
-        total = f_score + t_score + v_score + u_score
-        if total >= 85: grade = "A+"
-        elif total >= 75: grade = "A"
-        elif total >= 65: grade = "B+"
-        elif total >= 55: grade = "B"
-        elif total >= 45: grade = "C"
-        else: grade = "D"
-        
+
+    def calculate(self, stock_id, fundamental, technical, valuation=None) -> dict:
+        f_score, f_detail = self._score_fundamental(fundamental, technical)
+        t_score, t_detail = self._score_technical(technical)
+        v_score, v_detail = self._score_valuation(valuation or {}, fundamental, technical)
+        total = round(f_score + t_score + v_score, 1)
+
+        if total >= 95:    grade, suggestion = "A+", "強力買進"
+        elif total >= 80:  grade, suggestion = "A",  "強烈建議關注"
+        elif total >= 65:  grade, suggestion = "B",  "值得追蹤"
+        elif total >= 50:  grade, suggestion = "C",  "中性觀望"
+        else:              grade, suggestion = "D",  "暫不建議"
+
         return {
-            "stock_id": stock_id, "total_score": total,
-            "fundamental_score": f_score, "technical_score": t_score,
-            "valuation_score": v_score, "upside_score": u_score,
-            "grade": grade, "suggestion": "值得追蹤",
-            "fundamental": fundamental, "technical": technical, "valuation": valuation,
-            "detail": {"dividend_yield_pct": round(div_yield, 2)}
+            "stock_id":           stock_id,
+            "total_score":        total,
+            "fundamental_score":  round(f_score, 1),
+            "technical_score":    round(t_score, 1),
+            "valuation_score":    round(v_score, 1),
+            "grade":              grade,
+            "suggestion":         suggestion,
+            "detail":             {**f_detail, **t_detail, **v_detail},
+            "fundamental":        fundamental,
+            "technical":          technical,
+            "valuation":          valuation or {},
         }
+
+    def _score_fundamental(self, f, t):
+        score = 0; detail = {}
+
+        eps = f.get("eps", 0)
+        eps_s = min(max(eps / 10 * 15, 0), 15) if eps > 0 else 0
+        score += eps_s; detail["eps_score"] = round(eps_s, 1)
+
+        roe = f.get("roe", 0)
+        roe_s = min(max(roe / 20 * 15, 0), 15) if roe > 0 else 0
+        score += roe_s; detail["roe_score"] = round(roe_s, 1)
+
+        yoy = f.get("revenue_yoy", 0)
+        yoy_s = min(max(yoy / 20 * 10, 0), 10) if yoy > 0 else 0
+        score += yoy_s; detail["revenue_yoy_score"] = round(yoy_s, 1)
+
+        price = t.get("current_price", 0)
+        cash_div = f.get("cash_dividend", 0)
+        div_yield = cash_div / price * 100 if price > 0 and cash_div > 0 else 0
+        div_s = min(max(div_yield / 5 * 10, 0), 10)
+        score += div_s
+        detail["dividend_yield_score"] = round(div_s, 1)
+        detail["dividend_yield_pct"]   = round(div_yield, 2)
+
+        return score, detail
+
+    def _score_technical(self, t):
+        score = 0; detail = {}
+        price = t.get("current_price", 0)
+        ma5   = t.get("ma5", 0)
+        ma20  = t.get("ma20", 0)
+        ma60  = t.get("ma60", 0)
+        ma120 = t.get("ma120", 0)
+        ma240 = t.get("ma240", 0)
+
+        # 均線多頭排列（20分，新增半年線/年線）
+        ma_s = 0
+        if price > 0 and ma5 > 0:
+            if price > ma5:   ma_s += 4
+            if ma5 > ma20:    ma_s += 4
+            if ma20 > ma60:   ma_s += 4
+            if ma60 > ma120:  ma_s += 4
+            if ma120 > ma240 and ma240 > 0: ma_s += 4
+        score += ma_s; detail["ma_score"] = ma_s
+
+        # RSI (10分)
+        rsi = t.get("rsi14", 50)
+        if 50 <= rsi <= 70:   rsi_s = 10
+        elif 40 <= rsi < 50:  rsi_s = 7
+        elif 70 < rsi <= 80:  rsi_s = 6
+        elif 30 <= rsi < 40:  rsi_s = 5
+        else:                 rsi_s = 2
+        score += rsi_s; detail["rsi_score"] = rsi_s
+
+        # MACD (8分)
+        macd    = t.get("macd", 0)
+        signal  = t.get("macd_signal", 0)
+        hist    = t.get("macd_hist", 0)
+        macd_s = 0
+        if macd > signal: macd_s += 4
+        if hist > 0:      macd_s += 2
+        if macd > 0:      macd_s += 2
+        score += macd_s; detail["macd_score"] = macd_s
+
+        # 成交量趨勢 (7分)
+        vol_ratio = t.get("vol_ratio_5_20", 1.0)
+        if vol_ratio >= 1.3:   vol_s = 7
+        elif vol_ratio >= 1.0: vol_s = 5
+        elif vol_ratio >= 0.7: vol_s = 3
+        else:                  vol_s = 0
+        score += vol_s; detail["volume_score"] = vol_s
+
+        # 6個月趨勢 (5分)
+        trend = t.get("trend_6m", 0)
+        if trend >= 20:    trend_s = 5
+        elif trend >= 10:  trend_s = 4
+        elif trend >= 0:   trend_s = 3
+        elif trend >= -10: trend_s = 1
+        else:              trend_s = 0
+        score += trend_s; detail["trend_6m_score"] = trend_s
+        detail["price_position_52w"] = t.get("price_position_52w", 50)
+
+        return score, detail
+
+    def _score_valuation(self, v, f, t):
+        score = 0; detail = {}
+        pe = v.get("pe")
+        pe_vs = v.get("pe_vs_sector")   # 正=溢價%, 負=折價%
+        div_yield = v.get("div_yield")
+
+        # PE 合理性 (12分)
+        # 折價 ≥30% = 12分（非常便宜）
+        # 折價 10~30% = 9分
+        # ±10% = 6分（合理）
+        # 溢價 10~30% = 3分
+        # 溢價 ≥30% = 0分（偏貴）
+        if pe is None:
+            pe_s = 5  # 無資料給中性分
+        elif pe_vs is not None:
+            if pe_vs <= -30:    pe_s = 12
+            elif pe_vs <= -10:  pe_s = 9
+            elif pe_vs <= 10:   pe_s = 6
+            elif pe_vs <= 30:   pe_s = 3
+            else:               pe_s = 0
+        else:
+            if pe < 12:    pe_s = 12
+            elif pe < 18:  pe_s = 9
+            elif pe < 25:  pe_s = 6
+            elif pe < 35:  pe_s = 3
+            else:          pe_s = 0
+        score += pe_s; detail["pe_score"] = pe_s
+        detail["pe"] = pe; detail["pe_vs_sector"] = pe_vs
+
+        # 殖利率吸引力 (8分)
+        if div_yield is None:
+            dy_s = 3
+        elif div_yield >= 5:   dy_s = 8
+        elif div_yield >= 3:   dy_s = 6
+        elif div_yield >= 1.5: dy_s = 4
+        else:                  dy_s = 1
+        score += dy_s; detail["div_yield_score"] = dy_s
+        detail["div_yield"] = div_yield
+
+        return score, detail
