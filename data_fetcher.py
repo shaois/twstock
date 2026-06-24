@@ -1,8 +1,8 @@
 """
-TWSE + Yahoo Finance 資料抓取模組 v4 (優化版)
-修復：
-1. 正確解析 FinMind 財報資料中的 ROE (ReturnOnEquity)
-2. 優先讀取 GitHub Actions 每日快取
+TWSE + Yahoo Finance 資料抓取模組 v4 (最終穩定版)
+優化：
+1. 優先讀取 GitHub Actions 每日快取
+2. 正確解析 FinMind 財報資料中的 ROE
 3. 移除硬編碼資料，改用動態抓取
 """
 import httpx
@@ -16,7 +16,6 @@ YAHOO_HEADERS = {
     "Accept": "application/json",
 }
 
-# 產業平均本益比參考
 SECTOR_PE_AVG = {
     "半導體": 22, "IC設計": 25, "電子製造": 15, "電腦": 18,
     "工業電腦": 28, "電子零組件": 20, "光學": 35, "機殼": 14,
@@ -62,17 +61,7 @@ class TWStockFetcher:
         return None
     
     async def fetch_top50_stocks(self):
-        """從快取或 TWSE 抓取前100大股票清單"""
-        cache_file = self.cache_dir / "top50_stocks.json"
-        if cache_file.exists():
-            try:
-                data = json.loads(cache_file.read_text())
-                saved_at = datetime.fromisoformat(data.get("_saved_at", "2000-01-01"))
-                if datetime.now() - saved_at < timedelta(hours=24):
-                    return data["data"]
-            except:
-                pass
-        
+        """從 TWSE 抓取前100大股票清單"""
         stocks = []
         try:
             url = "https://opendata.twse.com.tw/v1/opendata/t000300_L"
@@ -96,6 +85,7 @@ class TWStockFetcher:
                 stocks.append({"stock_id": sid, "name": "", "sector": self._get_sector(sid)})
         
         if stocks:
+            cache_file = self.cache_dir / "top50_stocks.json"
             cache_file.write_text(json.dumps({
                 "_saved_at": datetime.now().isoformat(),
                 "data": stocks
@@ -178,37 +168,34 @@ class TWStockFetcher:
         }
     
     async def fetch_fundamental(self, stock_id: str) -> dict:
-        """基本面：優先讀取快取，正確解析 ROE"""
-        # 嘗試從 GitHub Actions 每日快取讀取
+        """基本面：優先讀取快取，正確解析 ROE 與除息資料"""
         fundamental_data = self._read_gh_cache("fundamental", stock_id)
         
         eps = 0
         roe = 0
         cash_dividend = 0
+        exdiv_date = ""
         
         if fundamental_data and fundamental_data.get("status") == 200:
             data = fundamental_data.get("data", [])
             if data:
-                # 找最新的 EPS
                 for row in reversed(data):
                     if row.get("type") == "EPS" and row.get("value"):
                         eps = float(row["value"])
                         break
-                # 找最新的 ROE (ReturnOnEquity)
                 for row in reversed(data):
                     if row.get("type") == "ReturnOnEquity" and row.get("value"):
                         roe = float(row["value"])
                         break
         
-        # 抓取營收年增率
         revenue_yoy = await self._fetch_revenue_yoy(stock_id)
         
-        # 抓取除息資料
         exdiv_data = self._read_gh_cache("exdiv", stock_id)
         if exdiv_data and exdiv_data.get("status") == 200:
-            exdiv_list = exdiv_data.get("data", [])
-            if exdiv_list:
-                cash_dividend = exdiv_list[0].get("CashEarningsDistribution", 0) or 0
+            exdiv_info = exdiv_data.get("data", {})
+            if exdiv_info:
+                cash_dividend = exdiv_info.get("div", 0) or 0
+                exdiv_date = exdiv_info.get("date", "")
         
         return {
             "eps": eps,
@@ -216,6 +203,7 @@ class TWStockFetcher:
             "revenue_yoy": revenue_yoy or 0,
             "revenue_mom": 0,
             "cash_dividend": cash_dividend,
+            "exdiv_date": exdiv_date,
             "dividend_yield": 0,
         }
     
@@ -233,6 +221,7 @@ class TWStockFetcher:
             "div_yield": div_yield,
             "sector_avg_pe": avg_pe,
             "pe_vs_sector": pe_vs_avg,
+            "current_price": current_price,
         }
     
     async def _fetch_revenue_yoy(self, stock_id):
@@ -248,7 +237,7 @@ class TWStockFetcher:
                         for key in ["去年同月增減(%)", "較上年同月增減%", "YoY"]:
                             if key in row:
                                 return self._safe_float(row[key])
-        except:
+        except Exception:
             pass
         return None
     
@@ -287,7 +276,7 @@ class TWStockFetcher:
     def _safe_float(self, v):
         try:
             return float(str(v).replace(",", "").replace("%", "").strip())
-        except:
+        except Exception:
             return 0.0
     
     def _empty_technical(self):

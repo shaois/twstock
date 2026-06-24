@@ -1,10 +1,11 @@
 """
-台股中長期選股建議 App - 後端 (全面優化版 v2.0)
-優化項目：
-1. 批次評分速度優化 (asyncio.gather + Semaphore)
-2. 新增 Yahoo Finance Proxy (解決 404)
-3. 優先讀取 GitHub Actions 每日快取 (解決 FinMind 402)
-4. 清理重複程式碼
+台股中長期選股建議 App - 後端 (最終穩定版 v3.0)
+優化：
+1. 優先讀取 GitHub Actions 每日快取 (cache/*.json)
+2. 法人籌碼自動 Fallback 到 TWSE 免費 API
+3. 批次評分加速 (asyncio.gather + Semaphore)
+4. 新增 Yahoo Finance Proxy
+5. 清理所有重複程式碼
 """
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -20,7 +21,7 @@ from data_fetcher import TWStockFetcher
 from scorer import StockScorer
 from ai_analyzer import AIAnalyzer, DataCache
 
-app = FastAPI(title="台股選股 App", version="2.0.0")
+app = FastAPI(title="台股選股 App", version="3.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,7 +42,7 @@ CACHE_DIR.mkdir(exist_ok=True)
 # GitHub Actions 每日更新的快取目錄
 GH_CACHE_DIR = Path(__file__).parent / "cache"
 
-# 股票清單（與 fetch_cache.py 同步）
+# 股票清單
 STOCK_IDS = [
     "2330", "2317", "2454", "2308", "2382", "2881", "2882", "2886", "2884", "2891",
     "2892", "5880", "2885", "2883", "2887", "2412", "2303", "2002", "1301", "1303",
@@ -64,7 +65,6 @@ def _read_gh_cache(dtype: str, stock_id: str):
         return None
     try:
         data = json.loads(file_path.read_text(encoding="utf-8"))
-        # 格式: {"_saved_at": "...", "data": {"2330": [...], "2317": [...]}}
         stock_data = data.get("data", {}).get(stock_id)
         if stock_data:
             return {"status": 200, "data": stock_data, "msg": "from_gh_cache"}
@@ -75,7 +75,7 @@ def _read_gh_cache(dtype: str, stock_id: str):
 def _cache_path(stock_id: str, dtype: str) -> Path:
     return CACHE_DIR / f"{dtype}_{stock_id}.json"
 
-def _cache_read(stock_id: str, dtype: str) -> dict | None:
+def _cache_read(stock_id: str, dtype: str):
     """讀取本地 /tmp 快取，超過25小時視為過期"""
     p = _cache_path(stock_id, dtype)
     if not p.exists():
@@ -129,7 +129,8 @@ async def _fetch_twse_institutional(stock_id: str):
     today = datetime.today()
     for i in range(7): 
         d = today - timedelta(days=i)
-        if d.weekday() >= 5: continue
+        if d.weekday() >= 5:
+            continue
         
         date_str = d.strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/fund/T86?response=json&date={date_str}&selectType=ALLBUT0999"
@@ -143,8 +144,10 @@ async def _fetch_twse_institutional(stock_id: str):
                     for row in res["data"]:
                         if str(row[0]).strip() == stock_id:
                             def si(v):
-                                try: return int(str(v).replace(",", ""))
-                                except: return 0
+                                try:
+                                    return int(str(v).replace(",", ""))
+                                except Exception:
+                                    return 0
                             
                             foreign_buy = si(row[2]) + si(row[5])
                             foreign_sell = si(row[3]) + si(row[6])
@@ -269,10 +272,9 @@ async def batch_score(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_batch_scoring)
     return {"success": True, "message": "批次評分已開始，約需 30-40 秒，請稍後刷新"}
 
-# ⚡ 優化：使用 asyncio.gather + Semaphore 加速批次評分
 async def run_batch_scoring():
     """批次評分所有股票 (並發優化版)"""
-    semaphore = asyncio.Semaphore(5)  # 限制同時抓取 5 支股票
+    semaphore = asyncio.Semaphore(5)
     
     async def score_single(stock):
         async with semaphore:
@@ -298,15 +300,14 @@ async def run_batch_scoring():
         top50 = await fetcher.fetch_top50_stocks()
         cache.set("top50", top50, ttl_hours=24)
     
-    # 並發執行所有股票的評分
     await asyncio.gather(*(score_single(stock) for stock in top50))
     print("[BATCH] 批次評分完成")
 
-# ========== FinMind Proxy APIs (優化：優先讀取 GH Cache) ==========
+# ========== FinMind Proxy APIs ==========
 
 @app.get("/api/finmind/fundamental/{stock_id}")
 async def finmind_fundamental_proxy(stock_id: str, token: str = ""):
-    # 1. 優先讀取 GitHub Actions 每日快取 (避免 402)
+    # 1. 優先讀取 GitHub Actions 每日快取
     gh_data = _read_gh_cache("fundamental", stock_id)
     if gh_data:
         return JSONResponse(content=gh_data)
@@ -388,7 +389,6 @@ async def finmind_proxy(stock_id: str, token: str = "", start_date: str = ""):
     # 3. 都失敗，回傳空資料
     return JSONResponse(content={"status": 200, "data": [], "msg": "法人資料暫時無法取得"}, status_code=200)
 
-# 🔗 新增：Yahoo Finance Proxy (解決前端 404 錯誤)
 @app.get("/api/yahoo/{stock_id}")
 async def yahoo_proxy(stock_id: str, range_: str = "1y"):
     """Proxy Yahoo Finance API，解決 CORS 問題"""
