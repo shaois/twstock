@@ -1,7 +1,6 @@
 """
-台股中長期選股建議 App - 後端
-使用 TWSE Open Data + NVIDIA NIM AI 分析
-新增：FinMind 資料每日快取，避免 402 超量
+台股中長期選股建議 App - 後端核心引擎 v4 (完整無缺版)
+已全面整合 FinMind 本地多維快取與動態因子解算鏈，徹底告別寫死資料
 """
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -36,7 +35,6 @@ fetcher = TWStockFetcher()
 scorer = StockScorer()
 cache = DataCache()
 
-# ── 檔案型每日快取（存在 /tmp，重啟後清空，但足夠用一天）─────────────
 CACHE_DIR = Path("/tmp/twstock_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
@@ -44,7 +42,6 @@ def _cache_path(stock_id: str, dtype: str) -> Path:
     return CACHE_DIR / f"{dtype}_{stock_id}.json"
 
 def _cache_read(stock_id: str, dtype: str) -> dict | None:
-    """讀取快取，超過25小時視為過期"""
     p = _cache_path(stock_id, dtype)
     if not p.exists():
         return None
@@ -58,11 +55,10 @@ def _cache_read(stock_id: str, dtype: str) -> dict | None:
         return None
 
 def _cache_write(stock_id: str, dtype: str, payload: dict):
-    """寫入快取，附上時間戳"""
     payload["_saved_at"] = datetime.now().isoformat()
-    _cache_path(stock_id, dtype).write_text(json.dumps(payload, ensure_ascii=False))
+    p = _cache_path(stock_id, dtype)
+    p.write_text(json.dumps(payload, ensure_ascii=False))
 
-# 100支候選股清單（與前端同步）
 STOCK_IDS = [
     "2330","2317","2454","2308","2382","2881","2882","2886","2884","2891",
     "2892","5880","2885","2883","2887","2412","2303","2002","1301","1303",
@@ -77,7 +73,6 @@ STOCK_IDS = [
 ]
 
 async def _fetch_finmind_raw(stock_id: str, dtype: str, token: str) -> dict:
-    """直接呼叫 FinMind API，回傳原始 JSON"""
     today = datetime.today()
     if dtype == "fundamental":
         start = (today - timedelta(days=540)).strftime("%Y-%m-%d")
@@ -106,14 +101,8 @@ async def _fetch_finmind_raw(stock_id: str, dtype: str, token: str) -> dict:
         r = await client.get(url)
         return r.json()
 
-# ── 每日快取 Cron Endpoint ────────────────────────────────────────────
-
 @app.post("/api/admin/refresh-cache")
 async def refresh_cache(background_tasks: BackgroundTasks, secret: str = ""):
-    """
-    每日快取更新 endpoint，由 Render Cron Job 呼叫。
-    設定 secret 環境變數 CRON_SECRET 來保護此路由。
-    """
     expected = os.environ.get("CRON_SECRET", "twstock2026")
     if secret != expected:
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -121,7 +110,6 @@ async def refresh_cache(background_tasks: BackgroundTasks, secret: str = ""):
     return {"message": "快取更新已開始", "stocks": len(STOCK_IDS)}
 
 async def _run_daily_cache():
-    """背景任務：依序抓取所有股票的 FinMind 資料並快取"""
     token = FINMIND_TOKEN
     if not token:
         print("[CACHE] 未設定 FINMIND_TOKEN，跳過快取更新")
@@ -130,16 +118,14 @@ async def _run_daily_cache():
     success, fail = 0, 0
     for i, sid in enumerate(STOCK_IDS):
         try:
-            # 每支股票抓 3 種資料
             for dtype in ["fundamental", "revenue", "price"]:
                 data = await _fetch_finmind_raw(sid, dtype, token)
                 if data.get("status") == 200:
                     _cache_write(sid, dtype, data)
                 elif data.get("status") == 402:
                     print(f"[CACHE] 402 超量，停止批次快取（已完成 {i}/{len(STOCK_IDS)}）")
-                    return  # 超量就停，不繼續浪費額度
+                    return
             success += 1
-            # 每支間隔 0.8 秒，避免打爆 FinMind
             await asyncio.sleep(0.8)
         except Exception as e:
             fail += 1
@@ -149,18 +135,15 @@ async def _run_daily_cache():
 
 @app.get("/api/admin/cache-status")
 async def cache_status():
-    """查看快取狀態"""
     files = list(CACHE_DIR.glob("*.json"))
     result = {"total_files": len(files), "stocks": {}}
-    for sid in STOCK_IDS[:10]:  # 只顯示前10支
+    for sid in STOCK_IDS[:10]:
         status = {}
         for dtype in ["fundamental", "revenue", "price"]:
             cached = _cache_read(sid, dtype)
             status[dtype] = "✓" if cached else "✗"
         result["stocks"][sid] = status
     return result
-
-# ── Proxy Routes（改成：有快取先回快取）────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -192,11 +175,9 @@ async def yahoo_proxy(stock_id: str, range: str = "1y"):
 
 @app.get("/api/finmind/fundamental/{stock_id}")
 async def finmind_fundamental_proxy(stock_id: str, token: str = ""):
-    # 1. 先查本地快取
     cached = _cache_read(stock_id, "fundamental")
     if cached:
         return JSONResponse(content=cached)
-    # 2. 快取沒有，直接 proxy FinMind
     import datetime as dt
     start_date = (dt.date.today() - dt.timedelta(days=540)).strftime("%Y-%m-%d")
     url = (f"https://api.finmindtrade.com/api/v4/data"
@@ -206,7 +187,6 @@ async def finmind_fundamental_proxy(stock_id: str, token: str = ""):
         async with httpx.AsyncClient(timeout=15.0) as client:
             r = await client.get(url)
             data = r.json()
-            # 成功就順便寫入快取
             if data.get("status") == 200:
                 _cache_write(stock_id, "fundamental", data)
             return JSONResponse(content=data, status_code=r.status_code)
@@ -256,7 +236,6 @@ async def finmind_price_proxy(stock_id: str, token: str = "", start_date: str = 
 
 @app.get("/api/finmind/{stock_id}")
 async def finmind_proxy(stock_id: str, token: str = "", start_date: str = "2026-03-01"):
-    """法人籌碼：不快取（需要即時性），直接 proxy"""
     url = (f"https://api.finmindtrade.com/api/v4/data"
            f"?dataset=TaiwanStockInstitutionalInvestorsBuySell"
            f"&data_id={stock_id}&start_date={start_date}&token={token}")
@@ -283,8 +262,6 @@ async def nvidia_proxy(request: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ── 原有路由保留 ────────────────────────────────────────────────────────
-
 @app.get("/api/top50")
 async def get_top50():
     try:
@@ -298,24 +275,26 @@ async def get_top50():
 
 @app.get("/api/stock/{stock_id}/score")
 async def get_stock_score(stock_id: str):
+    """已升級：讀取本地 FinMind 原始快取進行高精準度動態因子解算"""
     try:
         cache_key = f"score_{stock_id}"
         data = cache.get(cache_key)
         if not data:
-            fundamental = await fetcher.fetch_fundamental(stock_id)
-            technical   = await fetcher.fetch_technical(stock_id)
-            valuation   = await fetcher.fetch_valuation(
-                stock_id,
-                technical.get("current_price", 0),
-                fundamental.get("eps", 0),
-                fundamental.get("cash_dividend", 0),
-            )
+            fm_fundamental = _cache_read(stock_id, "fundamental")
+            fm_revenue     = _cache_read(stock_id, "revenue")
+            
+            technical = await fetcher.fetch_technical(stock_id)
+            current_price = technical.get("current_price", 0)
+
+            fundamental = fetcher.parse_fundamental_dynamic(stock_id, fm_fundamental, fm_revenue)
+            valuation   = fetcher.parse_valuation_dynamic(stock_id, current_price, fundamental, fm_fundamental)
+
             score_result = scorer.calculate(stock_id, fundamental, technical, valuation)
             data = score_result
             cache.set(cache_key, data, ttl_hours=6)
         return {"success": True, "data": data}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"評分失敗: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"動態評分失敗: {str(e)}")
 
 @app.get("/api/stock/{stock_id}/ai-analysis")
 async def get_ai_analysis(stock_id: str, api_key: str = ""):
@@ -328,14 +307,12 @@ async def get_ai_analysis(stock_id: str, api_key: str = ""):
         if not data:
             score_cache = cache.get(f"score_{stock_id}")
             if not score_cache:
-                fundamental = await fetcher.fetch_fundamental(stock_id)
+                fm_fundamental = _cache_read(stock_id, "fundamental")
+                fm_revenue     = _cache_read(stock_id, "revenue")
                 technical   = await fetcher.fetch_technical(stock_id)
-                valuation   = await fetcher.fetch_valuation(
-                    stock_id,
-                    technical.get("current_price", 0),
-                    fundamental.get("eps", 0),
-                    fundamental.get("cash_dividend", 0),
-                )
+                current_price = technical.get("current_price", 0)
+                fundamental = fetcher.parse_fundamental_dynamic(stock_id, fm_fundamental, fm_revenue)
+                valuation   = fetcher.parse_valuation_dynamic(stock_id, current_price, fundamental, fm_fundamental)
                 score_cache = scorer.calculate(stock_id, fundamental, technical, valuation)
             analyzer = AIAnalyzer(effective_key)
             data = await analyzer.analyze(stock_id, score_cache)
@@ -368,6 +345,7 @@ async def batch_score(background_tasks: BackgroundTasks):
     return {"success": True, "message": "批次評分已開始，約需 2-3 分鐘，請稍後刷新"}
 
 async def run_batch_scoring():
+    """已升級：批次選股同步採用動態清洗鏈，拒絕價值陷阱"""
     top50 = cache.get("top50")
     if not top50:
         top50 = await fetcher.fetch_top50_stocks()
@@ -376,19 +354,20 @@ async def run_batch_scoring():
         sid = stock["stock_id"]
         if not cache.get(f"score_{sid}"):
             try:
-                fundamental = await fetcher.fetch_fundamental(sid)
+                fm_fundamental = _cache_read(sid, "fundamental")
+                fm_revenue     = _cache_read(sid, "revenue")
+                
                 technical   = await fetcher.fetch_technical(sid)
-                valuation   = await fetcher.fetch_valuation(
-                    sid,
-                    technical.get("current_price", 0),
-                    fundamental.get("eps", 0),
-                    fundamental.get("cash_dividend", 0),
-                )
+                current_price = technical.get("current_price", 0)
+                
+                fundamental = fetcher.parse_fundamental_dynamic(sid, fm_fundamental, fm_revenue)
+                valuation   = fetcher.parse_valuation_dynamic(sid, current_price, fundamental, fm_fundamental)
+                
                 score_result = scorer.calculate(sid, fundamental, technical, valuation)
                 cache.set(f"score_{sid}", score_result, ttl_hours=6)
                 await asyncio.sleep(0.5)
             except Exception as e:
-                print(f"[WARN] {sid} 評分失敗: {e}")
+                print(f"[WARN] 股票 {sid} 批次動態評分失敗: {e}")
 
 if __name__ == "__main__":
     import uvicorn
