@@ -1,6 +1,3 @@
-"""
-台股中長期選股建議 App - 後端 (最終修復版)
-"""
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,13 +13,7 @@ from scorer import StockScorer
 from ai_analyzer import AIAnalyzer, DataCache
 
 app = FastAPI(title="台股選股 App", version="3.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 fetcher = TWStockFetcher()
 scorer = StockScorer()
@@ -52,12 +43,7 @@ async def get_stock_score(stock_id: str):
     try:
         fundamental = await fetcher.fetch_fundamental(stock_id)
         technical = await fetcher.fetch_technical(stock_id)
-        valuation = await fetcher.fetch_valuation(
-            stock_id,
-            technical.get("current_price", 0),
-            fundamental.get("eps", 0),
-            fundamental.get("cash_dividend", 0),
-        )
+        valuation = await fetcher.fetch_valuation(stock_id, technical.get("current_price", 0), fundamental.get("eps", 0), fundamental.get("cash_dividend", 0))
         score_result = scorer.calculate(stock_id, fundamental, technical, valuation)
         return {"success": True, "data": score_result}
     except Exception as e:
@@ -75,14 +61,8 @@ async def run_batch_scoring():
         try:
             fundamental = await fetcher.fetch_fundamental(sid)
             technical = await fetcher.fetch_technical(sid)
-            valuation = await fetcher.fetch_valuation(
-                sid,
-                technical.get("current_price", 0),
-                fundamental.get("eps", 0),
-                fundamental.get("cash_dividend", 0),
-            )
-            score_result = scorer.calculate(sid, fundamental, technical, valuation)
-            cache.set(f"score_{sid}", score_result, ttl_hours=6)
+            valuation = await fetcher.fetch_valuation(sid, technical.get("current_price", 0), fundamental.get("eps", 0), fundamental.get("cash_dividend", 0))
+            scorer.calculate(sid, fundamental, technical, valuation)
             await asyncio.sleep(0.5)
         except Exception as e:
             print(f"[WARN] {sid} 評分失敗: {e}")
@@ -97,18 +77,12 @@ async def run_screener(min_score: float = 60.0):
             try:
                 fundamental = await fetcher.fetch_fundamental(sid)
                 technical = await fetcher.fetch_technical(sid)
-                valuation = await fetcher.fetch_valuation(
-                    sid,
-                    technical.get("current_price", 0),
-                    fundamental.get("eps", 0),
-                    fundamental.get("cash_dividend", 0),
-                )
+                valuation = await fetcher.fetch_valuation(sid, technical.get("current_price", 0), fundamental.get("eps", 0), fundamental.get("cash_dividend", 0))
                 score_result = scorer.calculate(sid, fundamental, technical, valuation)
                 if score_result["total_score"] >= min_score:
                     results.append(score_result)
             except:
                 pass
-        
         results.sort(key=lambda x: x["total_score"], reverse=True)
         return {"success": True, "data": results, "count": len(results)}
     except Exception as e:
@@ -124,22 +98,6 @@ async def finmind_proxy(stock_id: str, token: str = ""):
     except Exception as e:
         return JSONResponse(content={"status": "error", "data": []}, status_code=200)
 
-@app.post("/api/nvidia")
-async def nvidia_proxy(request: dict):
-    api_key = request.get("api_key") or os.environ.get("NVIDIA_API_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="需要 NVIDIA API Key")
-    try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            r = await client.post(
-                "https://integrate.api.nvidia.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=request.get("body", {})
-            )
-            return JSONResponse(content=r.json(), status_code=r.status_code)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)

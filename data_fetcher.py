@@ -100,10 +100,8 @@ class TWStockFetcher:
         avg20 = sum(volumes[-20:]) / min(20, len(volumes))
         vol_ratio = avg5 / avg20 if avg20 > 0 else 1.0
         pos = (current_price - low52) / (high52 - low52) * 100 if high52 != low52 else 50
-        half_year_price = closes[-120] if len(closes) >= 120 else closes[0]
-        trend_6m = (current_price - half_year_price) / half_year_price * 100
         
-        return {"current_price": round(current_price, 2), "ma5": round(ma5, 2), "ma20": round(ma20, 2), "ma60": round(ma60, 2), "ma120": round(ma120, 2), "ma240": round(ma240, 2), "rsi14": round(rsi, 1), "macd": round(macd_val, 3), "macd_signal": round(sig_val, 3), "macd_hist": round(hist, 3), "vol_ratio_5_20": round(vol_ratio, 2), "price_position_52w": round(pos, 1), "high52": round(high52, 2), "low52": round(low52, 2), "trend_6m": round(trend_6m, 1), "data_points": len(closes)}
+        return {"current_price": round(current_price, 2), "ma5": round(ma5, 2), "ma20": round(ma20, 2), "ma60": round(ma60, 2), "ma120": round(ma120, 2), "ma240": round(ma240, 2), "rsi14": round(rsi, 1), "macd": round(macd_val, 3), "macd_signal": round(sig_val, 3), "macd_hist": round(hist, 3), "vol_ratio_5_20": round(vol_ratio, 2), "price_position_52w": round(pos, 1), "high52": round(high52, 2), "low52": round(low52, 2), "trend_6m": 0, "data_points": len(closes)}
 
     async def fetch_fundamental(self, stock_id: str) -> dict:
         fundamental_data = self._read_gh_cache("fundamental", stock_id)
@@ -132,13 +130,6 @@ class TWStockFetcher:
                                     except: pass
                                     break
         except Exception: pass
-
-        exdiv_data = self._read_gh_cache("exdiv", stock_id)
-        if exdiv_data and exdiv_data.get("status") == 200:
-            exdiv_info = exdiv_data.get("data", {})
-            if exdiv_info:
-                cash_dividend = exdiv_info.get("div", 0) or 0
-                exdiv_date = exdiv_info.get("date", "")
 
         return {"eps": eps, "roe": roe, "revenue_yoy": revenue_yoy, "revenue_mom": 0, "cash_dividend": cash_dividend, "exdiv_date": exdiv_date, "dividend_yield": 0}
 

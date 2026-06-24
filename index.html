@@ -6,321 +6,38 @@
     <title>台股中長期選股儀表板</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background: #0a0e1a;
-            color: #e5e7eb;
-            min-height: 100vh;
-        }
-        .header {
-            background: #111827;
-            border-bottom: 1px solid #1e2d45;
-            padding: 16px 24px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .header-title {
-            font-size: 20px;
-            font-weight: 700;
-            color: #00d4aa;
-        }
-        .header-right {
-            display: flex;
-            gap: 12px;
-            align-items: center;
-        }
-        .api-key-input {
-            background: #1a2235;
-            border: 1px solid #1e2d45;
-            color: #e5e7eb;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 14px;
-            width: 220px;
-        }
-        .btn {
-            padding: 8px 16px;
-            border-radius: 6px;
-            border: none;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 500;
-            transition: all 0.2s;
-        }
-        .btn-primary {
-            background: #00d4aa;
-            color: #000;
-        }
-        .btn-primary:hover { background: #00f0c0; }
-        .btn-secondary {
-            background: #1a2235;
-            color: #e5e7eb;
-            border: 1px solid #1e2d45;
-        }
-        .btn-secondary:hover { background: #1e2d45; }
-        .layout {
-            display: flex;
-            min-height: calc(100vh - 65px);
-        }
-        .sidebar {
-            width: 280px;
-            background: #111827;
-            border-right: 1px solid #1e2d45;
-            padding: 20px;
-            overflow-y: auto;
-        }
-        .sidebar-section { margin-bottom: 24px; }
-        .sidebar-label {
-            font-size: 12px;
-            color: #6b7280;
-            margin-bottom: 8px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .filter-input {
-            width: 100%;
-            background: #1a2235;
-            border: 1px solid #1e2d45;
-            color: #e5e7eb;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 14px;
-            margin-bottom: 8px;
-        }
-        .stock-list {
-            list-style: none;
-        }
-        .stock-item {
-            padding: 10px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 4px;
-            transition: background 0.2s;
-        }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0e1a; color: #e5e7eb; min-height: 100vh; }
+        .header { background: #111827; border-bottom: 1px solid #1e2d45; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+        .header-title { font-size: 20px; font-weight: 700; color: #00d4aa; }
+        .header-right { display: flex; gap: 12px; align-items: center; }
+        .api-key-input { background: #1a2235; border: 1px solid #1e2d45; color: #e5e7eb; padding: 8px 12px; border-radius: 6px; font-size: 14px; width: 220px; }
+        .btn { padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; font-size: 14px; font-weight: 500; }
+        .btn-primary { background: #00d4aa; color: #000; }
+        .btn-secondary { background: #1a2235; color: #e5e7eb; border: 1px solid #1e2d45; }
+        .layout { display: flex; min-height: calc(100vh - 65px); }
+        .sidebar { width: 280px; background: #111827; border-right: 1px solid #1e2d45; padding: 20px; overflow-y: auto; }
+        .sidebar-label { font-size: 12px; color: #6b7280; margin-bottom: 8px; text-transform: uppercase; }
+        .filter-input { width: 100%; background: #1a2235; border: 1px solid #1e2d45; color: #e5e7eb; padding: 8px 12px; border-radius: 6px; font-size: 14px; margin-bottom: 8px; }
+        .stock-list { list-style: none; }
+        .stock-item { padding: 10px 12px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
         .stock-item:hover { background: #1a2235; }
-        .stock-item.active { background: #00d4aa; color: #000; }
         .stock-id { font-weight: 600; font-family: monospace; }
         .stock-name { font-size: 12px; color: #6b7280; }
-        .stock-item.active .stock-name { color: #000; }
-        .grade-badge {
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 700;
-            background: #1a2235;
-        }
-        .grade-A-plus { background: #00d4aa; color: #000; }
-        .grade-A { background: #00d4aa; color: #000; }
-        .grade-B-plus { background: #3b82f6; color: #fff; }
-        .grade-B { background: #3b82f6; color: #fff; }
-        .main-content {
-            flex: 1;
-            padding: 24px;
-            overflow-y: auto;
-        }
-        .welcome {
-            text-align: center;
-            padding: 80px 20px;
-        }
-        .welcome h2 {
-            font-size: 28px;
-            margin-bottom: 16px;
-            color: #00d4aa;
-        }
-        .welcome p {
-            color: #6b7280;
-            font-size: 16px;
-            margin-bottom: 40px;
-        }
-        .welcome-steps {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            max-width: 900px;
-            margin: 0 auto;
-        }
-        .step-card {
-            background: #111827;
-            border: 1px solid #1e2d45;
-            border-radius: 8px;
-            padding: 24px;
-            text-align: center;
-        }
-        .step-num {
-            font-size: 32px;
-            font-weight: 700;
-            color: #00d4aa;
-            margin-bottom: 12px;
-        }
-        .step-text {
-            color: #9ca3af;
-            font-size: 14px;
-        }
-        .stock-detail { display: none; }
-        .stock-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 24px;
-        }
-        .stock-title h1 {
-            font-size: 28px;
-            margin-bottom: 4px;
-        }
-        .stock-title .sub {
-            color: #6b7280;
-            font-size: 14px;
-        }
-        .stock-actions {
-            display: flex;
-            gap: 12px;
-            align-items: center;
-        }
-        .score-overview {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-        .score-card {
-            background: #111827;
-            border: 1px solid #1e2d45;
-            border-radius: 8px;
-            padding: 20px;
-            text-align: center;
-        }
-        .score-value {
-            font-size: 32px;
-            font-weight: 700;
-            font-family: monospace;
-            margin-bottom: 4px;
-        }
-        .score-label {
-            font-size: 12px;
-            color: #6b7280;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .color-green { color: #00d4aa; }
-        .color-blue { color: #3b82f6; }
-        .color-warn { color: #f59e0b; }
-        .color-danger { color: #ef4444; }
-        .panels {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-            gap: 20px;
-            margin-bottom: 24px;
-        }
-        .panel {
-            background: #111827;
-            border: 1px solid #1e2d45;
-            border-radius: 8px;
-            padding: 20px;
-        }
-        .panel-title {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 16px;
-            padding-bottom: 8px;
-            border-bottom: 2px solid #00d4aa;
-            display: inline-block;
-        }
-        .metric-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 8px 0;
-            border-bottom: 1px solid #1e2d45;
-        }
-        .metric-row:last-child { border-bottom: none; }
+        .grade-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 700; background: #1a2235; }
+        .main-content { flex: 1; padding: 24px; overflow-y: auto; }
+        .welcome { text-align: center; padding: 80px 20px; }
+        .welcome h2 { font-size: 28px; margin-bottom: 16px; color: #00d4aa; }
+        .panel { background: #111827; border: 1px solid #1e2d45; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        .panel-title { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: #00d4aa; }
+        .metric-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #1e2d45; }
         .metric-label { color: #6b7280; font-size: 14px; }
-        .metric-value {
-            font-family: monospace;
-            font-weight: 600;
-        }
-        .institutional-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 12px;
-            margin-bottom: 16px;
-        }
-        .inst-card {
-            background: #1a2235;
-            border-radius: 6px;
-            padding: 12px;
-            text-align: center;
-        }
-        .inst-label {
-            font-size: 12px;
-            color: #6b7280;
-            margin-bottom: 4px;
-        }
-        .inst-value {
-            font-size: 18px;
-            font-weight: 700;
-            font-family: monospace;
-        }
-        .toast {
-            position: fixed;
-            bottom: 24px;
-            right: 24px;
-            background: #111827;
-            border: 1px solid #1e2d45;
-            border-radius: 8px;
-            padding: 16px 24px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            z-index: 1000;
-            display: none;
-        }
+        .metric-value { font-family: monospace; font-weight: 600; }
+        .score-overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .score-card { background: #111827; border: 1px solid #1e2d45; border-radius: 8px; padding: 20px; text-align: center; }
+        .score-value { font-size: 32px; font-weight: 700; font-family: monospace; margin-bottom: 4px; color: #00d4aa; }
+        .score-label { font-size: 12px; color: #6b7280; text-transform: uppercase; }
+        .toast { position: fixed; bottom: 24px; right: 24px; background: #111827; border: 1px solid #00d4aa; border-radius: 8px; padding: 16px 24px; z-index: 1000; display: none; }
         .toast.show { display: block; }
-        .toast-error { border-color: #ef4444; }
-        .toast-success { border-color: #00d4aa; }
-        .loading-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(10, 14, 26, 0.9);
-            display: none;
-            justify-content: center;
-            align-items: center;
-            z-index: 2000;
-        }
-        .loading-overlay.show { display: flex; }
-        .loading-spinner {
-            width: 48px;
-            height: 48px;
-            border: 4px solid #1e2d45;
-            border-top-color: #00d4aa;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        .progress-bar {
-            width: 100%;
-            height: 4px;
-            background: #1e2d45;
-            border-radius: 2px;
-            overflow: hidden;
-            margin: 12px 0;
-        }
-        .progress-fill {
-            height: 100%;
-            background: #00d4aa;
-            transition: width 0.3s;
-        }
-        @media (max-width: 768px) {
-            .layout { flex-direction: column; }
-            .sidebar { width: 100%; border-right: none; border-bottom: 1px solid #1e2d45; }
-            .panels { grid-template-columns: 1fr; }
-            .score-overview { grid-template-columns: repeat(2, 1fr); }
-        }
     </style>
 </head>
 <body>
@@ -334,193 +51,70 @@
     </div>
 
     <div class="layout">
-        <div class="sidebar" id="sidebar">
-            <div class="sidebar-section">
-                <div class="sidebar-label">篩選</div>
-                <div style="margin-bottom: 12px;">
-                    <label style="font-size: 12px; color: #6b7280;">最低評分</label>
-                    <input class="filter-input" id="filterScore" type="number" value="0" min="0" max="100" oninput="filterStocks()">
-                </div>
-                <div>
-                    <label style="font-size: 12px; color: #6b7280;">產業</label>
-                    <select class="filter-input" id="filterSector" onchange="filterStocks()">
-                        <option value="">全部</option>
-                        <option>半導體</option>
-                        <option>電子製造</option>
-                        <option>IC設計</option>
-                        <option>金融</option>
-                        <option>電信</option>
-                        <option>石化</option>
-                        <option>電腦</option>
-                        <option>電子零組件</option>
-                        <option>工業電腦</option>
-                        <option>光學</option>
-                        <option>汽車</option>
-                        <option>食品</option>
-                        <option>零售</option>
-                    </select>
-                </div>
-            </div>
-            <div class="sidebar-section">
-                <div class="sidebar-label">股票清單 <span id="stockCount">(0)</span></div>
-                <ul class="stock-list" id="stockList">
-                    <li style="color: #6b7280; text-align: center; padding: 20px;">請點擊「載入前100大」</li>
-                </ul>
-            </div>
+        <div class="sidebar">
+            <div class="sidebar-label">股票清單 <span id="stockCount">(0)</span></div>
+            <ul class="stock-list" id="stockList">
+                <li style="color: #6b7280; text-align: center; padding: 20px;">請點擊「載入前100大」</li>
+            </ul>
         </div>
 
         <div class="main-content">
             <div class="welcome" id="welcome">
                 <h2>台股中長期選股儀表板</h2>
-                <p>整合 TWSE 開放資料 × 基本面/技術面評分 × NVIDIA AI 分析</p>
-                <div class="welcome-steps">
-                    <div class="step-card">
-                        <div class="step-num">1</div>
-                        <div class="step-text">輸入 NVIDIA API Key</div>
-                    </div>
-                    <div class="step-card">
-                        <div class="step-num">2</div>
-                        <div class="step-text">點擊「載入前100大」</div>
-                    </div>
-                    <div class="step-card">
-                        <div class="step-num">3</div>
-                        <div class="step-text">點選個股查看評分</div>
-                    </div>
-                    <div class="step-card">
-                        <div class="step-num">4</div>
-                        <div class="step-text">取得 AI 分析建議</div>
-                    </div>
-                </div>
+                <p>請點擊左上角「載入前100大」開始</p>
             </div>
-
-            <div id="stockDetail" class="stock-detail"></div>
+            <div id="stockDetail" style="display:none;"></div>
             <div id="screenerResult" style="display:none;"></div>
         </div>
-    </div>
-
-    <div class="loading-overlay" id="loadingOverlay">
-        <div class="loading-spinner"></div>
     </div>
 
     <div class="toast" id="toast"></div>
 
     <script>
+        // 🔥 關鍵修復：指定後端 API 的絕對路徑，解決 GitHub Pages 的 404 問題
+        const API_BASE = 'https://twstock-app.onrender.com';
+        
         let allStocks = [];
-        let filteredStocks = [];
 
-        function showToast(msg, type = 'success') {
+        function showToast(msg) {
             const toast = document.getElementById('toast');
             toast.textContent = msg;
-            toast.className = `toast show toast-${type}`;
+            toast.className = 'toast show';
             setTimeout(() => toast.classList.remove('show'), 3000);
         }
 
-        function showLoading(show) {
-            document.getElementById('loadingOverlay').classList.toggle('show', show);
-        }
-
         async function loadStocks() {
-            showLoading(true);
+            showToast('正在載入股票清單...');
             try {
-                const r = await fetch('/api/top50');
+                // 🔥 使用 API_BASE 絕對路徑
+                const r = await fetch(`${API_BASE}/api/top50`);
                 if (!r.ok) throw new Error(`HTTP ${r.status}`);
                 const data = await r.json();
                 if (!data.success) throw new Error(data.detail);
                 
                 allStocks = data.data;
-                filteredStocks = [...allStocks];
                 document.getElementById('stockCount').textContent = `(${allStocks.length})`;
-                renderStockList(filteredStocks);
-                showToast(`✅ 已載入 ${allStocks.length} 支股票`, 'success');
+                renderStockList();
+                showToast(`✅ 已載入 ${allStocks.length} 支股票`);
                 
-                // 啟動批次評分
-                await batchScore();
+                // 觸發批次評分
+                fetch(`${API_BASE}/api/batch-score`, { method: 'POST' });
             } catch (e) {
-                showToast('載入失敗：' + e.message, 'error');
+                showToast('❌ 載入失敗：' + e.message);
                 console.error(e);
-            } finally {
-                showLoading(false);
             }
         }
 
-        async function batchScore() {
-            try {
-                const r = await fetch('/api/batch-score', { method: 'POST' });
-                const data = await r.json();
-                showToast(data.message, 'success');
-                
-                // 每 5 秒檢查一次評分進度
-                let checkCount = 0;
-                const checkInterval = setInterval(async () => {
-                    checkCount++;
-                    const scoredCount = allStocks.filter(s => s.score).length;
-                    if (scoredCount > 0) {
-                        renderStockList(filteredStocks);
-                        showToast(`📊 已完成 ${scoredCount}/${allStocks.length} 支股票評分`, 'success');
-                    }
-                    
-                    if (checkCount >= 12 || scoredCount === allStocks.length) {
-                        clearInterval(checkInterval);
-                        if (scoredCount === 0) {
-                            showToast('⚠️ 批次評分尚未完成，請點擊左側股票查看即時評分', 'success');
-                        }
-                    }
-                }, 5000);
-                
-            } catch (e) {
-                console.error('Batch score error:', e);
-            }
-        }
-
-        async function loadStockScore(stockId) {
-            try {
-                const r = await fetch(`/api/stock/${stockId}/score`);
-                const data = await r.json();
-                if (data.success) {
-                    const stock = allStocks.find(s => s.stock_id === stockId);
-                    if (stock) {
-                        stock.score = data.data;
-                        renderStockList(filteredStocks);
-                    }
-                }
-            } catch (e) {
-                console.error(`Score error for ${stockId}:`, e);
-            }
-        }
-
-        function renderStockList(stocks) {
+        function renderStockList() {
             const list = document.getElementById('stockList');
-            if (stocks.length === 0) {
-                list.innerHTML = '<li style="color: #6b7280; text-align: center; padding: 20px;">無符合條件的股票</li>';
-                return;
-            }
-            list.innerHTML = stocks.map(s => {
-                const score = s.score || {};
-                const grade = score.grade || '-';
-                const total = score.total_score || 0;
-                return `
-                    <li class="stock-item" onclick="loadStockDetail('${s.stock_id}', '${s.name}')">
-                        <div>
-                            <div class="stock-id">${s.stock_id}</div>
-                            <div class="stock-name">${s.name}</div>
-                        </div>
-                        <div class="grade-badge grade-${grade.replace('+', '-plus')}">${grade}</div>
-                    </li>
-                `;
-            }).join('');
-        }
-
-        function filterStocks() {
-            const minScore = parseInt(document.getElementById('filterScore').value) || 0;
-            const sector = document.getElementById('filterSector').value;
-            filteredStocks = allStocks.filter(s => {
-                const score = s.score || {};
-                const total = score.total_score || 0;
-                const matchScore = total >= minScore;
-                const matchSector = !sector || s.sector === sector;
-                return matchScore && matchSector;
-            });
-            renderStockList(filteredStocks);
+            list.innerHTML = allStocks.map(s => `
+                <li class="stock-item" onclick="loadStockDetail('${s.stock_id}', '${s.name}')">
+                    <div>
+                        <div class="stock-id">${s.stock_id}</div>
+                        <div class="stock-name">${s.name}</div>
+                    </div>
+                </li>
+            `).join('');
         }
 
         async function loadStockDetail(stockId, stockName) {
@@ -531,190 +125,44 @@
             detail.innerHTML = '<div style="text-align:center; padding:40px; color: #6b7280;">載入中...</div>';
             
             try {
-                // 先嘗試從 cache 讀取
-                let sc = allStocks.find(s => s.stock_id === stockId)?.score;
+                const r = await fetch(`${API_BASE}/api/stock/${stockId}/score`);
+                const data = await r.json();
+                if (!data.success) throw new Error(data.detail);
                 
-                // 如果 cache 沒有，即時抓取
-                if (!sc) {
-                    showToast('⏳ 即時計算評分中...', 'success');
-                    const r = await fetch(`/api/stock/${stockId}/score`);
-                    const data = await r.json();
-                    if (!data.success) throw new Error(data.detail);
-                    sc = data.data;
-                }
-                
+                const sc = data.data;
                 const f = sc.fundamental || {};
                 const t = sc.technical || {};
                 const v = sc.valuation || {};
-                const d = sc.detail || {};
-                
-                // 法人籌碼
-                let instHtml = '<div style="color: #6b7280; text-align: center; padding: 20px;">載入中...</div>';
-                try {
-                    const instR = await fetch(`/api/finmind/${stockId}`);
-                    const instData = await instR.json();
-                    if (instData.status === 200 && instData.data && instData.data.length > 0) {
-                        const foreign = instData.data.find(x => x.name === '外資及陸資');
-                        const trust = instData.data.find(x => x.name === '投信');
-                        const dealer = instData.data.find(x => x.name === '自營商');
-                        const total = (foreign?.buy || 0) - (foreign?.sell || 0) + 
-                                     (trust?.buy || 0) - (trust?.sell || 0) + 
-                                     (dealer?.buy || 0) - (dealer?.sell || 0);
-                        instHtml = `
-                            <div class="institutional-grid">
-                                <div class="inst-card">
-                                    <div class="inst-label">外資買賣超</div>
-                                    <div class="inst-value ${((foreign?.buy||0)-(foreign?.sell||0)) > 0 ? 'color-green' : 'color-danger'}">
-                                        ${((foreign?.buy||0)-(foreign?.sell||0)).toLocaleString()}
-                                    </div>
-                                </div>
-                                <div class="inst-card">
-                                    <div class="inst-label">投信買賣超</div>
-                                    <div class="inst-value ${((trust?.buy||0)-(trust?.sell||0)) > 0 ? 'color-green' : 'color-danger'}">
-                                        ${((trust?.buy||0)-(trust?.sell||0)).toLocaleString()}
-                                    </div>
-                                </div>
-                                <div class="inst-card">
-                                    <div class="inst-label">自營商買賣超</div>
-                                    <div class="inst-value ${((dealer?.buy||0)-(dealer?.sell||0)) > 0 ? 'color-green' : 'color-danger'}">
-                                        ${((dealer?.buy||0)-(dealer?.sell||0)).toLocaleString()}
-                                    </div>
-                                </div>
-                                <div class="inst-card">
-                                    <div class="inst-label">三大法人合計</div>
-                                    <div class="inst-value ${total > 0 ? 'color-green' : 'color-danger'}">
-                                        ${total.toLocaleString()}
-                                    </div>
-                                </div>
-                            </div>
-                        `;
-                    } else {
-                        instHtml = '<div style="color: #6b7280; text-align: center; padding: 20px;">暫無法取得法人資料</div>';
-                    }
-                } catch (e) {
-                    instHtml = '<div style="color: #ef4444; text-align: center; padding: 20px;">法人資料載入失敗</div>';
-                }
                 
                 detail.innerHTML = `
-                    <div class="stock-header">
-                        <div class="stock-title">
-                            <h1>${stockId} ${stockName}</h1>
-                            <div class="sub">${sc.sector || '其他'} · 台股市值前100大 · 中長期選股評分</div>
-                        </div>
-                        <div class="stock-actions">
-                            <span class="grade-badge grade-${sc.grade.replace('+', '-plus')}" style="font-size: 16px; padding: 8px 16px;">${sc.grade} 級</span>
-                            <button class="btn btn-primary" onclick="loadAIAnalysis('${stockId}')">🤖 AI 分析</button>
-                        </div>
-                    </div>
+                    <h1 style="margin-bottom: 20px;">${stockId} ${stockName} <span class="grade-badge">${sc.grade || '-'}</span></h1>
                     
                     <div class="score-overview">
-                        <div class="score-card">
-                            <div class="score-value color-green">${sc.total_score}</div>
-                            <div class="score-label">綜合 /100</div>
-                        </div>
-                        <div class="score-card">
-                            <div class="score-value color-green">${sc.fundamental_score}</div>
-                            <div class="score-label">基本面 /40</div>
-                        </div>
-                        <div class="score-card">
-                            <div class="score-value color-blue">${sc.technical_score}</div>
-                            <div class="score-label">技術面 /35</div>
-                        </div>
-                        <div class="score-card">
-                            <div class="score-value color-warn">${sc.valuation_score}</div>
-                            <div class="score-label">估值面 /15</div>
-                        </div>
-                        <div class="score-card">
-                            <div class="score-value color-green">${sc.upside_score || 0}</div>
-                            <div class="score-label">獲利空間 /10</div>
-                        </div>
-                        <div class="score-card">
-                            <div class="score-value" style="color: #00d4aa; font-size: 20px;">${sc.suggestion || '值得追蹤'}</div>
-                            <div class="score-label">建議</div>
-                        </div>
+                        <div class="score-card"><div class="score-value">${sc.total_score}</div><div class="score-label">總分 /100</div></div>
+                        <div class="score-card"><div class="score-value">${sc.fundamental_score}</div><div class="score-label">基本面 /40</div></div>
+                        <div class="score-card"><div class="score-value">${sc.technical_score}</div><div class="score-label">技術面 /35</div></div>
+                        <div class="score-card"><div class="score-value">${sc.valuation_score}</div><div class="score-label">估值面 /15</div></div>
+                        <div class="score-card"><div class="score-value">${sc.upside_score || 0}</div><div class="score-label">獲利空間 /10</div></div>
                     </div>
                     
-                    <div class="panel" style="margin-bottom: 20px;">
-                        <div class="panel-title">法人籌碼（最新交易日）</div>
-                        ${instHtml}
+                    <div class="panel">
+                        <div class="panel-title">基本面指標</div>
+                        <div class="metric-row"><span class="metric-label">EPS</span><span class="metric-value">${f.eps ?? 'N/A'}</span></div>
+                        <div class="metric-row"><span class="metric-label">ROE</span><span class="metric-value">${f.roe ?? 'N/A'}%</span></div>
+                        <div class="metric-row"><span class="metric-label">營收年增率</span><span class="metric-value">${f.revenue_yoy ?? 'N/A'}%</span></div>
                     </div>
                     
-                    <div class="panels">
-                        <div class="panel">
-                            <div class="panel-title">基本面指標</div>
-                            <div class="metric-row">
-                                <span class="metric-label">EPS (元)</span>
-                                <span class="metric-value">${f.eps ?? 'N/A'}</span>
-                            </div>
-                            <div class="metric-row">
-                                <span class="metric-label">ROE (%)</span>
-                                <span class="metric-value">${f.roe ?? 'N/A'}%</span>
-                            </div>
-                            <div class="metric-row">
-                                <span class="metric-label">月營收年增率</span>
-                                <span class="metric-value">${f.revenue_yoy ?? 'N/A'}%</span>
-                            </div>
-                            <div class="metric-row">
-                                <span class="metric-label">現金股利 (元)</span>
-                                <span class="metric-value">${f.cash_dividend ?? 'N/A'}</span>
-                            </div>
-                            <div class="metric-row">
-                                <span class="metric-label">股息殖利率</span>
-                                <span class="metric-value">${d.dividend_yield_pct ?? 'N/A'}%</span>
-                            </div>
-                        </div>
-                        
-                        <div class="panel">
-                            <div class="panel-title">技術面指標</div>
-                            <div class="metric-row">
-                                <span class="metric-label">股價</span>
-                                <span class="metric-value">${t.current_price ?? 'N/A'} 元</span>
-                            </div>
-                            <div class="metric-row">
-                                <span class="metric-label">52週高/低</span>
-                                <span class="metric-value">${t.high52 ?? 'N/A'} / ${t.low52 ?? 'N/A'}</span>
-                            </div>
-                            <div class="metric-row">
-                                <span class="metric-label">MA20/MA60/MA120</span>
-                                <span class="metric-value">${t.ma20 ?? 'N/A'} / ${t.ma60 ?? 'N/A'} / ${t.ma120 ?? 'N/A'}</span>
-                            </div>
-                            <div class="metric-row">
-                                <span class="metric-label">RSI14</span>
-                                <span class="metric-value">${t.rsi14 ?? 'N/A'}</span>
-                            </div>
-                            <div class="metric-row">
-                                <span class="metric-label">MACD Hist</span>
-                                <span class="metric-value">${t.macd_hist ?? 'N/A'}</span>
-                            </div>
-                            <div class="metric-row">
-                                <span class="metric-label">量比(5/20日)</span>
-                                <span class="metric-value">${t.vol_ratio_5_20 ?? 'N/A'}x</span>
-                            </div>
-                            <div class="metric-row">
-                                <span class="metric-label">52週位置</span>
-                                <span class="metric-value">${t.price_position_52w ?? 'N/A'}%</span>
-                            </div>
-                        </div>
-                        
-                        <div class="panel">
-                            <div class="panel-title">估值面指標</div>
-                            <div class="metric-row">
-                                <span class="metric-label">本益比 PE</span>
-                                <span class="metric-value">${v.pe ?? 'N/A'}x</span>
-                            </div>
-                            <div class="metric-row">
-                                <span class="metric-label">產業平均PE</span>
-                                <span class="metric-value">${v.sector_avg_pe ?? 'N/A'}x</span>
-                            </div>
-                            <div class="metric-row">
-                                <span class="metric-label">相對溢/折價</span>
-                                <span class="metric-value">${v.pe_vs_sector != null ? (v.pe_vs_sector > 0 ? '+' : '') + v.pe_vs_sector + '%' : 'N/A'}</span>
-                            </div>
-                            <div class="metric-row">
-                                <span class="metric-label">股息殖利率</span>
-                                <span class="metric-value">${v.div_yield ?? 'N/A'}%</span>
-                            </div>
-                        </div>
+                    <div class="panel">
+                        <div class="panel-title">技術面指標</div>
+                        <div class="metric-row"><span class="metric-label">股價</span><span class="metric-value">${t.current_price ?? 'N/A'}</span></div>
+                        <div class="metric-row"><span class="metric-label">RSI14</span><span class="metric-value">${t.rsi14 ?? 'N/A'}</span></div>
+                        <div class="metric-row"><span class="metric-label">MACD Hist</span><span class="metric-value">${t.macd_hist ?? 'N/A'}</span></div>
+                    </div>
+                    
+                    <div class="panel">
+                        <div class="panel-title">估值面指標</div>
+                        <div class="metric-row"><span class="metric-label">本益比 PE</span><span class="metric-value">${v.pe ?? 'N/A'}</span></div>
+                        <div class="metric-row"><span class="metric-label">殖利率</span><span class="metric-value">${v.div_yield ?? 'N/A'}%</span></div>
                     </div>
                 `;
             } catch (e) {
@@ -722,87 +170,31 @@
             }
         }
 
-        async function loadAIAnalysis(stockId) {
-            const apiKey = document.getElementById('apiKeyInput').value;
-            if (!apiKey) {
-                showToast('請先輸入 NVIDIA API Key', 'error');
-                return;
-            }
-            showLoading(true);
-            showToast('AI 分析中，請稍候...', 'success');
-            try {
-                const r = await fetch(`/api/stock/${stockId}/ai-analysis?api_key=${apiKey}`);
-                const data = await r.json();
-                if (data.success) {
-                    alert(data.data.analysis);
-                } else {
-                    throw new Error(data.detail);
-                }
-            } catch (e) {
-                showToast('AI 分析失敗：' + e.message, 'error');
-            } finally {
-                showLoading(false);
-            }
-        }
-
         async function runScreener() {
-            showLoading(true);
             const container = document.getElementById('screenerResult');
             document.getElementById('welcome').style.display = 'none';
             document.getElementById('stockDetail').style.display = 'none';
             container.style.display = 'block';
-            container.innerHTML = '<div style="text-align:center; padding:40px; color: #6b7280;">篩選中...</div>';
+            container.innerHTML = '<div style="text-align:center; padding:40px;">篩選中...</div>';
             
             try {
-                const r = await fetch('/api/screener?min_score=60');
-                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const r = await fetch(`${API_BASE}/api/screener?min_score=60`);
                 const data = await r.json();
                 if (!data.success) throw new Error(data.detail);
                 
-                if (data.data.length === 0) {
-                    container.innerHTML = '<div style="text-align:center; padding:40px; color: #6b7280;">無符合條件的股票（評分≥60）</div>';
-                    return;
-                }
-                
                 container.innerHTML = `
                     <div class="panel">
-                        <div class="panel-title">篩選結果 — 評分 ≥ 60（共 ${data.count} 支）</div>
-                        <table style="width: 100%; border-collapse: collapse;">
-                            <thead>
-                                <tr style="border-bottom: 2px solid #1e2d45;">
-                                    <th style="padding: 12px; text-align: left;">股票</th>
-                                    <th style="padding: 12px; text-align: center;">評級</th>
-                                    <th style="padding: 12px; text-align: center;">總分</th>
-                                    <th style="padding: 12px; text-align: center;">基本面</th>
-                                    <th style="padding: 12px; text-align: center;">技術面</th>
-                                    <th style="padding: 12px; text-align: center;">估值面</th>
-                                    <th style="padding: 12px; text-align: center;">建議</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${data.data.map(sc => {
-                                    const stock = allStocks.find(s => s.stock_id === sc.stock_id);
-                                    const name = stock?.name || '';
-                                    return `
-                                        <tr style="border-bottom: 1px solid #1e2d45; cursor: pointer;" onclick="loadStockDetail('${sc.stock_id}', '${name}')">
-                                            <td style="padding: 12px;"><b style="color: #3b82f6;">${sc.stock_id}</b> <span style="color: #6b7280;">${name}</span></td>
-                                            <td style="padding: 12px; text-align: center;"><span class="grade-badge grade-${sc.grade.replace('+', '-plus')}">${sc.grade}</span></td>
-                                            <td style="padding: 12px; text-align: center; font-family: monospace; font-weight: 700;">${sc.total_score}</td>
-                                            <td style="padding: 12px; text-align: center;">${sc.fundamental_score}</td>
-                                            <td style="padding: 12px; text-align: center;">${sc.technical_score}</td>
-                                            <td style="padding: 12px; text-align: center;">${sc.valuation_score}</td>
-                                            <td style="padding: 12px; text-align: center; color: #00d4aa;">${sc.suggestion || '-'}</td>
-                                        </tr>
-                                    `;
-                                }).join('')}
-                            </tbody>
-                        </table>
+                        <div class="panel-title">篩選結果 (評分 >= 60，共 ${data.count} 支)</div>
+                        ${data.data.map(sc => `
+                            <div class="metric-row" style="cursor:pointer;" onclick="loadStockDetail('${sc.stock_id}', '')">
+                                <span class="metric-label">${sc.stock_id}</span>
+                                <span class="metric-value">總分: ${sc.total_score} (${sc.grade})</span>
+                            </div>
+                        `).join('')}
                     </div>
                 `;
             } catch (e) {
                 container.innerHTML = `<div style="color: #ef4444; text-align: center; padding: 40px;">篩選失敗：${e.message}</div>`;
-            } finally {
-                showLoading(false);
             }
         }
     </script>
