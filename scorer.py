@@ -1,9 +1,9 @@
 """
-股票評分引擎 v2
+股票評分引擎 v4 (完全重構完整版)
 滿分 120 分：
   基本面 50分：EPS(15) + ROE(15) + 營收年增率(10) + 股息殖利率(10)
   技術面 50分：均線多頭(20) + RSI(10) + MACD(8) + 成交量(7) + 6個月趨勢(5)
-  估值面 20分：PE合理性(12) + 股息殖利率吸引力(8)
+  估值面 20分：PE歷史位階合理性(12) + 成長股動態殖利率吸引力(8)
 """
 
 class StockScorer:
@@ -23,137 +23,166 @@ class StockScorer:
         return {
             "stock_id":           stock_id,
             "total_score":        total,
-            "fundamental_score":  round(f_score, 1),
-            "technical_score":    round(t_score, 1),
-            "valuation_score":    round(v_score, 1),
             "grade":              grade,
             "suggestion":         suggestion,
-            "detail":             {**f_detail, **t_detail, **v_detail},
-            "fundamental":        fundamental,
-            "technical":          technical,
-            "valuation":          valuation or {},
+            "fundamental_score":  f_score,
+            "technical_score":    t_score,
+            "valuation_score":    v_score,
+            "details": {
+                "fundamental": f_detail,
+                "technical":   t_detail,
+                "valuation":   v_detail
+            }
         }
 
     def _score_fundamental(self, f, t):
         score = 0; detail = {}
-
         eps = f.get("eps", 0)
-        eps_s = min(max(eps / 10 * 15, 0), 15) if eps > 0 else 0
-        score += eps_s; detail["eps_score"] = round(eps_s, 1)
-
         roe = f.get("roe", 0)
-        roe_s = min(max(roe / 20 * 15, 0), 15) if roe > 0 else 0
-        score += roe_s; detail["roe_score"] = round(roe_s, 1)
+        rev_yoy = f.get("revenue_yoy", 0)
+        div_yield = f.get("cash_dividend", 0)
+        
+        # 1. EPS 絕對水平 (15分)
+        if eps >= 20:     eps_s = 15
+        elif eps >= 10:   eps_s = 12
+        elif eps >= 5:    eps_s = 8
+        elif eps >= 2:    eps_s = 4
+        elif eps > 0:     eps_s = 2
+        else:             eps_s = 0
+        score += eps_s; detail["eps_score"] = eps_s
 
-        yoy = f.get("revenue_yoy", 0)
-        yoy_s = min(max(yoy / 20 * 10, 0), 10) if yoy > 0 else 0
-        score += yoy_s; detail["revenue_yoy_score"] = round(yoy_s, 1)
+        # 2. ROE 水平 (15分)
+        if roe >= 25:     roe_s = 15
+        elif roe >= 15:   roe_s = 12
+        elif roe >= 10:   roe_s = 8
+        elif roe >= 5:    roe_s = 4
+        else:             roe_s = 0
+        score += roe_s; detail["roe_score"] = roe_s
 
-        price = t.get("current_price", 0)
-        cash_div = f.get("cash_dividend", 0)
-        div_yield = cash_div / price * 100 if price > 0 and cash_div > 0 else 0
-        div_s = min(max(div_yield / 5 * 10, 0), 10)
-        score += div_s
-        detail["dividend_yield_score"] = round(div_s, 1)
-        detail["dividend_yield_pct"]   = round(div_yield, 2)
+        # 3. 營收年增率 (10分)
+        if rev_yoy >= 30:   rev_s = 10
+        elif rev_yoy >= 15: rev_s = 8
+        elif rev_yoy >= 0:  rev_s = 5
+        elif rev_yoy >= -15: rev_s = 2
+        else:               rev_s = 0
+        score += rev_s; detail["revenue_yoy_score"] = rev_s
+
+        # 4. 股息殖利率 (10分)
+        if div_yield >= 5:   div_s = 10
+        elif div_yield >= 3: div_s = 7
+        elif div_yield >= 1: div_s = 4
+        else:                div_s = 0
+        score += div_s; detail["fundamental_dividend_score"] = div_s
 
         return score, detail
 
     def _score_technical(self, t):
         score = 0; detail = {}
-        price = t.get("current_price", 0)
-        ma5   = t.get("ma5", 0)
-        ma20  = t.get("ma20", 0)
-        ma60  = t.get("ma60", 0)
-        ma120 = t.get("ma120", 0)
-        ma240 = t.get("ma240", 0)
+        
+        # 1. 均線多頭排列 (20分)
+        ma5 = t.get("ma5")
+        ma20 = t.get("ma20")
+        ma60 = t.get("ma60")
+        if ma5 and ma20 and ma60:
+            if ma5 > ma20 > ma60:  ma_s = 20
+            elif ma20 > ma60:      ma_s = 12
+            elif ma5 > ma20:       ma_s = 8
+            else:                  ma_s = 2
+        else:
+            ma_s = 10
+        score += ma_s; detail["ma_alignment_score"] = ma_s
 
-        # 均線多頭排列（20分，新增半年線/年線）
-        ma_s = 0
-        if price > 0 and ma5 > 0:
-            if price > ma5:   ma_s += 4
-            if ma5 > ma20:    ma_s += 4
-            if ma20 > ma60:   ma_s += 4
-            if ma60 > ma120:  ma_s += 4
-            if ma120 > ma240 and ma240 > 0: ma_s += 4
-        score += ma_s; detail["ma_score"] = ma_s
-
-        # RSI (10分)
-        rsi = t.get("rsi14", 50)
-        if 50 <= rsi <= 70:   rsi_s = 10
-        elif 40 <= rsi < 50:  rsi_s = 7
-        elif 70 < rsi <= 80:  rsi_s = 6
-        elif 30 <= rsi < 40:  rsi_s = 5
-        else:                 rsi_s = 2
+        # 2. RSI 狀態 (10分) - 相容新舊欄位
+        rsi = t.get("rsi14", t.get("rsi", 50))
+        if 50 <= rsi <= 70:    rsi_s = 10
+        elif 40 <= rsi < 50:   rsi_s = 7
+        elif rsi > 70:         rsi_s = 4
+        elif 30 <= rsi < 40:   rsi_s = 3
+        else:                  rsi_s = 0
         score += rsi_s; detail["rsi_score"] = rsi_s
 
-        # MACD (8分)
-        macd    = t.get("macd", 0)
-        signal  = t.get("macd_signal", 0)
-        hist    = t.get("macd_hist", 0)
-        macd_s = 0
-        if macd > signal: macd_s += 4
-        if hist > 0:      macd_s += 2
-        if macd > 0:      macd_s += 2
+        # 3. MACD 指標 (8分)
+        macd_hist = t.get("macd_hist", 0)
+        if macd_hist > 0:      macd_s = 8
+        elif macd_hist == 0:   macd_s = 4
+        else:                  macd_s = 1
         score += macd_s; detail["macd_score"] = macd_s
 
-        # 成交量趨勢 (7分)
-        vol_ratio = t.get("vol_ratio_5_20", 1.0)
-        if vol_ratio >= 1.3:   vol_s = 7
-        elif vol_ratio >= 1.0: vol_s = 5
-        elif vol_ratio >= 0.7: vol_s = 3
-        else:                  vol_s = 0
+        # 4. 成交量量能 (7分) - 相容新舊欄位
+        vol_ratio = t.get("vol_ratio_5_20", t.get("volume_ratio", 1.0))
+        if 1.2 <= vol_ratio <= 2.5: vol_s = 7
+        elif 0.8 <= vol_ratio < 1.2: vol_s = 5
+        elif vol_ratio > 2.5:       vol_s = 3
+        else:                       vol_s = 1
         score += vol_s; detail["volume_score"] = vol_s
 
-        # 6個月趨勢 (5分)
-        trend = t.get("trend_6m", 0)
-        if trend >= 20:    trend_s = 5
-        elif trend >= 10:  trend_s = 4
-        elif trend >= 0:   trend_s = 3
-        elif trend >= -10: trend_s = 1
-        else:              trend_s = 0
+        # 5. 6個月中長線趨勢 (5分)
+        price_pos = t.get("price_position_52w", 50)
+        if 60 <= price_pos <= 85:  trend_s = 5
+        elif 40 <= price_pos < 60: trend_s = 3
+        elif price_pos > 85:       trend_s = 2
+        else:                      trend_s = 0
         score += trend_s; detail["trend_6m_score"] = trend_s
-        detail["price_position_52w"] = t.get("price_position_52w", 50)
+        detail["price_position_52w"] = price_pos
 
         return score, detail
 
     def _score_valuation(self, v, f, t):
+        """
+        核心修正：全面改用新版 data_fetcher 傳入的 pe_percentile 與動態補償機制
+        """
         score = 0; detail = {}
         pe = v.get("pe")
-        pe_vs = v.get("pe_vs_sector")   # 正=溢價%, 負=折價%
-        div_yield = v.get("div_yield")
+        pe_percentile = v.get("pe_percentile") 
+        div_yield = v.get("div_yield", 0)     
+        
+        roe = f.get("roe", 0)
+        rev_slope = f.get("revenue_slope", 1.0) 
 
-        # PE 合理性 (12分)
-        # 折價 ≥30% = 12分（非常便宜）
-        # 折價 10~30% = 9分
-        # ±10% = 6分（合理）
-        # 溢價 10~30% = 3分
-        # 溢價 ≥30% = 0分（偏貴）
+        # 判定是否為「高成長頂級權值股」(護城河企業)
+        is_moat_growth_stock = (roe >= 20.0 and rev_slope >= 1.0)
+
+        # 1. 本益比合理性評分 (滿分 12 分)
         if pe is None:
-            pe_s = 5  # 無資料給中性分
-        elif pe_vs is not None:
-            if pe_vs <= -30:    pe_s = 12
-            elif pe_vs <= -10:  pe_s = 9
-            elif pe_vs <= 10:   pe_s = 6
-            elif pe_vs <= 30:   pe_s = 3
-            else:               pe_s = 0
+            pe_s = 6  
+        elif pe_percentile is not None:
+            # 依照歷史河流圖位階百分位評分（完美解決高成長股與平庸產業比對時的歸零盲點）
+            if pe_percentile <= 25:    pe_s = 12  # 歷史極度便宜
+            elif pe_percentile <= 55:  pe_s = 10  # 歷史中軸合理區 (台積電常態)
+            elif pe_percentile <= 75:  pe_s = 7   # 多頭溢價
+            elif pe_percentile <= 90:  pe_s = 4   # 估值偏高
+            else:                      pe_s = 0   # 極端過熱
         else:
-            if pe < 12:    pe_s = 12
-            elif pe < 18:  pe_s = 9
-            elif pe < 25:  pe_s = 6
-            elif pe < 35:  pe_s = 3
-            else:          pe_s = 0
-        score += pe_s; detail["pe_score"] = pe_s
-        detail["pe"] = pe; detail["pe_vs_sector"] = pe_vs
+            # 降級安全機制
+            if is_moat_growth_stock:
+                if pe < 16:     pe_s = 12
+                elif pe < 26:   pe_s = 10 
+                elif pe < 32:   pe_s = 6
+                else:           pe_s = 1
+            else:
+                if pe < 12:     pe_s = 12
+                elif pe < 16:   pe_s = 9
+                elif pe < 20:   pe_s = 6
+                elif pe < 25:   pe_s = 2
+                else:           pe_s = 0
 
-        # 殖利率吸引力 (8分)
-        if div_yield is None:
-            dy_s = 3
-        elif div_yield >= 5:   dy_s = 8
-        elif div_yield >= 3:   dy_s = 6
-        elif div_yield >= 1.5: dy_s = 4
-        else:                  dy_s = 1
-        score += dy_s; detail["div_yield_score"] = dy_s
-        detail["div_yield"] = div_yield
+        # 2. 股息殖利率吸引力評分 (滿分 8 分)
+        if is_moat_growth_stock:
+            # 成長股補償放寬要求
+            if div_yield >= 3.5:    div_s = 8
+            elif div_yield >= 1.8:  div_s = 6  # 台積電維持在此區間，保住高分
+            elif div_yield >= 1.0:  div_s = 4
+            else:                   div_s = 2
+        else:
+            if div_yield >= 5.0:    div_s = 8
+            elif div_yield >= 4.0:  div_s = 6
+            elif div_yield >= 2.5:  div_s = 3
+            else:                   div_s = 0
+
+        score = pe_s + div_s
+        detail["pe_score"] = pe_s
+        detail["yield_score"] = div_s
+        detail["is_moat_growth_compensated"] = is_moat_growth_stock
+        detail["pe_percentile_val"] = pe_percentile
 
         return score, detail
