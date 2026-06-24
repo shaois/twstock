@@ -302,6 +302,19 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: #1e2d45;
+            border-radius: 2px;
+            overflow: hidden;
+            margin: 12px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #00d4aa;
+            transition: width 0.3s;
+        }
         @media (max-width: 768px) {
             .layout { flex-direction: column; }
             .sidebar { width: 100%; border-right: none; border-bottom: 1px solid #1e2d45; }
@@ -392,10 +405,6 @@
     <div class="toast" id="toast"></div>
 
     <script>
-        // 🔧 關鍵修復：指定後端 API 的實際位置
-        // 如果你的 Render URL 不同，請修改這裡
-        const API_BASE = 'https://twstock-app.onrender.com';
-        
         let allStocks = [];
         let filteredStocks = [];
 
@@ -413,9 +422,8 @@
         async function loadStocks() {
             showLoading(true);
             try {
-                // 🔧 使用絕對路徑指向 Render API
-                const r = await fetch(`${API_BASE}/api/top50`);
-                if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+                const r = await fetch('/api/top50');
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
                 const data = await r.json();
                 if (!data.success) throw new Error(data.detail);
                 
@@ -423,9 +431,9 @@
                 filteredStocks = [...allStocks];
                 document.getElementById('stockCount').textContent = `(${allStocks.length})`;
                 renderStockList(filteredStocks);
-                showToast(`已載入 ${allStocks.length} 支股票`, 'success');
+                showToast(`✅ 已載入 ${allStocks.length} 支股票`, 'success');
                 
-                // 批次評分
+                // 啟動批次評分
                 await batchScore();
             } catch (e) {
                 showToast('載入失敗：' + e.message, 'error');
@@ -437,13 +445,28 @@
 
         async function batchScore() {
             try {
-                const r = await fetch(`${API_BASE}/api/batch-score`, { method: 'POST' });
+                const r = await fetch('/api/batch-score', { method: 'POST' });
                 const data = await r.json();
                 showToast(data.message, 'success');
-                // 30秒後重新載入評分
-                setTimeout(() => {
-                    filteredStocks.forEach(s => loadStockScore(s.stock_id));
-                }, 30000);
+                
+                // 每 5 秒檢查一次評分進度
+                let checkCount = 0;
+                const checkInterval = setInterval(async () => {
+                    checkCount++;
+                    const scoredCount = allStocks.filter(s => s.score).length;
+                    if (scoredCount > 0) {
+                        renderStockList(filteredStocks);
+                        showToast(`📊 已完成 ${scoredCount}/${allStocks.length} 支股票評分`, 'success');
+                    }
+                    
+                    if (checkCount >= 12 || scoredCount === allStocks.length) {
+                        clearInterval(checkInterval);
+                        if (scoredCount === 0) {
+                            showToast('⚠️ 批次評分尚未完成，請點擊左側股票查看即時評分', 'success');
+                        }
+                    }
+                }, 5000);
+                
             } catch (e) {
                 console.error('Batch score error:', e);
             }
@@ -451,7 +474,7 @@
 
         async function loadStockScore(stockId) {
             try {
-                const r = await fetch(`${API_BASE}/api/stock/${stockId}/score`);
+                const r = await fetch(`/api/stock/${stockId}/score`);
                 const data = await r.json();
                 if (data.success) {
                     const stock = allStocks.find(s => s.stock_id === stockId);
@@ -508,11 +531,18 @@
             detail.innerHTML = '<div style="text-align:center; padding:40px; color: #6b7280;">載入中...</div>';
             
             try {
-                const r = await fetch(`${API_BASE}/api/stock/${stockId}/score`);
-                const data = await r.json();
-                if (!data.success) throw new Error(data.detail);
+                // 先嘗試從 cache 讀取
+                let sc = allStocks.find(s => s.stock_id === stockId)?.score;
                 
-                const sc = data.data;
+                // 如果 cache 沒有，即時抓取
+                if (!sc) {
+                    showToast('⏳ 即時計算評分中...', 'success');
+                    const r = await fetch(`/api/stock/${stockId}/score`);
+                    const data = await r.json();
+                    if (!data.success) throw new Error(data.detail);
+                    sc = data.data;
+                }
+                
                 const f = sc.fundamental || {};
                 const t = sc.technical || {};
                 const v = sc.valuation || {};
@@ -521,7 +551,7 @@
                 // 法人籌碼
                 let instHtml = '<div style="color: #6b7280; text-align: center; padding: 20px;">載入中...</div>';
                 try {
-                    const instR = await fetch(`${API_BASE}/api/finmind/${stockId}`);
+                    const instR = await fetch(`/api/finmind/${stockId}`);
                     const instData = await instR.json();
                     if (instData.status === 200 && instData.data && instData.data.length > 0) {
                         const foreign = instData.data.find(x => x.name === '外資及陸資');
@@ -701,7 +731,7 @@
             showLoading(true);
             showToast('AI 分析中，請稍候...', 'success');
             try {
-                const r = await fetch(`${API_BASE}/api/stock/${stockId}/ai-analysis?api_key=${apiKey}`);
+                const r = await fetch(`/api/stock/${stockId}/ai-analysis?api_key=${apiKey}`);
                 const data = await r.json();
                 if (data.success) {
                     alert(data.data.analysis);
@@ -724,8 +754,8 @@
             container.innerHTML = '<div style="text-align:center; padding:40px; color: #6b7280;">篩選中...</div>';
             
             try {
-                const r = await fetch(`${API_BASE}/api/screener?min_score=60`);
-                if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+                const r = await fetch('/api/screener?min_score=60');
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
                 const data = await r.json();
                 if (!data.success) throw new Error(data.detail);
                 
