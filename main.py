@@ -1,11 +1,5 @@
 """
 台股中長期選股建議 App - 後端 (最終穩定版 v3.0)
-優化：
-1. 優先讀取 GitHub Actions 每日快取 (cache/*.json)
-2. 法人籌碼自動 Fallback 到 TWSE 免費 API
-3. 批次評分加速 (asyncio.gather + Semaphore)
-4. 新增 Yahoo Finance Proxy
-5. 清理所有重複程式碼
 """
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -30,19 +24,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 初始化
 fetcher = TWStockFetcher()
 scorer = StockScorer()
 cache = DataCache()
 
-# 快取目錄
 CACHE_DIR = Path("/tmp/twstock_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
-# GitHub Actions 每日更新的快取目錄
 GH_CACHE_DIR = Path(__file__).parent / "cache"
 
-# 股票清單
 STOCK_IDS = [
     "2330", "2317", "2454", "2308", "2382", "2881", "2882", "2886", "2884", "2891",
     "2892", "5880", "2885", "2883", "2887", "2412", "2303", "2002", "1301", "1303",
@@ -56,10 +46,7 @@ STOCK_IDS = [
     "2542", "2404", "3673", "2496", "3443", "4966", "6278", "2377", "2313", "3006",
 ]
 
-# ========== 快取輔助函數 ==========
-
 def _read_gh_cache(dtype: str, stock_id: str):
-    """從 GitHub Actions 每日更新的 cache/{dtype}.json 中讀取特定股票的資料"""
     file_path = GH_CACHE_DIR / f"{dtype}.json"
     if not file_path.exists():
         return None
@@ -76,7 +63,6 @@ def _cache_path(stock_id: str, dtype: str) -> Path:
     return CACHE_DIR / f"{dtype}_{stock_id}.json"
 
 def _cache_read(stock_id: str, dtype: str):
-    """讀取本地 /tmp 快取，超過25小時視為過期"""
     p = _cache_path(stock_id, dtype)
     if not p.exists():
         return None
@@ -90,33 +76,23 @@ def _cache_read(stock_id: str, dtype: str):
         return None
 
 def _cache_write(stock_id: str, dtype: str, payload: dict):
-    """寫入本地 /tmp 快取，附上時間戳"""
     payload["_saved_at"] = datetime.now().isoformat()
     _cache_path(stock_id, dtype).write_text(json.dumps(payload, ensure_ascii=False))
 
 async def _fetch_finmind_raw(stock_id: str, dtype: str, token: str) -> dict:
-    """直接呼叫 FinMind API，回傳原始 JSON"""
     today = datetime.today()
     if dtype == "fundamental":
         start = (today - timedelta(days=540)).strftime("%Y-%m-%d")
-        url = (f"https://api.finmindtrade.com/api/v4/data"
-               f"?dataset=TaiwanStockFinancialStatements"
-               f"&data_id={stock_id}&start_date={start}&token={token}")
+        url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start}&token={token}"
     elif dtype == "revenue":
         start = (today - timedelta(days=400)).strftime("%Y-%m-%d")
-        url = (f"https://api.finmindtrade.com/api/v4/data"
-               f"?dataset=TaiwanStockMonthRevenue"
-               f"&data_id={stock_id}&start_date={start}&token={token}")
+        url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={stock_id}&start_date={start}&token={token}"
     elif dtype == "price":
         start = (today - timedelta(days=270)).strftime("%Y-%m-%d")
-        url = (f"https://api.finmindtrade.com/api/v4/data"
-               f"?dataset=TaiwanStockPrice"
-               f"&data_id={stock_id}&start_date={start}&token={token}")
+        url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={stock_id}&start_date={start}&token={token}"
     elif dtype == "institutional":
         start = (today - timedelta(days=30)).strftime("%Y-%m-%d")
-        url = (f"https://api.finmindtrade.com/api/v4/data"
-               f"?dataset=TaiwanStockInstitutionalInvestorsBuySell"
-               f"&data_id={stock_id}&start_date={start}&token={token}")
+        url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={stock_id}&start_date={start}&token={token}"
     else:
         return {}
     
@@ -125,13 +101,11 @@ async def _fetch_finmind_raw(stock_id: str, dtype: str, token: str) -> dict:
         return r.json()
 
 async def _fetch_twse_institutional(stock_id: str):
-    """從 TWSE 抓取最近一個交易日的三大法人買賣超，並轉換為 FinMind 格式"""
     today = datetime.today()
     for i in range(7): 
         d = today - timedelta(days=i)
         if d.weekday() >= 5:
             continue
-        
         date_str = d.strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/fund/T86?response=json&date={date_str}&selectType=ALLBUT0999"
         try:
@@ -166,8 +140,6 @@ async def _fetch_twse_institutional(stock_id: str):
             pass
     return None
 
-# ========== API Routes ==========
-
 @app.get("/", response_class=HTMLResponse)
 async def root():
     for p in ["static/index.html", "index.html"]:
@@ -183,12 +155,7 @@ async def root():
 async def health():
     cached_count = len(list(CACHE_DIR.glob("*.json")))
     gh_count = len(list(GH_CACHE_DIR.glob("*.json"))) if GH_CACHE_DIR.exists() else 0
-    return {
-        "status": "ok", 
-        "time": datetime.now().isoformat(), 
-        "tmp_cached_files": cached_count,
-        "gh_cached_files": gh_count
-    }
+    return {"status": "ok", "time": datetime.now().isoformat(), "tmp_cached_files": cached_count, "gh_cached_files": gh_count}
 
 @app.get("/api/top50")
 async def get_top50():
@@ -209,12 +176,7 @@ async def get_stock_score(stock_id: str):
         if not data:
             fundamental = await fetcher.fetch_fundamental(stock_id)
             technical = await fetcher.fetch_technical(stock_id)
-            valuation = await fetcher.fetch_valuation(
-                stock_id,
-                technical.get("current_price", 0),
-                fundamental.get("eps", 0),
-                fundamental.get("cash_dividend", 0),
-            )
+            valuation = await fetcher.fetch_valuation(stock_id, technical.get("current_price", 0), fundamental.get("eps", 0), fundamental.get("cash_dividend", 0))
             score_result = scorer.calculate(stock_id, fundamental, technical, valuation)
             data = score_result
             cache.set(cache_key, data, ttl_hours=6)
@@ -235,12 +197,7 @@ async def get_ai_analysis(stock_id: str, api_key: str = ""):
             if not score_cache:
                 fundamental = await fetcher.fetch_fundamental(stock_id)
                 technical = await fetcher.fetch_technical(stock_id)
-                valuation = await fetcher.fetch_valuation(
-                    stock_id,
-                    technical.get("current_price", 0),
-                    fundamental.get("eps", 0),
-                    fundamental.get("cash_dividend", 0),
-                )
+                valuation = await fetcher.fetch_valuation(stock_id, technical.get("current_price", 0), fundamental.get("eps", 0), fundamental.get("cash_dividend", 0))
                 score_cache = scorer.calculate(stock_id, fundamental, technical, valuation)
             analyzer = AIAnalyzer(effective_key)
             data = await analyzer.analyze(stock_id, score_cache)
@@ -273,7 +230,6 @@ async def batch_score(background_tasks: BackgroundTasks):
     return {"success": True, "message": "批次評分已開始，約需 30-40 秒，請稍後刷新"}
 
 async def run_batch_scoring():
-    """批次評分所有股票 (並發優化版)"""
     semaphore = asyncio.Semaphore(5)
     
     async def score_single(stock):
@@ -283,12 +239,7 @@ async def run_batch_scoring():
                 try:
                     fundamental = await fetcher.fetch_fundamental(sid)
                     technical = await fetcher.fetch_technical(sid)
-                    valuation = await fetcher.fetch_valuation(
-                        sid,
-                        technical.get("current_price", 0),
-                        fundamental.get("eps", 0),
-                        fundamental.get("cash_dividend", 0),
-                    )
+                    valuation = await fetcher.fetch_valuation(sid, technical.get("current_price", 0), fundamental.get("eps", 0), fundamental.get("cash_dividend", 0))
                     score_result = scorer.calculate(sid, fundamental, technical, valuation)
                     cache.set(f"score_{sid}", score_result, ttl_hours=6)
                     print(f"[SCORE] {sid} 完成")
@@ -303,26 +254,17 @@ async def run_batch_scoring():
     await asyncio.gather(*(score_single(stock) for stock in top50))
     print("[BATCH] 批次評分完成")
 
-# ========== FinMind Proxy APIs ==========
-
 @app.get("/api/finmind/fundamental/{stock_id}")
 async def finmind_fundamental_proxy(stock_id: str, token: str = ""):
-    # 1. 優先讀取 GitHub Actions 每日快取
     gh_data = _read_gh_cache("fundamental", stock_id)
     if gh_data:
         return JSONResponse(content=gh_data)
-    
-    # 2. 讀取本地 /tmp 快取
     cached = _cache_read(stock_id, "fundamental")
     if cached:
         return JSONResponse(content=cached)
-        
-    # 3. 最後嘗試 FinMind API
     import datetime as dt
     start_date = (dt.date.today() - dt.timedelta(days=540)).strftime("%Y-%m-%d")
-    url = (f"https://api.finmindtrade.com/api/v4/data"
-           f"?dataset=TaiwanStockFinancialStatements"
-           f"&data_id={stock_id}&start_date={start_date}&token={token}")
+    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}&token={token}"
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             r = await client.get(url)
@@ -335,22 +277,15 @@ async def finmind_fundamental_proxy(stock_id: str, token: str = ""):
 
 @app.get("/api/finmind/price/{stock_id}")
 async def finmind_price_proxy(stock_id: str, token: str = "", start_date: str = ""):
-    # 1. 優先讀取 GitHub Actions 每日快取
     gh_data = _read_gh_cache("price", stock_id)
     if gh_data:
         return JSONResponse(content=gh_data)
-        
-    # 2. 讀取本地 /tmp 快取
     cached = _cache_read(stock_id, "price")
     if cached:
         return JSONResponse(content=cached)
-        
-    # 3. 最後嘗試 FinMind API
     if not start_date:
         start_date = (datetime.today() - timedelta(days=270)).strftime("%Y-%m-%d")
-    url = (f"https://api.finmindtrade.com/api/v4/data"
-           f"?dataset=TaiwanStockPrice"
-           f"&data_id={stock_id}&start_date={start_date}&token={token}")
+    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={stock_id}&start_date={start_date}&token={token}"
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             r = await client.get(url)
@@ -363,14 +298,9 @@ async def finmind_price_proxy(stock_id: str, token: str = "", start_date: str = 
 
 @app.get("/api/finmind/{stock_id}")
 async def finmind_proxy(stock_id: str, token: str = "", start_date: str = ""):
-    """法人籌碼：優先 FinMind，若 402 則 Fallback 到 TWSE 免費 API"""
     if not start_date:
         start_date = (datetime.today() - timedelta(days=30)).strftime("%Y-%m-%d")
-        
-    # 1. 嘗試 FinMind API
-    url = (f"https://api.finmindtrade.com/api/v4/data"
-           f"?dataset=TaiwanStockInstitutionalInvestorsBuySell"
-           f"&data_id={stock_id}&start_date={start_date}&token={token}")
+    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={stock_id}&start_date={start_date}&token={token}"
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             r = await client.get(url)
@@ -380,18 +310,13 @@ async def finmind_proxy(stock_id: str, token: str = "", start_date: str = ""):
                     return JSONResponse(content=data)
     except Exception:
         pass
-    
-    # 2. FinMind 失敗或 402，改用 TWSE 官方 API
     twse_data = await _fetch_twse_institutional(stock_id)
     if twse_data:
         return JSONResponse(content=twse_data)
-    
-    # 3. 都失敗，回傳空資料
     return JSONResponse(content={"status": 200, "data": [], "msg": "法人資料暫時無法取得"}, status_code=200)
 
 @app.get("/api/yahoo/{stock_id}")
 async def yahoo_proxy(stock_id: str, range_: str = "1y"):
-    """Proxy Yahoo Finance API，解決 CORS 問題"""
     try:
         symbol = f"{stock_id}.TW"
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range={range_}"
@@ -408,27 +333,16 @@ async def nvidia_proxy(request: dict):
         raise HTTPException(status_code=400, detail="需要 NVIDIA API Key")
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
-            r = await client.post(
-                "https://integrate.api.nvidia.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=request.get("body", {})
-            )
+            r = await client.post("https://integrate.api.nvidia.com/v1/chat/completions", headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, json=request.get("body", {}))
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ========== Admin APIs ==========
-
 @app.get("/api/admin/cache-status")
 async def cache_status():
-    """查看快取狀態"""
     files = list(CACHE_DIR.glob("*.json"))
     gh_files = list(GH_CACHE_DIR.glob("*.json")) if GH_CACHE_DIR.exists() else []
-    result = {
-        "tmp_cached_files": len(files),
-        "gh_cached_files": len(gh_files),
-        "stocks": {}
-    }
+    result = {"tmp_cached_files": len(files), "gh_cached_files": len(gh_files), "stocks": {}}
     for sid in STOCK_IDS[:10]:
         status = {}
         for dtype in ["fundamental", "revenue", "price"]:
@@ -449,12 +363,10 @@ async def refresh_cache(background_tasks: BackgroundTasks, secret: str = ""):
     return {"message": "快取更新已開始", "stocks": len(STOCK_IDS)}
 
 async def _run_daily_cache():
-    """背景任務：依序抓取所有股票的 FinMind 資料並快取"""
     token = os.environ.get("FINMIND_TOKEN")
     if not token:
         print("[CACHE] 未設定 FINMIND_TOKEN，跳過快取更新")
         return
-    
     success, fail = 0, 0
     for i, sid in enumerate(STOCK_IDS):
         try:

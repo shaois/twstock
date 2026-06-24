@@ -1,9 +1,5 @@
 """
 TWSE + Yahoo Finance 資料抓取模組 v4 (最終穩定版)
-優化：
-1. 優先讀取 GitHub Actions 每日快取
-2. 正確解析 FinMind 財報資料中的 ROE
-3. 移除硬編碼資料，改用動態抓取
 """
 import httpx
 import asyncio
@@ -47,7 +43,6 @@ class TWStockFetcher:
         return m.get(stock_id, "其他")
     
     def _read_gh_cache(self, dtype: str, stock_id: str):
-        """從 GitHub Actions 每日更新的 cache/{dtype}.json 中讀取特定股票的資料"""
         file_path = self.gh_cache_dir / f"{dtype}.json"
         if not file_path.exists():
             return None
@@ -61,7 +56,6 @@ class TWStockFetcher:
         return None
     
     async def fetch_top50_stocks(self):
-        """從 TWSE 抓取前100大股票清單"""
         stocks = []
         try:
             url = "https://opendata.twse.com.tw/v1/opendata/t000300_L"
@@ -73,28 +67,18 @@ class TWStockFetcher:
                         stock_id = str(row.get("公司代號", "")).strip()
                         name = row.get("公司名稱", "")
                         if stock_id and len(stock_id) == 4:
-                            stocks.append({
-                                "stock_id": stock_id,
-                                "name": name,
-                                "sector": self._get_sector(stock_id)
-                            })
+                            stocks.append({"stock_id": stock_id, "name": name, "sector": self._get_sector(stock_id)})
         except Exception as e:
             print(f"[WARN] 抓取 TWSE 股票清單失敗: {e}")
             fallback_ids = ["2330", "2317", "2454", "2308", "2382", "2881", "2882", "2886", "2884", "2891"]
             for sid in fallback_ids:
                 stocks.append({"stock_id": sid, "name": "", "sector": self._get_sector(sid)})
-        
         if stocks:
             cache_file = self.cache_dir / "top50_stocks.json"
-            cache_file.write_text(json.dumps({
-                "_saved_at": datetime.now().isoformat(),
-                "data": stocks
-            }, ensure_ascii=False))
-        
+            cache_file.write_text(json.dumps({"_saved_at": datetime.now().isoformat(), "data": stocks}, ensure_ascii=False))
         return stocks
     
     async def fetch_yahoo(self, stock_id: str, range_: str = "1y") -> dict:
-        """從 Yahoo Finance 抓技術面 + 估值數據"""
         try:
             symbol = f"{stock_id}.TW"
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range={range_}"
@@ -107,75 +91,41 @@ class TWStockFetcher:
             indicators = result["indicators"]["quote"][0]
             closes = [c for c in (indicators.get("close") or []) if c is not None]
             volumes = [v for v in (indicators.get("volume") or []) if v is not None]
-            return {
-                "closes": closes,
-                "volumes": volumes,
-                "current_price": meta.get("regularMarketPrice", 0),
-                "high52": meta.get("fiftyTwoWeekHigh", 0),
-                "low52": meta.get("fiftyTwoWeekLow", 0),
-            }
+            return {"closes": closes, "volumes": volumes, "current_price": meta.get("regularMarketPrice", 0), "high52": meta.get("fiftyTwoWeekHigh", 0), "low52": meta.get("fiftyTwoWeekLow", 0)}
         except Exception as e:
             print(f"[WARN] {stock_id} Yahoo抓取失敗: {e}")
             return {}
     
     async def fetch_technical(self, stock_id: str) -> dict:
-        """技術面：Yahoo Finance 12個月資料"""
         ydata = await self.fetch_yahoo(stock_id, "1y")
         if not ydata or len(ydata.get("closes", [])) < 5:
             return self._empty_technical()
-        
         closes = ydata["closes"]
         volumes = ydata["volumes"]
         current_price = ydata["current_price"] or closes[-1]
         high52 = ydata["high52"] or max(closes)
         low52 = ydata["low52"] or min(closes)
-        
         ma5 = sum(closes[-5:]) / min(5, len(closes))
         ma20 = sum(closes[-20:]) / min(20, len(closes))
         ma60 = sum(closes[-60:]) / min(60, len(closes))
         ma120 = sum(closes[-120:]) / min(120, len(closes))
         ma240 = sum(closes[-240:]) / min(240, len(closes))
-        
         rsi = self._calc_rsi(closes, 14)
         macd_val, sig_val, hist = self._calc_macd(closes)
-        
         avg5 = sum(volumes[-5:]) / min(5, len(volumes))
         avg20 = sum(volumes[-20:]) / min(20, len(volumes))
         vol_ratio = avg5 / avg20 if avg20 > 0 else 1.0
-        
         pos = (current_price - low52) / (high52 - low52) * 100 if high52 != low52 else 50
-        
         half_year_price = closes[-120] if len(closes) >= 120 else closes[0]
         trend_6m = (current_price - half_year_price) / half_year_price * 100
-        
-        return {
-            "current_price": round(current_price, 2),
-            "ma5": round(ma5, 2),
-            "ma20": round(ma20, 2),
-            "ma60": round(ma60, 2),
-            "ma120": round(ma120, 2),
-            "ma240": round(ma240, 2),
-            "rsi14": round(rsi, 1),
-            "macd": round(macd_val, 3),
-            "macd_signal": round(sig_val, 3),
-            "macd_hist": round(hist, 3),
-            "vol_ratio_5_20": round(vol_ratio, 2),
-            "price_position_52w": round(pos, 1),
-            "high52": round(high52, 2),
-            "low52": round(low52, 2),
-            "trend_6m": round(trend_6m, 1),
-            "data_points": len(closes),
-        }
+        return {"current_price": round(current_price, 2), "ma5": round(ma5, 2), "ma20": round(ma20, 2), "ma60": round(ma60, 2), "ma120": round(ma120, 2), "ma240": round(ma240, 2), "rsi14": round(rsi, 1), "macd": round(macd_val, 3), "macd_signal": round(sig_val, 3), "macd_hist": round(hist, 3), "vol_ratio_5_20": round(vol_ratio, 2), "price_position_52w": round(pos, 1), "high52": round(high52, 2), "low52": round(low52, 2), "trend_6m": round(trend_6m, 1), "data_points": len(closes)}
     
     async def fetch_fundamental(self, stock_id: str) -> dict:
-        """基本面：優先讀取快取，正確解析 ROE 與除息資料"""
         fundamental_data = self._read_gh_cache("fundamental", stock_id)
-        
         eps = 0
         roe = 0
         cash_dividend = 0
         exdiv_date = ""
-        
         if fundamental_data and fundamental_data.get("status") == 200:
             data = fundamental_data.get("data", [])
             if data:
@@ -187,45 +137,24 @@ class TWStockFetcher:
                     if row.get("type") == "ReturnOnEquity" and row.get("value"):
                         roe = float(row["value"])
                         break
-        
         revenue_yoy = await self._fetch_revenue_yoy(stock_id)
-        
         exdiv_data = self._read_gh_cache("exdiv", stock_id)
         if exdiv_data and exdiv_data.get("status") == 200:
             exdiv_info = exdiv_data.get("data", {})
             if exdiv_info:
                 cash_dividend = exdiv_info.get("div", 0) or 0
                 exdiv_date = exdiv_info.get("date", "")
-        
-        return {
-            "eps": eps,
-            "roe": roe,
-            "revenue_yoy": revenue_yoy or 0,
-            "revenue_mom": 0,
-            "cash_dividend": cash_dividend,
-            "exdiv_date": exdiv_date,
-            "dividend_yield": 0,
-        }
+        return {"eps": eps, "roe": roe, "revenue_yoy": revenue_yoy or 0, "revenue_mom": 0, "cash_dividend": cash_dividend, "exdiv_date": exdiv_date, "dividend_yield": 0}
     
     async def fetch_valuation(self, stock_id: str, current_price: float, eps: float, cash_dividend: float) -> dict:
-        """估值面：PE / 殖利率 / 52週相對位置"""
         pe = round(current_price / eps, 1) if eps and eps > 0 and current_price > 0 else None
         div_yield = round(cash_dividend / current_price * 100, 2) if cash_dividend and current_price > 0 else None
-        
         sector = self._get_sector(stock_id)
         avg_pe = SECTOR_PE_AVG.get(sector, 18)
         pe_vs_avg = round((pe / avg_pe - 1) * 100, 1) if pe else None
-        
-        return {
-            "pe": pe,
-            "div_yield": div_yield,
-            "sector_avg_pe": avg_pe,
-            "pe_vs_sector": pe_vs_avg,
-            "current_price": current_price,
-        }
+        return {"pe": pe, "div_yield": div_yield, "sector_avg_pe": avg_pe, "pe_vs_sector": pe_vs_avg, "current_price": current_price}
     
     async def _fetch_revenue_yoy(self, stock_id):
-        """從 TWSE 抓取月營收年增率"""
         try:
             url = "https://opendata.twse.com.tw/v1/opendata/t187ap05_L"
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -280,9 +209,4 @@ class TWStockFetcher:
             return 0.0
     
     def _empty_technical(self):
-        return {
-            "current_price": 0, "ma5": 0, "ma20": 0, "ma60": 0, "ma120": 0, "ma240": 0,
-            "rsi14": 50, "macd": 0, "macd_signal": 0, "macd_hist": 0,
-            "vol_ratio_5_20": 1.0, "price_position_52w": 50,
-            "high52": 0, "low52": 0, "trend_6m": 0, "data_points": 0
-        }
+        return {"current_price": 0, "ma5": 0, "ma20": 0, "ma60": 0, "ma120": 0, "ma240": 0, "rsi14": 50, "macd": 0, "macd_signal": 0, "macd_hist": 0, "vol_ratio_5_20": 1.0, "price_position_52w": 50, "high52": 0, "low52": 0, "trend_6m": 0, "data_points": 0}
