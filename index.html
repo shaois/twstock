@@ -151,7 +151,6 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
 <div class="toast" id="toast"><span id="toastMsg"></span></div>
 
 <script>
-// 設定你的後端網址
 const PROXY = "https://twstock-app.onrender.com";
 const NVIDIA_API = `${PROXY}/api/nvidia`;
 const MODEL = "meta/llama-3.3-70b-instruct";
@@ -361,7 +360,7 @@ function calcEMA(data,p){const k=2/(p+1);let ema=[data[0]];for(let i=1;i<data.le
 function calcMACD(closes){if(closes.length<26)return{macd:0,hist:0};const e12=calcEMA(closes,12),e26=calcEMA(closes,26);const ml=e12.map((v,i)=>v-e26[i]);const sig=calcEMA(ml,9);return{macd:ml[ml.length-1],hist:ml[ml.length-1]-sig[sig.length-1]};}
 function avg(arr,n){const a=arr.slice(-n);return a.reduce((s,v)=>s+v,0)/a.length;}
 
-// ── Scoring (50/50/20 配重與動能修正) ───────────────────────────────────
+// ── Scoring (50/50/20 配重與動能修正，加入PE容忍護城河) ─────────────────
 function scoreStock(id,ydata,instData){
   const f={eps:0,roe:0,yoy:0,div:0,rev_slope:1.0,...(FUNDAMENTAL[id]||{})};
   const stock=STOCK_LIST.find(s=>s.id===id)||{sector:"其他",name:id};
@@ -419,19 +418,32 @@ function scoreStock(id,ydata,instData){
       if (pe <= low_pe) pe_percentile = 10; else if (pe >= high_pe) pe_percentile = 95; else pe_percentile = ((pe - low_pe) / (high_pe - low_pe)) * 100;
   } else { pe_percentile = null; }
   
-  // 護城河成長股補償（修復台積電等PE較高但仍值得投資的問題）
+  // 🏆【護城河修復點】：為高成長股放寬 PE 歷史位階懲罰
   const is_moat = (f.roe >= 20.0 && slope >= 1.0);
   let peS = 0;
   if (pe === null) peS = 6;
-  else if (pe_percentile !== null) {
-      if (pe_percentile <= 25) peS = 12; else if (pe_percentile <= 55) peS = 10; else if (pe_percentile <= 75) peS = 7; else if (pe_percentile <= 90) peS = 4; else peS = 0;
+  else if (is_moat) {
+      // 成長股容忍較高 PE（就算頂到天花板95%，還是給 7 分）
+      if (pe_percentile <= 50) peS = 12;
+      else if (pe_percentile <= 80) peS = 10;
+      else if (pe_percentile <= 98) peS = 7; 
+      else peS = 4; // 護城河保底 4 分
+  } else {
+      // 一般股嚴格標準（過熱就直接給 0）
+      if (pe_percentile <= 25) peS = 12;
+      else if (pe_percentile <= 55) peS = 10;
+      else if (pe_percentile <= 75) peS = 7;
+      else if (pe_percentile <= 90) peS = 4;
+      else peS = 0; 
   }
+
   let dyS = 0;
   if (is_moat) {
       if (divYield >= 3.5) dyS = 8; else if (divYield >= 1.8) dyS = 6; else if (divYield >= 1.0) dyS = 4; else dyS = 2;
   } else {
       if (divYield >= 5.0) dyS = 8; else if (divYield >= 4.0) dyS = 6; else if (divYield >= 2.5) dyS = 3; else dyS = 0;
   }
+  
   vScore = peS + dyS;
   vDetail = { pe, divYield, pe_percentile, peScore: peS, dyScore: dyS, is_moat, avgPE: base_pe };
 
@@ -591,13 +603,14 @@ function showDetail(id){
         ${metric('RSI14',t.rsi.toFixed(1),'',td.rsi)}
         ${metric('MACD Hist',t.macdHist.toFixed(3),'',td.macd)}
         ${metric('量比(5/20日)',t.volRatio.toFixed(2)+'x','',td.vol)}
-        ${metric('6個月漲跌幅',t.trend6m.toFixed(1)+'%','',td.trend)}
+        ${metric('6個月漲跌幅',t.trend6m.toFixed(1)+'%','')}
+        ${metric('52週位置',t.pos52.toFixed(1)+'%','',td.trend)}
       </div>
       <div class="panel"><div class="panel-title">估值面指標</div>
-        ${metric('本益比 PE',vd.pe?vd.pe.toFixed(1)+'x':'N/A','',vd.peScore)}
+        ${metric('本益比 PE',vd.pe?vd.pe.toFixed(1)+'x':'N/A', vd.is_moat?' <span style="font-size:9px;color:#f59e0b">(護城河成長股)</span>':'',vd.peScore)}
         ${metric('產業平均PE',vd.avgPE+'x','')}
         ${metric('歷史估值位階',vd.pe_percentile!=null?vd.pe_percentile.toFixed(0)+'%':'N/A','')}
-        ${metric('股息殖利率',vd.divYield.toFixed(2)+'%', vd.is_moat?' <span style="font-size:9px;color:#f59e0b">(成長股護城河)</span>':'',vd.dyScore)}
+        ${metric('股息殖利率',vd.divYield.toFixed(2)+'%','',vd.dyScore)}
       </div>
       <div class="panel"><div class="panel-title">評分細項</div>
         <div style="margin-bottom:8px;font-size:10px;color:var(--muted)">基本面 (50)</div>
