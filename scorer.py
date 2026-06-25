@@ -1,9 +1,9 @@
 """
-股票評分引擎 v4 (完全重構完整版)
+股票評分引擎 v5 (全面優化版)
 滿分 120 分：
-  基本面 50分：EPS(15) + ROE(15) + 營收年增率(10) + 股息殖利率(10)
-  技術面 50分：均線多頭(20) + RSI(10) + MACD(8) + 成交量(7) + 6個月趨勢(5)
-  估值面 20分：PE歷史位階合理性(12) + 成長股動態殖利率吸引力(8)
+  基本面 50分：ROE(20) + 營收年增率(15) + 營收動能斜率(10) + EPS獲利門檻(5)
+  技術面 50分：均線多頭(20) + RSI動能(10) + MACD(8) + 成交量(7) + 6個月趨勢(5)
+  估值面 20分：PE歷史位階合理性(12) + 動態殖利率吸引力(8)
 """
 
 class StockScorer:
@@ -40,39 +40,35 @@ class StockScorer:
         eps = f.get("eps", 0)
         roe = f.get("roe", 0)
         rev_yoy = f.get("revenue_yoy", 0)
-        div_yield = f.get("cash_dividend", 0)
+        rev_slope = f.get("revenue_slope", 1.0)
         
-        # 1. EPS 絕對水平 (15分)
-        if eps >= 20:     eps_s = 15
-        elif eps >= 10:   eps_s = 12
-        elif eps >= 5:    eps_s = 8
-        elif eps >= 2:    eps_s = 4
-        elif eps > 0:     eps_s = 2
+        # 1. EPS 絕對水平 (5分 - 改為基本門檻，不偏袒高價股)
+        if eps >= 5:      eps_s = 5
+        elif eps > 0:     eps_s = 3
         else:             eps_s = 0
         score += eps_s; detail["eps_score"] = eps_s
 
-        # 2. ROE 水平 (15分)
-        if roe >= 25:     roe_s = 15
-        elif roe >= 15:   roe_s = 12
-        elif roe >= 10:   roe_s = 8
-        elif roe >= 5:    roe_s = 4
+        # 2. ROE 水平 (20分 - 資本回報率，真實賺錢效率)
+        if roe >= 20:     roe_s = 20
+        elif roe >= 15:   roe_s = 15
+        elif roe >= 10:   roe_s = 10
+        elif roe >= 5:    roe_s = 5
         else:             roe_s = 0
         score += roe_s; detail["roe_score"] = roe_s
 
-        # 3. 營收年增率 (10分)
-        if rev_yoy >= 30:   rev_s = 10
-        elif rev_yoy >= 15: rev_s = 8
+        # 3. 營收年增率 (15分)
+        if rev_yoy >= 20:   rev_s = 15
+        elif rev_yoy >= 10: rev_s = 10
         elif rev_yoy >= 0:  rev_s = 5
-        elif rev_yoy >= -15: rev_s = 2
         else:               rev_s = 0
         score += rev_s; detail["revenue_yoy_score"] = rev_s
 
-        # 4. 股息殖利率 (10分)
-        if div_yield >= 5:   div_s = 10
-        elif div_yield >= 3: div_s = 7
-        elif div_yield >= 1: div_s = 4
-        else:                div_s = 0
-        score += div_s; detail["fundamental_dividend_score"] = div_s
+        # 4. 營收動能斜率 (10分 - 近3月均 vs 近12月均，看出成長加速)
+        if rev_slope >= 1.1:    slope_s = 10
+        elif rev_slope >= 1.02: slope_s = 7
+        elif rev_slope >= 0.95: slope_s = 3
+        else:                   slope_s = 0
+        score += slope_s; detail["revenue_slope_score"] = slope_s
 
         return score, detail
 
@@ -80,9 +76,7 @@ class StockScorer:
         score = 0; detail = {}
         
         # 1. 均線多頭排列 (20分)
-        ma5 = t.get("ma5")
-        ma20 = t.get("ma20")
-        ma60 = t.get("ma60")
+        ma5, ma20, ma60 = t.get("ma5"), t.get("ma20"), t.get("ma60")
         if ma5 and ma20 and ma60:
             if ma5 > ma20 > ma60:  ma_s = 20
             elif ma20 > ma60:      ma_s = 12
@@ -92,11 +86,11 @@ class StockScorer:
             ma_s = 10
         score += ma_s; detail["ma_alignment_score"] = ma_s
 
-        # 2. RSI 狀態 (10分) - 相容新舊欄位
+        # 2. RSI 狀態 (10分 - 優化：不懲罰強勢動能)
         rsi = t.get("rsi14", t.get("rsi", 50))
         if 50 <= rsi <= 70:    rsi_s = 10
-        elif 40 <= rsi < 50:   rsi_s = 7
-        elif rsi > 70:         rsi_s = 4
+        elif rsi > 70:         rsi_s = 8  
+        elif 40 <= rsi < 50:   rsi_s = 5
         elif 30 <= rsi < 40:   rsi_s = 3
         else:                  rsi_s = 0
         score += rsi_s; detail["rsi_score"] = rsi_s
@@ -108,7 +102,7 @@ class StockScorer:
         else:                  macd_s = 1
         score += macd_s; detail["macd_score"] = macd_s
 
-        # 4. 成交量量能 (7分) - 相容新舊欄位
+        # 4. 成交量量能 (7分)
         vol_ratio = t.get("vol_ratio_5_20", t.get("volume_ratio", 1.0))
         if 1.2 <= vol_ratio <= 2.5: vol_s = 7
         elif 0.8 <= vol_ratio < 1.2: vol_s = 5
@@ -128,9 +122,6 @@ class StockScorer:
         return score, detail
 
     def _score_valuation(self, v, f, t):
-        """
-        核心修正：全面改用新版 data_fetcher 傳入的 pe_percentile 與動態補償機制
-        """
         score = 0; detail = {}
         pe = v.get("pe")
         pe_percentile = v.get("pe_percentile") 
@@ -146,16 +137,16 @@ class StockScorer:
         if pe is None:
             pe_s = 6  
         elif pe_percentile is not None:
-            # 依照歷史河流圖位階百分位評分（完美解決高成長股與平庸產業比對時的歸零盲點）
-            if pe_percentile <= 25:    pe_s = 12  # 歷史極度便宜
-            elif pe_percentile <= 55:  pe_s = 10  # 歷史中軸合理區 (台積電常態)
+            # 依照動態產業估值百分位評分
+            if pe_percentile <= 25:    pe_s = 12  # 歷史/產業極度便宜
+            elif pe_percentile <= 55:  pe_s = 10  # 產業中軸合理區
             elif pe_percentile <= 75:  pe_s = 7   # 多頭溢價
             elif pe_percentile <= 90:  pe_s = 4   # 估值偏高
             else:                      pe_s = 0   # 極端過熱
         else:
             # 降級安全機制
             if is_moat_growth_stock:
-                if pe < 16:     pe_s = 12
+                if pe < 18:     pe_s = 12
                 elif pe < 26:   pe_s = 10 
                 elif pe < 32:   pe_s = 6
                 else:           pe_s = 1
@@ -170,7 +161,7 @@ class StockScorer:
         if is_moat_growth_stock:
             # 成長股補償放寬要求
             if div_yield >= 3.5:    div_s = 8
-            elif div_yield >= 1.8:  div_s = 6  # 台積電維持在此區間，保住高分
+            elif div_yield >= 1.8:  div_s = 6
             elif div_yield >= 1.0:  div_s = 4
             else:                   div_s = 2
         else:
