@@ -1,13 +1,11 @@
 """
-NVIDIA NIM AI 分析模組 v6 (動態獲取百大名稱版)
+NVIDIA NIM AI 分析模組 v6.1 (修復前端 Token 變數消失防呆版)
 """
 
 import httpx
 import asyncio
 import time
 from datetime import datetime, timedelta
-
-# 直接向資料庫請求全台 100 大名稱字典
 from data_fetcher import TOP100_STATIC
 
 NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
@@ -17,7 +15,6 @@ class AIAnalyzer:
 
     def __init__(self, api_key: str):
         self.api_key = api_key
-        # 動態載入百大股票名稱
         self.stock_names = {s["stock_id"]: s["name"] for s in TOP100_STATIC}
 
     async def _last_valid_date(self, client) -> str:
@@ -123,7 +120,6 @@ class AIAnalyzer:
                 elif mr > 4:   margin_comment = f"資券比 {mr}，融資適中，{'增加中' if mc>0 else '減少中'}"
                 else:          margin_comment = f"資券比 {mr}，融資低，籌碼乾淨"
 
-        # 使用動態載入的名稱
         stock_name = self.stock_names.get(stock_id, "")
 
         prompt = f"""你是一位資深台股分析師，請對 {stock_id} {stock_name} 進行全方位中長期（6~18個月）投資分析。
@@ -179,11 +175,16 @@ class AIAnalyzer:
                 )
                 resp.raise_for_status()
                 result = resp.json()
+                
+                # 修復：補回 token 數量回傳，避免前端畫面崩潰閃退
                 return {
                     "stock_id":          stock_id,
+                    "model":             MODEL,
                     "analysis":          result["choices"][0]["message"]["content"],
                     "institutional":     institutional,
                     "margin":            margin,
+                    "prompt_tokens":     result.get("usage", {}).get("prompt_tokens", 0),
+                    "completion_tokens": result.get("usage", {}).get("completion_tokens", 0),
                 }
         except Exception as e:
             raise Exception(f"AI 分析失敗: {str(e)}")

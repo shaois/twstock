@@ -1,6 +1,6 @@
 """
-台股中長期選股建議 App - 後端核心引擎 v6
-徹底打通台股前 100 大資料鏈，解除 50 檔封印
+台股中長期選股建議 App - 後端核心引擎 v6.1
+打通台股前 100 大資料鏈，並修復前端 Proxy API 遺漏問題
 """
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -17,7 +17,6 @@ from pathlib import Path
 NVIDIA_API_KEY_ENV = os.environ.get("NVIDIA_API_KEY", "")
 FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
 
-# 從 data_fetcher 匯入全新的 100 檔清單
 from data_fetcher import TWStockFetcher, TOP100_STATIC
 from scorer import StockScorer
 from ai_analyzer import AIAnalyzer, DataCache
@@ -55,7 +54,6 @@ def _cache_write(stock_id: str, dtype: str, payload: dict):
     payload["_saved_at"] = datetime.now().isoformat()
     _cache_path(stock_id, dtype).write_text(json.dumps(payload, ensure_ascii=False))
 
-# 動態從 fetcher 取得百大清單 IDs
 STOCK_IDS = [s["stock_id"] for s in TOP100_STATIC]
 
 async def _fetch_finmind_raw(stock_id: str, dtype: str, token: str) -> dict:
@@ -125,7 +123,6 @@ async def get_ai_analysis(stock_id: str, api_key: str = ""):
         return {"success": True, "data": data}
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
-# 同時保留 top50 與 top100 路由，避免破壞你的舊版 index.html，但實際上回傳百大資料
 @app.get("/api/top50")
 @app.get("/api/top100")
 async def get_top100():
@@ -143,14 +140,11 @@ async def run_screener(min_score: float = 60.0):
     try:
         top100 = cache.get("top100") or await fetcher.fetch_top100_stocks()
         cache.set("top100", top100, ttl_hours=24)
-        
-        # 解除封印：掃描全部 100 檔
         results = []
         for stock in top100:
             sid = stock["stock_id"]
             if (s := cache.get(f"score_{sid}")) and s.get("total_score", 0) >= min_score:
                 results.append(s)
-                
         return {"success": True, "data": sorted(results, key=lambda x: x.get("total_score", 0), reverse=True), "count": len(results)}
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
@@ -166,7 +160,68 @@ async def batch_score(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_batch)
     return {"success": True, "message": "批次評分中(共100檔)，請稍後刷新"}
 
-# ---- 以下保留你的 proxy 與 health 路由，完全不變 ----
+# ==========================================
+# 修復：將你原本給前端畫圖用的所有 Proxy 路由完整補回，防止畫面 404 崩潰
+# ==========================================
+
+@app.get("/api/finmind/fundamental/{stock_id}")
+async def finmind_fundamental_proxy(stock_id: str, token: str = ""):
+    cached = _cache_read(stock_id, "fundamental")
+    if cached: return JSONResponse(content=cached)
+    import datetime as dt
+    start_date = (dt.date.today() - dt.timedelta(days=540)).strftime("%Y-%m-%d")
+    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}&token={token}"
+    async with httpx.AsyncClient() as client:
+        r = await client.get(url)
+        data = r.json()
+        if data.get("status") == 200: _cache_write(stock_id, "fundamental", data)
+        return JSONResponse(content=data, status_code=r.status_code)
+
+@app.get("/api/finmind/revenue/{stock_id}")
+async def finmind_revenue_proxy(stock_id: str, token: str = ""):
+    cached = _cache_read(stock_id, "revenue")
+    if cached: return JSONResponse(content=cached)
+    import datetime as dt
+    start_date = (dt.date.today() - dt.timedelta(days=400)).strftime("%Y-%m-%d")
+    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={stock_id}&start_date={start_date}&token={token}"
+    async with httpx.AsyncClient() as client:
+        r = await client.get(url)
+        data = r.json()
+        if data.get("status") == 200: _cache_write(stock_id, "revenue", data)
+        return JSONResponse(content=data, status_code=r.status_code)
+
+@app.get("/api/finmind/price/{stock_id}")
+async def finmind_price_proxy(stock_id: str, token: str = "", start_date: str = ""):
+    cached = _cache_read(stock_id, "price")
+    if cached: return JSONResponse(content=cached)
+    if not start_date:
+        from datetime import datetime, timedelta
+        start_date = (datetime.today() - timedelta(days=270)).strftime("%Y-%m-%d")
+    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={stock_id}&start_date={start_date}&token={token}"
+    async with httpx.AsyncClient() as client:
+        r = await client.get(url)
+        data = r.json()
+        if data.get("status") == 200: _cache_write(stock_id, "price", data)
+        return JSONResponse(content=data, status_code=r.status_code)
+
+@app.get("/api/finmind/{stock_id}")
+async def finmind_proxy(stock_id: str, token: str = "", start_date: str = "2026-03-01"):
+    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={stock_id}&start_date={start_date}&token={token}"
+    async with httpx.AsyncClient() as client:
+        return JSONResponse(content=(await client.get(url)).json())
+
+@app.post("/api/nvidia")
+async def nvidia_proxy(request: dict):
+    api_key = request.get("api_key") or NVIDIA_API_KEY_ENV
+    if not api_key: raise HTTPException(status_code=400, detail="需要 NVIDIA API Key")
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        r = await client.post(
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=request.get("body", {})
+        )
+        return JSONResponse(content=r.json(), status_code=r.status_code)
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     for p in ["static/index.html", "index.html"]:
