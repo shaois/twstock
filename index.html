@@ -17,6 +17,7 @@ header{background:linear-gradient(135deg,#0d1b2e,#0a0e1a);border-bottom:1px soli
 .btn{padding:7px 14px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-family:'Noto Sans TC',sans-serif;font-weight:500;transition:all .15s;}
 .btn-primary{background:var(--accent);color:#000;}.btn-primary:hover{background:#00bfa0;}
 .btn-secondary{background:var(--surface2);color:var(--text);border:1px solid var(--border);}.btn-secondary:hover{border-color:var(--accent);color:var(--accent);}
+.btn-gold{background:var(--warn);color:#000;font-weight:700;}.btn-gold:hover{background:#eab308;transform:scale(1.02);}
 .layout{display:grid;grid-template-columns:240px 1fr;height:calc(100vh - 57px);}
 .sidebar{background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;padding:12px 0;}
 .sidebar-label{font-size:10px;font-weight:700;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;padding:8px 16px 4px;}
@@ -96,6 +97,8 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
     <input class="api-input" id="apiKeyInput" type="password" placeholder="NVIDIA API Key（AI分析用）">
     <button class="btn btn-primary" onclick="loadStocks()">載入前200大</button>
     <button class="btn btn-secondary" onclick="runScreener()">篩選優質股</button>
+    <!-- 🔥 新增的 Top 5 按鈕 -->
+    <button class="btn btn-gold" onclick="findTop5Buys()">🏆 嚴選 Top 5</button>
   </div>
 </header>
 
@@ -139,9 +142,9 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       <p style="max-width:400px;line-height:1.8">平衡持股模式（半年）× FinMind資料 × 基本面50 × 技術面50 × 估值面20 × NVIDIA AI 分析</p>
       <div class="step-cards">
         <div class="step-card"><div class="step-num">1</div><div class="step-text">點「載入前200大」</div></div>
-        <div class="step-card"><div class="step-num">2</div><div class="step-text">依市值自動排序</div></div>
+        <div class="step-card"><div class="step-num">2</div><div class="step-text">點「嚴選 Top 5」</div></div>
         <div class="step-card"><div class="step-num">3</div><div class="step-text">點選個股查看</div></div>
-        <div class="step-card"><div class="step-num">4</div><div class="step-text">輸入Key取得AI分析</div></div>
+        <div class="step-card"><div class="step-num">4</div><div class="step-text">輸入Key取得AI確認</div></div>
       </div>
     </div>
     <div id="stockDetail" style="display:none"></div>
@@ -156,9 +159,8 @@ const NVIDIA_API = `${PROXY}/api/nvidia`;
 const MODEL = "meta/llama-3.3-70b-instruct";
 const FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoic2hhb2lzIiwiZW1haWwiOiJzaGFvaXNAZ21haWwuY29tIiwidG9rZW5fdmVyc2lvbiI6MH0.Oe4RhqVx-HSZlVZzEJXJixOq-9Dr3D_RM5EgnYhbD3M";
 
-// ── 候選股清單（台股超過 200 支的完整資料庫）────────────────────
+// ── 候選股清單（台股前200大）────────────────────
 const CANDIDATES = [
-  // 基礎前 100 大
   {id:"2330",name:"台積電",sector:"半導體",shares:25930000},{id:"2317",name:"鴻海",sector:"電子製造",shares:13860000},
   {id:"2454",name:"聯發科",sector:"IC設計",shares:1590000},{id:"2308",name:"台達電",sector:"電子零組件",shares:2580000},
   {id:"2382",name:"廣達",sector:"電腦",shares:1940000},{id:"2881",name:"富邦金",sector:"金融",shares:13060000},
@@ -209,8 +211,7 @@ const CANDIDATES = [
   {id:"3443",name:"創意",sector:"IC設計",shares:180000},{id:"4966",name:"譜瑞-KY",sector:"IC設計",shares:100000},
   {id:"6278",name:"台表科",sector:"電子零組件",shares:310000},{id:"2377",name:"微星",sector:"電腦",shares:770000},
   {id:"2313",name:"華通",sector:"電子零組件",shares:2260000},{id:"3006",name:"晶豪科",sector:"IC設計",shares:330000},
-  
-  // 🔥 新增強勢攻擊手 (重電、散熱、IP、伺服器、生技、航空)
+  // 🔥 動能黑馬股
   {id:"3017",name:"奇鋐",sector:"電子零組件",shares:380000},{id:"3324",name:"雙鴻",sector:"電子零組件",shares:88000},
   {id:"2059",name:"川湖",sector:"電子零組件",shares:95000},{id:"3661",name:"世芯-KY",sector:"IC設計",shares:78000},
   {id:"3035",name:"智原",sector:"IC設計",shares:248000},{id:"1519",name:"華城",sector:"電機機械",shares:260000},
@@ -229,36 +230,7 @@ const CANDIDATES = [
   {id:"8454",name:"富邦媒",sector:"零售",shares:140000},{id:"2345",name:"智邦",sector:"電腦",shares:550000},
   {id:"3702",name:"大聯大",sector:"通路",shares:1670000},{id:"5483",name:"中美晶",sector:"半導體",shares:430000},
   {id:"6214",name:"精誠",sector:"資訊服務",shares:240000},{id:"3653",name:"健策",sector:"電子零組件",shares:150000},
-  {id:"6285",name:"啟碁",sector:"電子零組件",shares:390000},{id:"3013",name:"晟銘電",sector:"機殼",shares:200000},
-  {id:"6274",name:"台燿",sector:"電子零組件",shares:270000},{id:"8358",name:"金居",sector:"電子零組件",shares:250000},
-  {id:"3036",name:"文曄",sector:"通路",shares:1100000},{id:"6643",name:"M31",sector:"IC設計",shares:34000},
-  {id:"6531",name:"愛普*",sector:"IC設計",shares:160000},{id:"3014",name:"聯陽",sector:"IC設計",shares:160000},
-  {id:"8016",name:"矽創",sector:"IC設計",shares:120000},{id:"2458",name:"義隆",sector:"IC設計",shares:280000},
-  {id:"4961",name:"天鈺",sector:"IC設計",shares:120000},{id:"3596",name:"智易",sector:"電腦",shares:220000},
-  {id:"5388",name:"中磊",sector:"電腦",shares:290000},{id:"3163",name:"波若威",sector:"光電",shares:80000},
-  {id:"4908",name:"前鼎",sector:"光電",shares:70000},{id:"6806",name:"森崴能源",sector:"電機機械",shares:210000},
-  {id:"3708",name:"上緯投控",sector:"石化",shares:100000},{id:"6188",name:"廣明",sector:"電腦",shares:270000},
-  {id:"2464",name:"盟立",sector:"電機機械",shares:380000},{id:"1319",name:"東陽",sector:"汽車",shares:590000},
-  {id:"1522",name:"堤維西",sector:"汽車",shares:310000},{id:"1524",name:"耿鼎",sector:"汽車",shares:290000},
-  {id:"6279",name:"胡連",sector:"電子零組件",shares:100000},{id:"1795",name:"美時",sector:"生技醫療",shares:260000},
-  {id:"4743",name:"合一",sector:"生技醫療",shares:390000},{id:"9914",name:"美利達",sector:"自行車",shares:290000},
-  {id:"9921",name:"巨大",sector:"自行車",shares:390000},{id:"2834",name:"臺企銀",sector:"金融",shares:8200000},
-  {id:"2809",name:"京城銀",sector:"金融",shares:1110000},{id:"2845",name:"遠東銀",sector:"金融",shares:4070000},
-  {id:"2606",name:"裕民",sector:"航運",shares:840000},{id:"2610",name:"華航",sector:"航運",shares:6010000},
-  {id:"2637",name:"慧洋-KY",sector:"航運",shares:740000},{id:"2605",name:"新興",sector:"航運",shares:560000},
-  {id:"1605",name:"華新",sector:"電機機械",shares:3800000},{id:"2027",name:"大成鋼",sector:"鋼鐵",shares:2300000},
-  {id:"2014",name:"中鴻",sector:"鋼鐵",shares:1400000},{id:"1907",name:"永豐餘",sector:"造紙",shares:1660000},
-  {id:"2903",name:"遠百",sector:"零售",shares:1410000},{id:"2915",name:"潤泰全",sector:"建材營造",shares:1100000},
-  {id:"2504",name:"國產",sector:"建材營造",shares:1180000},{id:"2548",name:"華固",sector:"建材營造",shares:270000},
-  {id:"1434",name:"福懋",sector:"紡織",shares:1680000},{id:"1409",name:"新纖",sector:"紡織",shares:1600000},
-  {id:"1722",name:"台肥",sector:"水泥",shares:980000},{id:"1717",name:"長興",sector:"石化",shares:1240000},
-  {id:"2351",name:"順德",sector:"電子零組件",shares:180000},{id:"8081",name:"致新",sector:"IC設計",shares:120000},
-  {id:"6147",name:"頎邦",sector:"電子零組件",shares:650000},{id:"6269",name:"台郡",sector:"電子零組件",shares:260000},
-  {id:"5434",name:"崇越",sector:"通路",shares:1200000},{id:"8150",name:"南茂",sector:"半導體",shares:720000},
-  {id:"6139",name:"亞翔",sector:"半導體",shares:220000},{id:"3376",name:"新日興",sector:"電子零組件",shares:180000},
-  {id:"3033",name:"威健",sector:"通路",shares:420000},{id:"6414",name:"樺漢",sector:"電腦",shares:100000},
-  {id:"8215",name:"明基材",sector:"電子零組件",shares:320000},{id:"3515",name:"華擎",sector:"電腦",shares:120000},
-  {id:"6202",name:"盛群",sector:"IC設計",shares:220000},{id:"2451",name:"創見",sector:"電腦",shares:420000}
+  {id:"6285",name:"啟碁",sector:"電子零組件",shares:390000}
 ];
 
 const seen = new Set();
@@ -268,7 +240,7 @@ const STOCK_LIST = CANDIDATES.filter(s => {
   return true;
 });
 
-// ── 基本面靜態備用資料（防呆用，避免API壞掉全變0） ────────────────
+// ── 基本面靜態備用資料 ────────────────
 const FUNDAMENTAL = {
   "2330":{eps:45.25,roe:28.5,yoy:33.9,div:13.0},"2454":{eps:102.0,roe:32.1,yoy:20.5,div:55.0},
   "2317":{eps:11.2,roe:14.8,yoy:8.3,div:4.0},"2308":{eps:22.5,roe:24.3,yoy:12.1,div:11.0},
@@ -301,7 +273,7 @@ const SECTOR_PE = {
   "半導體":22,"IC設計":25,"電子製造":15,"電腦":18,"工業電腦":28,"光電":15,
   "電子零組件":20,"光學":35,"機殼":14,"金融":12,"電信":18,"石化":12,"鋼鐵":12,
   "汽車":15,"食品":20,"零售":22,"通路":14,"紡織":12,"橡膠":12,"製鞋":18,
-  "資訊服務":16,"航運":10,"建材營造":12,"電機機械":20,"水泥":12,"其他電子":18,"生技醫療":25,"造紙":12,"自行車":15
+  "資訊服務":16,"航運":10,"建材營造":12,"電機機械":20,"水泥":12,"其他電子":18,"生技醫療":25
 };
 
 let allStocks = [];
@@ -411,7 +383,7 @@ function calcEMA(data,p){const k=2/(p+1);let ema=[data[0]];for(let i=1;i<data.le
 function calcMACD(closes){if(closes.length<26)return{macd:0,hist:0};const e12=calcEMA(closes,12),e26=calcEMA(closes,26);const ml=e12.map((v,i)=>v-e26[i]);const sig=calcEMA(ml,9);return{macd:ml[ml.length-1],hist:ml[ml.length-1]-sig[sig.length-1]};}
 function avg(arr,n){const a=arr.slice(-n);return a.reduce((s,v)=>s+v,0)/a.length;}
 
-// ── Scoring (50/50/20 配重與動能修正，加入PE容忍護城河) ─────────────────
+// ── Scoring ─────────────────────────────────
 function scoreStock(id,ydata,instData){
   const f={eps:0,roe:0,yoy:0,div:0,rev_slope:1.0,...(FUNDAMENTAL[id]||{})};
   const stock=STOCK_LIST.find(s=>s.id===id)||{sector:"其他",name:id};
@@ -432,7 +404,6 @@ function scoreStock(id,ydata,instData){
     if(closes.length>=120)t.trend6m=(price-closes[closes.length-121])/closes[closes.length-121]*100;
   }
 
-  // 1. 基本面 50分
   let fScore=0,fDetail={};
   const epsS = f.eps >= 5 ? 5 : (f.eps > 0 ? 3 : 0); fScore += epsS; fDetail.eps = epsS;
   const roeS = f.roe >= 20 ? 20 : (f.roe >= 15 ? 15 : (f.roe >= 10 ? 10 : (f.roe >= 5 ? 5 : 0))); fScore += roeS; fDetail.roe = roeS;
@@ -440,7 +411,6 @@ function scoreStock(id,ydata,instData){
   const slope = f.rev_slope || 1.0;
   const slopeS = slope >= 1.1 ? 10 : (slope >= 1.02 ? 7 : (slope >= 0.95 ? 3 : 0)); fScore += slopeS; fDetail.slope = slopeS;
 
-  // 2. 技術面 50分
   let tScore=0,tDetail={};
   let maS = 10;
   if(t.ma5 && t.ma20 && t.ma60) {
@@ -458,7 +428,6 @@ function scoreStock(id,ydata,instData){
   let pos = t.pos52; let trendS = (pos >= 60 && pos <= 85) ? 5 : ((pos >= 40 && pos < 60) ? 3 : (pos > 85 ? 2 : 0)); tScore += trendS; tDetail.trend = trendS;
   tDetail.trendHot = t.trend6m >= 50;
 
-  // 3. 估值面 20分
   let vScore=0,vDetail={};
   const pe = price > 0 && f.eps > 0 ? price / f.eps : null;
   const divYield = price > 0 && f.div > 0 ? (f.div / price * 100) : 0;
@@ -469,21 +438,13 @@ function scoreStock(id,ydata,instData){
       if (pe <= low_pe) pe_percentile = 10; else if (pe >= high_pe) pe_percentile = 95; else pe_percentile = ((pe - low_pe) / (high_pe - low_pe)) * 100;
   } else { pe_percentile = null; }
   
-  // 護城河成長股補償
   const is_moat = (f.roe >= 20.0 && slope >= 1.0);
   let peS = 0;
   if (pe === null) peS = 6;
   else if (is_moat) {
-      if (pe_percentile <= 50) peS = 12;
-      else if (pe_percentile <= 80) peS = 10;
-      else if (pe_percentile <= 98) peS = 7; 
-      else peS = 4; // 護城河保底
+      if (pe_percentile <= 50) peS = 12; else if (pe_percentile <= 80) peS = 10; else if (pe_percentile <= 98) peS = 7; else peS = 4;
   } else {
-      if (pe_percentile <= 25) peS = 12;
-      else if (pe_percentile <= 55) peS = 10;
-      else if (pe_percentile <= 75) peS = 7;
-      else if (pe_percentile <= 90) peS = 4;
-      else peS = 0; 
+      if (pe_percentile <= 25) peS = 12; else if (pe_percentile <= 55) peS = 10; else if (pe_percentile <= 75) peS = 7; else if (pe_percentile <= 90) peS = 4; else peS = 0; 
   }
 
   let dyS = 0;
@@ -528,8 +489,6 @@ async function loadStocks(){
   }));
   const withPrice=withCap.filter(s=>s.price>0).sort((a,b)=>b.marketCap-a.marketCap);
   const noPrice=withCap.filter(s=>s.price===0).sort((a,b)=>(b.shares||0)-(a.shares||0));
-  
-  // 🚀 【關鍵修正】把 slice(0, 100) 改成了 slice(0, 200)，真正解封 200 大
   allStocks=[...withPrice,...noPrice].slice(0, 200);
 
   document.getElementById('stockCount').textContent=`(${allStocks.length})`;
@@ -654,8 +613,7 @@ function showDetail(id){
         ${metric('RSI14',t.rsi.toFixed(1),'',td.rsi)}
         ${metric('MACD Hist',t.macdHist.toFixed(3),'',td.macd)}
         ${metric('量比(5/20日)',t.volRatio.toFixed(2)+'x','',td.vol)}
-        ${metric('6個月漲跌幅',t.trend6m.toFixed(1)+'%','')}
-        ${metric('52週位置',t.pos52.toFixed(1)+'%','',td.trend)}
+        ${metric('6個月漲跌幅',t.trend6m.toFixed(1)+'%','',td.trend)}
       </div>
       <div class="panel"><div class="panel-title">估值面指標</div>
         ${metric('本益比 PE',vd.pe?vd.pe.toFixed(1)+'x':'N/A', vd.is_moat?' <span style="font-size:9px;color:#f59e0b">(護城河成長股)</span>':'',vd.peScore)}
@@ -755,6 +713,7 @@ async function runAI(id){
   }catch(e){content.innerHTML=`<span style="color:var(--red)">❌ ${e.message}</span>`;}
 }
 
+// ── 原本的篩選器（大於60分） ──
 function runScreener(){
   if(Object.keys(allScores).length===0){showToast('❌ 請先載入前200大');return;}
   document.getElementById('welcome').style.display='none';
@@ -766,10 +725,10 @@ function runScreener(){
   container.innerHTML=`
     <div class="screener-panel">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-        <div class="panel-title" style="margin:0">篩選結果 — 評分 ≥ 60（共 ${results.length} 支）</div>
+        <div class="panel-title" style="margin:0">篩選結果 — 總分 ≥ 60（共 ${results.length} 支）</div>
       </div>
       <table>
-        <thead><tr><th>市值排名</th><th>股票</th><th>評級</th><th>總分</th><th>基本面(50)</th><th>技術面(50)</th><th>估值面(20)</th><th>RSI14</th><th>PE</th><th>殖利率</th><th>建議</th></tr></thead>
+        <thead><tr><th>市值排名</th><th>股票</th><th>評級</th><th>總分</th><th>基本面(50)</th><th>技術面(50)</th><th>估值面(20)</th><th>RSI14</th><th>PE</th><th>建議</th></tr></thead>
         <tbody>${results.map(sc=>{
           const rsi=sc.t.rsi;
           const rsiColor=rsi>=80?'var(--red)':rsi>=70?'#f97316':rsi>=50?'var(--green)':rsi>=30?'var(--accent)':'#818cf8';
@@ -782,13 +741,101 @@ function runScreener(){
             <td class="td-mono">${sc.fScore}</td><td class="td-mono">${sc.tScore}</td><td class="td-mono">${sc.vScore}</td>
             <td class="td-mono"><span style="color:${rsiColor};font-weight:700">${rsi.toFixed(1)}</span></td>
             <td class="td-mono">${sc.vDetail.pe?sc.vDetail.pe.toFixed(1)+'x':'—'}</td>
-            <td class="td-mono">${sc.vDetail.divYield.toFixed(2)}%</td>
             <td style="font-size:11px">${sc.suggestion}</td>
           </tr>`;}).join('')}
         </tbody>
       </table>
     </div>`;
   showToast(`✓ 找到 ${results.length} 支優質標的`);
+}
+
+// ── 🔥 新增：Top 5 嚴選買點演算法 ──
+function findTop5Buys() {
+  if(Object.keys(allScores).length===0){showToast('❌ 請先載入前200大');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  // 演算法：過濾危險股，計算買點推薦度
+  let candidates = Object.values(allScores).map(sc => {
+     // 1. 嚴格剔除條件
+     if(sc.total < 60) return null; // 體質不及格
+     if(sc.fScore < 25) return null; // 基本面太弱
+     if(sc.t.rsi > 72) return null; // 短線嚴重過熱 (防追高)
+     if(sc.t.trend6m > 45) return null; // 半年漲幅過大 (防接刀)
+     if(sc.isCyclical && sc.vDetail.pe !== null && sc.vDetail.pe < 8) return null; // 避開循環股低PE陷阱
+
+     // 2. 計算「買進推薦度 (buyScore)」
+     let buyScore = sc.total;
+     let reasons = [];
+
+     if(sc.vDetail.is_moat) {
+         buyScore += 10;
+         reasons.push('護城河保護');
+     }
+     if(sc.instData && sc.instData.total5d > 0) {
+         buyScore += 5;
+         if(sc.instData.consecutiveBuyDays >= 3) {
+             buyScore += 5;
+             reasons.push('法人連買');
+         } else {
+             reasons.push('籌碼偏多');
+         }
+     }
+     if(sc.t.rsi >= 45 && sc.t.rsi <= 60) {
+         buyScore += 5;
+         reasons.push('黃金起漲區');
+     }
+     if(sc.t.ma5 > sc.t.ma20 && sc.t.ma20 > sc.t.ma60) {
+         buyScore += 5;
+         reasons.push('均線多頭');
+     }
+
+     return { ...sc, buyScore, reasons };
+  }).filter(x => x !== null);
+
+  // 依買點推薦度排序，取前五名
+  candidates.sort((a,b) => b.buyScore - a.buyScore);
+  const top5 = candidates.slice(0, 5);
+
+  if(!top5.length){container.innerHTML='<div style="padding:20px;color:var(--muted)">目前大盤無符合嚴選條件之標的，建議觀望</div>';return;}
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  
+  container.innerHTML=`
+    <div class="screener-panel" style="border: 1px solid var(--warn);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="panel-title" style="margin:0;color:var(--warn)">🏆 嚴選 Top 5 最佳買點標的</div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        已自動為您剔除：RSI過熱(>72)、漲幅過高(>45%)、基本面偏弱(<25分) 及 循環股陷阱。<br>
+        並針對「護城河成長性」、「法人連續買超」與「均線起漲區」進行權重加分。
+      </div>
+      <table>
+        <thead><tr><th>市值排名</th><th>股票</th><th>總分</th><th>買點動能</th><th>RSI14</th><th>PE</th><th>入選亮點</th></tr></thead>
+        <tbody>${top5.map((sc, index)=>{
+          const rsi=sc.t.rsi;
+          const rsiColor=rsi>=70?'#f97316':rsi>=50?'var(--green)':'var(--accent)';
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const reasonTags = sc.reasons.map(r => `<span style="font-size:9px;background:rgba(245,158,11,0.15);color:var(--warn);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank}</td>
+            <td>
+              <b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span>
+              ${index === 0 ? '<span style="font-size:10px;margin-left:5px">👑</span>' : ''}
+            </td>
+            <td class="td-mono" style="color:${gc[sc.grade]||'var(--text)'}">${sc.total}</td>
+            <td class="td-mono" style="color:var(--warn);font-weight:700">${sc.buyScore.toFixed(1)}</td>
+            <td class="td-mono"><span style="color:${rsiColor};font-weight:700">${rsi.toFixed(1)}</span></td>
+            <td class="td-mono">${sc.vDetail.pe?sc.vDetail.pe.toFixed(1)+'x':'—'}</td>
+            <td>${reasonTags || '<span style="font-size:9px;color:var(--muted)">體質穩健</span>'}</td>
+          </tr>`;}).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  showToast(`🏆 嚴選 Top 5 計算完成！`);
 }
 </script>
 </body>
