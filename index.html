@@ -158,7 +158,6 @@ const NVIDIA_API = `${PROXY}/api/nvidia`;
 const MODEL = "meta/llama-3.3-70b-instruct";
 const FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoic2hhb2lzIiwiZW1haWwiOiJzaGFvaXNAZ21haWwuY29tIiwidG9rZW5fdmVyc2lvbiI6MH0.Oe4RhqVx-HSZlVZzEJXJixOq-9Dr3D_RM5EgnYhbD3M";
 
-// ── 候選股清單（215 支）────────────────────
 const CANDIDATES = [
   {id:"2330",name:"台積電",sector:"半導體",shares:25930000},{id:"2317",name:"鴻海",sector:"電子製造",shares:13860000},
   {id:"2454",name:"聯發科",sector:"IC設計",shares:1590000},{id:"2308",name:"台達電",sector:"電子零組件",shares:2580000},
@@ -238,7 +237,6 @@ const STOCK_LIST = CANDIDATES.filter(s => {
   return true;
 });
 
-// ── 靜態備用資料 ────────────────
 const FUNDAMENTAL = {
   "2330":{eps:45.25,roe:28.5,yoy:33.9,div:13.0},"2454":{eps:102.0,roe:32.1,yoy:20.5,div:55.0},
   "2317":{eps:11.2,roe:14.8,yoy:8.3,div:4.0},"2308":{eps:22.5,roe:24.3,yoy:12.1,div:11.0}
@@ -248,7 +246,7 @@ const SECTOR_PE = {
   "半導體":22,"IC設計":25,"電子製造":15,"電腦":18,"工業電腦":28,"光電":15,
   "電子零組件":20,"光學":35,"機殼":14,"金融":12,"電信":18,"石化":12,"鋼鐵":12,
   "汽車":15,"食品":20,"零售":22,"通路":14,"紡織":12,"橡膠":12,"製鞋":18,
-  "資訊服務":16,"航運":10,"建材營造":12,"電機機械":20,"水泥":12,"其他電子":18,"生技醫療":25
+  "資訊服務":16,"航運":10,"建材營造":12,"電機機械":20,"水泥":12,"其他電子":18,"生技醫療":25,"造紙":12,"自行車":15
 };
 
 let allStocks = [];
@@ -261,7 +259,7 @@ function showProgress(done,total,label='載入進度'){const bar=document.getEle
 function hideProgress(){document.getElementById('progressBar').classList.remove('show');}
 function getApiKey(){return document.getElementById('apiKeyInput').value.trim();}
 
-// ── 🚀 重點修復：把被刪掉的 GitHub 每日快取加回來！避免伺服器崩潰！ ──
+// ── GitHub 每日快取載入 ──
 const GH_CACHE_BASE = "https://raw.githubusercontent.com/shaois/twstock/main/cache";
 let ghCache = {fundamental:null, revenue:null, price:null, exdiv:null, loaded:false};
 
@@ -287,6 +285,23 @@ async function loadGitHubCache(){
   return ghCache;
 }
 
+// ── 除息日防呆 ──
+function daysToExDiv(stockId){
+  const ex = ghCache?.exdiv?.[stockId]; if(!ex) return null;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const exDate = new Date(ex.date);
+  return Math.round((exDate - today) / (1000*60*60*24));
+}
+function getExDivWarning(stockId){
+  const ex = ghCache?.exdiv?.[stockId]; if(!ex) return null;
+  const days = daysToExDiv(stockId); if(days === null || days < -30) return null;
+  if(days < 0) return {text:`已除息 ${ex.div}元（${ex.date}）`, color:'#64748b', icon:'✓'};
+  if(days === 0) return {text:`⚠️ 今日除息 ${ex.div}元`, color:'#ef4444', icon:'🔴'};
+  if(days <= 7) return {text:`⚠️ ${days}天後除息 ${ex.div}元（${ex.date}）`, color:'#ef4444', icon:'🔴'};
+  if(days <= 30) return {text:`📅 ${days}天後除息 ${ex.div}元（${ex.date}）`, color:'#f59e0b', icon:'🟡'};
+  return null;
+}
+
 // ── Data Fetching ─────────────────────────────────────────────
 async function fetchYahoo(stockId){
   try{
@@ -301,7 +316,7 @@ async function fetchYahoo(stockId){
 const fmFundamentalCache={};
 async function fetchFinMindFundamental(stockId){
   if(fmFundamentalCache[stockId])return fmFundamentalCache[stockId];
-  await loadGitHubCache(); // 優先讀取快取
+  await loadGitHubCache();
   
   let fsData = ghCache.fundamental?.[stockId] ? {status:200, data:ghCache.fundamental[stockId]} : null;
   let revData = ghCache.revenue?.[stockId] ? {status:200, data:ghCache.revenue[stockId]} : null;
@@ -345,7 +360,7 @@ async function fetchFinMindFundamental(stockId){
 const fmPriceCache={};
 async function fetchFinMindPrice(stockId){
   if(fmPriceCache[stockId])return fmPriceCache[stockId];
-  await loadGitHubCache(); // 優先讀取快取
+  await loadGitHubCache(); 
 
   let rows = null;
   if(ghCache.price?.[stockId]?.length) {
@@ -396,23 +411,6 @@ async function fetchInstitutional(stockId){
     const result={...todayData, date:latest, total5d:trend5d.total, consecutiveBuyDays, consecutiveSellDays};
     instCache[stockId]=result;return result;
   }catch(e){return null;}
-}
-
-// ── 除息日防呆 ──
-function daysToExDiv(stockId){
-  const ex = ghCache?.exdiv?.[stockId]; if(!ex) return null;
-  const today = new Date(); today.setHours(0,0,0,0);
-  const exDate = new Date(ex.date);
-  return Math.round((exDate - today) / (1000*60*60*24));
-}
-function getExDivWarning(stockId){
-  const ex = ghCache?.exdiv?.[stockId]; if(!ex) return null;
-  const days = daysToExDiv(stockId); if(days === null || days < -30) return null;
-  if(days < 0) return {text:`已除息 ${ex.div}元（${ex.date}）`, color:'#64748b', icon:'✓'};
-  if(days === 0) return {text:`⚠️ 今日除息 ${ex.div}元`, color:'#ef4444', icon:'🔴'};
-  if(days <= 7) return {text:`⚠️ ${days}天後除息 ${ex.div}元（${ex.date}）`, color:'#ef4444', icon:'🔴'};
-  if(days <= 30) return {text:`📅 ${days}天後除息 ${ex.div}元（${ex.date}）`, color:'#f59e0b', icon:'🟡'};
-  return null;
 }
 
 function calcRSI(closes,p=14){if(closes.length<p+1)return 50;let gains=[],losses=[];for(let i=1;i<closes.length;i++){const d=closes[i]-closes[i-1];gains.push(Math.max(d,0));losses.push(Math.max(-d,0));}const ag=gains.slice(-p).reduce((a,b)=>a+b)/p;const al=losses.slice(-p).reduce((a,b)=>a+b)/p;if(al===0)return 100;return 100-(100/(1+ag/al));}
@@ -508,7 +506,7 @@ function scoreStock(id,ydata,instData){
 
 async function loadStocks(){
   showToast('開始抓取即時股價並讀取快取…');
-  await loadGitHubCache(); // 先把快取讀進來！
+  await loadGitHubCache();
   const candidates=STOCK_LIST; const total=candidates.length;
   showProgress(0,total,'抓取股價');
 
@@ -529,7 +527,6 @@ async function loadStocks(){
   const withPrice=withCap.filter(s=>s.price>0).sort((a,b)=>b.marketCap-a.marketCap);
   const noPrice=withCap.filter(s=>s.price===0).sort((a,b)=>(b.shares||0)-(a.shares||0));
   
-  // 準確切下前 200 大
   allStocks=[...withPrice,...noPrice].slice(0, 200);
 
   document.getElementById('stockCount').textContent=`(${allStocks.length})`;
@@ -554,7 +551,6 @@ async function loadStocks(){
         if(fmF.rev_slope!=null)FUNDAMENTAL[s.id].rev_slope=fmF.rev_slope;
       }
       
-      // 法人籌碼因為不走 GitHub 快取，給一點點休息時間避免打爆後端
       await new Promise(r=>setTimeout(r, 10));
       const instData=await fetchInstitutional(s.id).catch(()=>null);
       
