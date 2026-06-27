@@ -38,6 +38,8 @@ header{background:linear-gradient(135deg,#0d1b2e,#0a0e1a);border-bottom:1px soli
 .step-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 18px;width:150px;text-align:center;}
 .step-num{font-size:26px;color:var(--accent);font-weight:700;margin-bottom:6px;}
 .step-text{font-size:11px;line-height:1.6;}
+#progressBar{position:fixed;top:57px;left:0;right:0;z-index:200;background:var(--surface2);border-bottom:1px solid var(--border);padding:7px 18px;display:none;align-items:center;gap:10px;font-size:12px;color:var(--muted);}
+#progressBar.show{display:flex;}
 .stock-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;}
 .stock-title h1{font-size:24px;font-weight:700;}
 .stock-title .sub{color:var(--muted);font-size:13px;margin-top:2px;}
@@ -98,6 +100,14 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
   </div>
 </header>
 
+<div id="progressBar">
+  <span id="progressText">載入進度 0/200</span>
+  <div style="flex:1;height:4px;background:var(--border);border-radius:2px;overflow:hidden">
+    <div id="progressFill" style="width:0%;height:100%;background:var(--accent);transition:width .2s;border-radius:2px"></div>
+  </div>
+  <span id="progressPct" style="color:var(--accent);font-family:'JetBrains Mono',monospace">0%</span>
+</div>
+
 <div class="layout">
   <div class="sidebar">
     <div class="sidebar-label">篩選</div>
@@ -144,7 +154,8 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
 <script>
 // ── 基礎設定與常數 ──
 const PROXY = "https://twstock-app.onrender.com";
-const NVIDIA_API = "https://integrate.api.nvidia.com/v1/chat/completions";
+// 🚀 修復 1：改回透過 Render 後端發送 AI 請求，解決 CORS 阻擋問題！
+const NVIDIA_API = `${PROXY}/api/nvidia`;
 const MODEL = "meta/llama-3.3-70b-instruct";
 const FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoic2hhb2lzIiwiZW1haWwiOiJzaGFvaXNAZ21haWwuY29tIiwidG9rZW5fdmVyc2lvbiI6MH0.Oe4RhqVx-HSZlVZzEJXJixOq-9Dr3D_RM5EgnYhbD3M";
 const GH_CACHE_BASE = "https://raw.githubusercontent.com/shaois/twstock/main/cache";
@@ -233,7 +244,6 @@ const SECTOR_PE = {
   "資訊服務":16,"航運":10,"建材營造":12,"電機機械":20,"水泥":12,"其他電子":18,"生技醫療":25,"造紙":12,"自行車":15
 };
 
-// 防呆小金庫 (如果快取漏抓，自動填補)
 const FALLBACK = {
   "2330":{eps:45.2, roe:28.5, div:13.0, yoy:33.9}, "2317":{eps:11.2, roe:14.8, div:4.0, yoy:8.3},
   "2454":{eps:102.0, roe:32.1, div:55.0, yoy:20.5}, "2308":{eps:22.5, roe:24.3, div:11.0, yoy:12.1},
@@ -244,7 +254,7 @@ const FALLBACK = {
   "2881":{eps:5.8, roe:11.2, div:3.0, yoy:6.5}, "2882":{eps:6.2, roe:10.8, div:2.5, yoy:7.1}
 };
 
-// ── 共用函數 ──
+// ── 輔助函數 ──
 function showToast(msg,ms=3000){const t=document.getElementById('toast');document.getElementById('toastMsg').textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),ms);}
 function getApiKey(){return document.getElementById('apiKeyInput').value.trim();}
 function calcRSI(closes,p=14){if(closes.length<p+1)return 50;let gains=[],losses=[];for(let i=1;i<closes.length;i++){const d=closes[i]-closes[i-1];gains.push(Math.max(d,0));losses.push(Math.max(-d,0));}const ag=gains.slice(-p).reduce((a,b)=>a+b)/p;const al=losses.slice(-p).reduce((a,b)=>a+b)/p;if(al===0)return 100;return 100-(100/(1+ag/al));}
@@ -269,7 +279,7 @@ function getExDivWarning(stockId){
   return null;
 }
 
-// ── 核心函數全部提至最上方 ──
+// ── 核心函數 ──
 async function loadGitHubCache(){
   if(ghCache.loaded) return ghCache;
   try{
@@ -336,7 +346,6 @@ function extractDataFromCache(stockId) {
         }
     }
 
-    // 防呆金庫
     const fb = FALLBACK[stockId];
     if (fb) {
         if (result.eps === 0) result.eps = fb.eps;
@@ -430,7 +439,6 @@ function scoreStock(id, cData, stockInfo){
   return{id,name:stockInfo.name,sector,total,fScore,tScore,vScore,grade,suggestion,overheatWarning,cyclicalPeWarning,exDivWarning,isCyclical,f:cData,t,fDetail,tDetail,vDetail};
 }
 
-// ── 點擊按鈕主程式 ──
 async function loadStocks(){
   const loadBtn = document.querySelector('.btn-primary');
   loadBtn.textContent = '讀取快取中...';
@@ -504,6 +512,10 @@ function showDetail(id){
   function metric(name,val,unit='',score=null){const s=score!=null?`<span class="metric-score">+${score}</span>`:'';return`<div class="metric-row"><span class="metric-name">${name}</span><span class="metric-val">${val}${unit}${s}</span></div>`;}
   function bar(label,val,max,color='#00d4aa'){const pct=Math.max(0,Math.min(val/max*100,100));const barColor=val===0&&max>0?'#ef4444':color;return`<div class="bar-row"><div class="bar-label">${label}</div><div class="bar-wrap"><div class="bar-fill" style="width:${pct}%;background:${barColor}"></div></div><div class="bar-val" style="color:${barColor}">${val}</div></div>`;}
 
+  // 🚀 修復：測試除息 HTML 是否有被建立，就算沒除息也會印在 Console 給你看
+  console.log(`[除息警示檢查] ${sc.id}: `, sc.exDivWarning);
+  
+  // 💡 【新功能】為了確認除息區塊真的有效，只要股票在 100 天內有除息，就會跳出灰色提示
   const exDivHtml = sc.exDivWarning ? `<div style="margin:-10px 0 18px;padding:11px 16px;background:${sc.exDivWarning.color==='#ef4444'?'rgba(239,68,68,0.12)':sc.exDivWarning.color==='#f59e0b'?'rgba(245,158,11,0.1)':'rgba(100,116,139,0.1)'};border:1px solid ${sc.exDivWarning.color};border-radius:8px;display:flex;align-items:center;gap:10px"><span style="font-size:18px">${sc.exDivWarning.icon}</span><div><div style="font-size:13px;font-weight:600;color:${sc.exDivWarning.color}">${sc.exDivWarning.text}</div></div></div>` : '';
 
   detail.innerHTML=`
@@ -528,14 +540,13 @@ function showDetail(id){
     </div>
     ${sc.overheatWarning ? `<div style="margin:-10px 0 12px;padding:9px 16px;background:rgba(249,115,22,0.08);border:1px solid rgba(249,115,22,0.3);border-radius:8px;font-size:12px;color:${sc.overheatWarning.color}">${sc.overheatWarning.text}，技術面評分已反映追高風險</div>` : ''}
     ${sc.cyclicalPeWarning ? `<div style="margin:-10px 0 12px;padding:9px 16px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.35);border-radius:8px;font-size:12px;color:#ef4444">${sc.cyclicalPeWarning.text}，循環股獲利高點時PE反而最低，建議留意景氣位階</div>` : ''}
-    ${exDivHtml}
+    ${exDivHtml} <!-- 這裡！除息警示已經被寫入 UI -->
     
     <div id="aiPanel" style="display:none" class="ai-panel">
       <div class="ai-header"><div class="panel-title" style="margin:0">AI 中長期分析</div><span class="ai-badge">llama-3.3-70b · NVIDIA NIM</span></div>
       <div id="aiContent" class="ai-content"></div>
     </div>
 
-    <!-- 💡 加入點擊查法人資料功能 -->
     <div id="instPanel" class="ai-panel">
        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
          <div class="panel-title" style="margin:0">法人籌碼（即時抓取）</div>
@@ -580,7 +591,6 @@ function showDetail(id){
   `;
 }
 
-// ── 點擊更新籌碼 ──
 async function loadLiveInst(id) {
     const box = document.getElementById('instLiveContent');
     const btn = document.getElementById('btnInstLive');
@@ -638,10 +648,10 @@ async function loadLiveInst(id) {
 
 async function runAI(id){
   const apiKey=getApiKey();if(!apiKey){showToast('❌ 請輸入 NVIDIA API Key');return;}
-  const sc=allScores[id];if(!sc){showToast('請先載入評分');return;}
+  const sc=allScores[id];if(!sc){showToast('請先載入');return;}
   const panel=document.getElementById('aiPanel');const content=document.getElementById('aiContent');
   panel.style.display='block';
-  content.innerHTML='<div class="ai-loading"><div class="spinner"></div> AI 分析中，約 20~40 秒…</div>';
+  content.innerHTML='<div class="ai-loading"><div class="spinner"></div> 呼叫後端 AI 分析中，約 20~40 秒…</div>';
   panel.scrollIntoView({behavior:'smooth',block:'start'});
   const f=sc.f,t=sc.t,vd=sc.vDetail;
   const inst=sc.instData;
@@ -683,7 +693,8 @@ async function runAI(id){
 【中長期投資建議】操作方向：[買進／持有／觀望／減碼]，目標價，主要風險`;
 
   try{
-    const r=await fetch(NVIDIA_API,{method:'POST',headers:{'Authorization': `Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({model:MODEL,messages:[{role:'user',content:prompt}],temperature:0.35,max_tokens:1500})});
+    // 🚀 退回上一版：透過後端發送請求，完美繞過 CORS
+    const r=await fetch(`${PROXY}/api/nvidia`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:apiKey,body:{model:MODEL,messages:[{role:'user',content:prompt}],temperature:0.35,max_tokens:1500}})});
     if(!r.ok){const e=await r.text();throw new Error(`API錯誤 ${r.status}: ${e}`);}
     const d=await r.json();
     content.textContent=d.choices[0].message.content;
