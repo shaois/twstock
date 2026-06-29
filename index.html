@@ -79,7 +79,6 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
 .td-mono{font-family:'JetBrains Mono',monospace;}
 .toast{position:fixed;bottom:20px;right:20px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 16px;font-size:12px;display:none;align-items:center;gap:8px;z-index:999;}
 .toast.show{display:flex;}
-.disclaimer{font-size:11px;color:var(--muted);text-align:center;padding-bottom:20px;}
 @media(max-width:768px){.layout{grid-template-columns:1fr;}.sidebar{display:none;}.score-overview{grid-template-columns:repeat(2,1fr);}.detail-grid{grid-template-columns:1fr;}}
 </style>
 </head>
@@ -94,19 +93,11 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
   </div>
   <div class="header-right">
     <input class="api-input" id="apiKeyInput" type="password" placeholder="NVIDIA API Key（AI分析用）">
-    <button class="btn btn-primary" onclick="loadStocks()">載入當前資料庫</button>
+    <button class="btn btn-primary" onclick="loadStocks()">載入最新快取</button>
     <button class="btn btn-secondary" onclick="runScreener()">篩選優質股</button>
     <button class="btn btn-gold" onclick="findTop5Buys()">🏆 嚴選 Top 5</button>
   </div>
 </header>
-
-<div id="progressBar">
-  <span id="progressText">載入進度 0/200</span>
-  <div style="flex:1;height:4px;background:var(--border);border-radius:2px;overflow:hidden">
-    <div id="progressFill" style="width:0%;height:100%;background:var(--accent);transition:width .2s;border-radius:2px"></div>
-  </div>
-  <span id="progressPct" style="color:var(--accent);font-family:'JetBrains Mono',monospace">0%</span>
-</div>
 
 <div class="layout">
   <div class="sidebar">
@@ -123,7 +114,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
         <option>金融</option><option>電信</option><option>石化</option>
         <option>電腦</option><option>電子零組件</option><option>工業電腦</option>
         <option>電機機械</option><option>光學</option><option>汽車</option><option>食品</option><option>零售</option>
-        <option>航運</option><option>鋼鐵</option><option>水泥</option><option>生技醫療</option><option>造紙</option><option>自行車</option>
+        <option>航運</option><option>鋼鐵</option><option>水泥</option><option>生技醫療</option>
       </select>
     </div>
     <div class="sidebar-label" style="margin-top:4px">股票清單 <span id="stockCount" style="color:var(--accent)"></span></div>
@@ -138,12 +129,6 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       </svg>
       <h2>台股中長期選股儀表板</h2>
       <p style="max-width:400px;line-height:1.8">極速離線模式 × GitHub每日快取 × 基本面50 × 技術面50 × 估值面20 × AI分析</p>
-      <div class="step-cards">
-        <div class="step-card"><div class="step-num">1</div><div class="step-text">點擊載入最新快取</div></div>
-        <div class="step-card"><div class="step-num">2</div><div class="step-text">一秒瞬間完成評分</div></div>
-        <div class="step-card"><div class="step-num">3</div><div class="step-text">點「嚴選 Top 5」</div></div>
-        <div class="step-card"><div class="step-num">4</div><div class="step-text">輸入Key取得AI確認</div></div>
-      </div>
     </div>
     <div id="stockDetail" style="display:none"></div>
     <div id="screenerResult" style="display:none"></div>
@@ -152,10 +137,8 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
 <div class="toast" id="toast"><span id="toastMsg"></span></div>
 
 <script>
-// ── 基礎設定與常數 ──
 const PROXY = "https://twstock-app.onrender.com";
-// 🚀 修復 1：改回透過 Render 後端發送 AI 請求，解決 CORS 阻擋問題！
-const NVIDIA_API = `${PROXY}/api/nvidia`;
+const NVIDIA_API = "https://integrate.api.nvidia.com/v1/chat/completions";
 const MODEL = "meta/llama-3.3-70b-instruct";
 const FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoic2hhb2lzIiwiZW1haWwiOiJzaGFvaXNAZ21haWwuY29tIiwidG9rZW5fdmVyc2lvbiI6MH0.Oe4RhqVx-HSZlVZzEJXJixOq-9Dr3D_RM5EgnYhbD3M";
 const GH_CACHE_BASE = "https://raw.githubusercontent.com/shaois/twstock/main/cache";
@@ -241,7 +224,7 @@ const SECTOR_PE = {
   "半導體":22,"IC設計":25,"電子製造":15,"電腦":18,"工業電腦":28,"光電":15,
   "電子零組件":20,"光學":35,"機殼":14,"金融":12,"電信":18,"石化":12,"鋼鐵":12,
   "汽車":15,"食品":20,"零售":22,"通路":14,"紡織":12,"橡膠":12,"製鞋":18,
-  "資訊服務":16,"航運":10,"建材營造":12,"電機機械":20,"水泥":12,"其他電子":18,"生技醫療":25,"造紙":12,"自行車":15
+  "資訊服務":16,"航運":10,"建材營造":12,"電機機械":20,"水泥":12,"其他電子":18,"生技醫療":25
 };
 
 const FALLBACK = {
@@ -254,7 +237,6 @@ const FALLBACK = {
   "2881":{eps:5.8, roe:11.2, div:3.0, yoy:6.5}, "2882":{eps:6.2, roe:10.8, div:2.5, yoy:7.1}
 };
 
-// ── 輔助函數 ──
 function showToast(msg,ms=3000){const t=document.getElementById('toast');document.getElementById('toastMsg').textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),ms);}
 function getApiKey(){return document.getElementById('apiKeyInput').value.trim();}
 function calcRSI(closes,p=14){if(closes.length<p+1)return 50;let gains=[],losses=[];for(let i=1;i<closes.length;i++){const d=closes[i]-closes[i-1];gains.push(Math.max(d,0));losses.push(Math.max(-d,0));}const ag=gains.slice(-p).reduce((a,b)=>a+b)/p;const al=losses.slice(-p).reduce((a,b)=>a+b)/p;if(al===0)return 100;return 100-(100/(1+ag/al));}
@@ -262,24 +244,6 @@ function calcEMA(data,p){const k=2/(p+1);let ema=[data[0]];for(let i=1;i<data.le
 function calcMACD(closes){if(closes.length<26)return{macd:0,hist:0};const e12=calcEMA(closes,12),e26=calcEMA(closes,26);const ml=e12.map((v,i)=>v-e26[i]);const sig=calcEMA(ml,9);return{macd:ml[ml.length-1],hist:ml[ml.length-1]-sig[sig.length-1]};}
 function avg(arr,n){const a=arr.slice(-n);return a.reduce((s,v)=>s+v,0)/a.length;}
 
-function daysToExDiv(stockId){
-  const ex = ghCache?.exdiv?.[stockId]; if(!ex) return null;
-  const today = new Date(); today.setHours(0,0,0,0);
-  const exDate = new Date(ex.date);
-  return Math.round((exDate - today) / (1000*60*60*24));
-}
-
-function getExDivWarning(stockId){
-  const ex = ghCache?.exdiv?.[stockId]; if(!ex) return null;
-  const days = daysToExDiv(stockId); if(days === null || days < -30) return null;
-  if(days < 0) return {text:`已除息 ${ex.div}元（${ex.date}）`, color:'#64748b', icon:'✓'};
-  if(days === 0) return {text:`⚠️ 今日除息 ${ex.div}元`, color:'#ef4444', icon:'🔴'};
-  if(days <= 7) return {text:`⚠️ ${days}天後除息 ${ex.div}元（${ex.date}）`, color:'#ef4444', icon:'🔴'};
-  if(days <= 30) return {text:`📅 ${days}天後除息 ${ex.div}元（${ex.date}）`, color:'#f59e0b', icon:'🟡'};
-  return null;
-}
-
-// ── 核心函數 ──
 async function loadGitHubCache(){
   if(ghCache.loaded) return ghCache;
   try{
@@ -295,7 +259,7 @@ async function loadGitHubCache(){
     ghCache.price = p?.data || {};
     ghCache.exdiv = ex?.data || {};
     ghCache.loaded = true;
-    console.log("[GH Cache] 成功載入資料庫，包含檔數:", Object.keys(ghCache.price).length);
+    console.log("[GH Cache] 載入資料庫，檔案庫數量:", Object.keys(ghCache.price).length);
   }catch(e){ 
     ghCache.loaded = true; 
     console.log("[GH Cache] 載入異常。");
@@ -355,6 +319,19 @@ function extractDataFromCache(stockId) {
     }
     
     return result;
+}
+
+function getExDivWarning(stockId){
+  const ex = ghCache?.exdiv?.[stockId]; if(!ex) return null;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const exDate = new Date(ex.date);
+  const days = Math.round((exDate - today) / (1000*60*60*24));
+  if(days < -30) return null;
+  if(days < 0) return {text:`已除息 ${ex.div}元（${ex.date}）`, color:'#64748b', icon:'✓'};
+  if(days === 0) return {text:`⚠️ 今日除息 ${ex.div}元`, color:'#ef4444', icon:'🔴'};
+  if(days <= 7) return {text:`⚠️ ${days}天後除息 ${ex.div}元（${ex.date}）`, color:'#ef4444', icon:'🔴'};
+  if(days <= 30) return {text:`📅 ${days}天後除息 ${ex.div}元（${ex.date}）`, color:'#f59e0b', icon:'🟡'};
+  return null;
 }
 
 function scoreStock(id, cData, stockInfo){
@@ -465,10 +442,10 @@ async function loadStocks(){
   allStocks.sort((a, b) => b.marketCap - a.marketCap);
 
   document.getElementById('stockCount').textContent = `(${allStocks.length})`;
-  showToast(`✓ 瞬間載入完畢！共 ${allStocks.length} 檔，防呆與除權息已啟動。`);
+  showToast(`✓ 瞬間載入完畢！共 ${allStocks.length} 檔。`);
   renderStockList();
   
-  loadBtn.textContent = '載入當前資料庫';
+  loadBtn.textContent = '載入最新快取';
   loadBtn.style.opacity = '1';
 }
 
@@ -500,7 +477,7 @@ function renderStockList(){
 
 function showDetail(id){
   currentStock=id;renderStockList();
-  const sc=allScores[id];if(!sc){showToast('資料計算中或遺失');return;}
+  const sc=allScores[id];if(!sc){showToast('資料遺失');return;}
   document.getElementById('welcome').style.display='none';
   document.getElementById('screenerResult').style.display='none';
   const detail=document.getElementById('stockDetail');detail.style.display='block';
@@ -512,10 +489,6 @@ function showDetail(id){
   function metric(name,val,unit='',score=null){const s=score!=null?`<span class="metric-score">+${score}</span>`:'';return`<div class="metric-row"><span class="metric-name">${name}</span><span class="metric-val">${val}${unit}${s}</span></div>`;}
   function bar(label,val,max,color='#00d4aa'){const pct=Math.max(0,Math.min(val/max*100,100));const barColor=val===0&&max>0?'#ef4444':color;return`<div class="bar-row"><div class="bar-label">${label}</div><div class="bar-wrap"><div class="bar-fill" style="width:${pct}%;background:${barColor}"></div></div><div class="bar-val" style="color:${barColor}">${val}</div></div>`;}
 
-  // 🚀 修復：測試除息 HTML 是否有被建立，就算沒除息也會印在 Console 給你看
-  console.log(`[除息警示檢查] ${sc.id}: `, sc.exDivWarning);
-  
-  // 💡 【新功能】為了確認除息區塊真的有效，只要股票在 100 天內有除息，就會跳出灰色提示
   const exDivHtml = sc.exDivWarning ? `<div style="margin:-10px 0 18px;padding:11px 16px;background:${sc.exDivWarning.color==='#ef4444'?'rgba(239,68,68,0.12)':sc.exDivWarning.color==='#f59e0b'?'rgba(245,158,11,0.1)':'rgba(100,116,139,0.1)'};border:1px solid ${sc.exDivWarning.color};border-radius:8px;display:flex;align-items:center;gap:10px"><span style="font-size:18px">${sc.exDivWarning.icon}</span><div><div style="font-size:13px;font-weight:600;color:${sc.exDivWarning.color}">${sc.exDivWarning.text}</div></div></div>` : '';
 
   detail.innerHTML=`
@@ -540,7 +513,7 @@ function showDetail(id){
     </div>
     ${sc.overheatWarning ? `<div style="margin:-10px 0 12px;padding:9px 16px;background:rgba(249,115,22,0.08);border:1px solid rgba(249,115,22,0.3);border-radius:8px;font-size:12px;color:${sc.overheatWarning.color}">${sc.overheatWarning.text}，技術面評分已反映追高風險</div>` : ''}
     ${sc.cyclicalPeWarning ? `<div style="margin:-10px 0 12px;padding:9px 16px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.35);border-radius:8px;font-size:12px;color:#ef4444">${sc.cyclicalPeWarning.text}，循環股獲利高點時PE反而最低，建議留意景氣位階</div>` : ''}
-    ${exDivHtml} <!-- 這裡！除息警示已經被寫入 UI -->
+    ${exDivHtml}
     
     <div id="aiPanel" style="display:none" class="ai-panel">
       <div class="ai-header"><div class="panel-title" style="margin:0">AI 中長期分析</div><span class="ai-badge">llama-3.3-70b · NVIDIA NIM</span></div>
@@ -641,7 +614,7 @@ async function loadLiveInst(id) {
         `;
         btn.disabled = false;
     } catch(e) {
-        box.innerHTML = '<span style="color:var(--red)">❌ 無法取得今日籌碼資料，可能是 API 額度用盡。</span>';
+        box.innerHTML = '<span style="color:var(--red)">❌ 無法取得籌碼資料，可能是 API 額度用盡。</span>';
         btn.disabled = false;
     }
 }
@@ -651,7 +624,7 @@ async function runAI(id){
   const sc=allScores[id];if(!sc){showToast('請先載入');return;}
   const panel=document.getElementById('aiPanel');const content=document.getElementById('aiContent');
   panel.style.display='block';
-  content.innerHTML='<div class="ai-loading"><div class="spinner"></div> 呼叫後端 AI 分析中，約 20~40 秒…</div>';
+  content.innerHTML='<div class="ai-loading"><div class="spinner"></div> AI 分析中，透過後端發送請求避開 CORS...</div>';
   panel.scrollIntoView({behavior:'smooth',block:'start'});
   const f=sc.f,t=sc.t,vd=sc.vDetail;
   const inst=sc.instData;
@@ -668,7 +641,6 @@ async function runAI(id){
 ═══ 估值面 ═══
 • PE：${vd.pe?vd.pe.toFixed(1):'N/A'}倍（歷史位階：${vd.pe_percentile?vd.pe_percentile.toFixed(0):'N/A'}%）
 • 股息殖利率：${vd.divYield.toFixed(2)}%
-• 估值評分：${sc.vScore}/20
 
 ═══ 基本面 ═══
 • EPS：${f.eps}元  ROE：${f.roe}%  營收年增率：${f.yoy}%  營收動能：${(f.rev_slope||1.0).toFixed(2)}x
@@ -693,7 +665,6 @@ async function runAI(id){
 【中長期投資建議】操作方向：[買進／持有／觀望／減碼]，目標價，主要風險`;
 
   try{
-    // 🚀 退回上一版：透過後端發送請求，完美繞過 CORS
     const r=await fetch(`${PROXY}/api/nvidia`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:apiKey,body:{model:MODEL,messages:[{role:'user',content:prompt}],temperature:0.35,max_tokens:1500}})});
     if(!r.ok){const e=await r.text();throw new Error(`API錯誤 ${r.status}: ${e}`);}
     const d=await r.json();
