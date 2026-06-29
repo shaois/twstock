@@ -1,5 +1,5 @@
 """
-GitHub Actions 專用：台股 200 大快取每日更新腳本 (真正 200 檔完整版)
+GitHub Actions 專用：台股 200 大快取每日更新腳本 (真正 215 檔完整版)
 """
 import asyncio
 import httpx
@@ -9,7 +9,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# 🔥 這次絕對是精準的 200 支強勢與權值股名單
+# 🔥 這次絕對是精準的 215 支強勢與權值股名單，一字不漏！
 STOCK_LIST = [
   {"id":"2330","name":"台積電"},{"id":"2317","name":"鴻海"},{"id":"2454","name":"聯發科"},{"id":"2308","name":"台達電"},
   {"id":"2382","name":"廣達"},{"id":"2881","name":"富邦金"},{"id":"2882","name":"國泰金"},{"id":"2886","name":"兆豐金"},
@@ -160,9 +160,10 @@ async def update_cache():
                 
                 current_stop_index = i if stop_fetching else i + 1
                 progress_file.write_text(json.dumps({"date": today_str, "index": current_stop_index}))
+                print(f"  ...已暫存進度到磁碟，目前準備跑到第 {current_stop_index} 支。")
 
     if not stop_fetching:
-        print("✅ 200 支股票全數更新完畢！重置接力棒為 0。")
+        print(f"✅ {len(STOCK_LIST)} 支股票全數更新完畢！重置接力棒為 0。")
         progress_file.write_text(json.dumps({"date": today_str, "index": 0}))
 
 if __name__ == "__main__":
