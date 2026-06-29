@@ -78,6 +78,9 @@ async def _fetch_finmind_raw(stock_id: str, dtype: str, token: str) -> dict:
     elif dtype == "price":
         start = (today - timedelta(days=270)).strftime("%Y-%m-%d")
         url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={stock_id}&start_date={start}&token={token}"
+    elif dtype == "balance":
+        start = (today - timedelta(days=540)).strftime("%Y-%m-%d")
+        url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockBalanceSheet&data_id={stock_id}&start_date={start}&token={token}"
     else: return {}
     async with httpx.AsyncClient(timeout=20.0) as client:
         return (await client.get(url)).json()
@@ -92,7 +95,7 @@ async def _run_daily_cache():
     if not FINMIND_TOKEN: return
     for i, sid in enumerate(STOCK_IDS):
         try:
-            for dtype in ["fundamental", "revenue", "price"]:
+            for dtype in ["fundamental", "balance", "revenue", "price"]:
                 data = await _fetch_finmind_raw(sid, dtype, FINMIND_TOKEN)
                 if data.get("status") == 200: _cache_write(sid, dtype, data)
                 elif data.get("status") == 402: return
@@ -108,10 +111,11 @@ async def get_stock_score(stock_id: str):
         fm_fundamental = _cache_read(stock_id, "fundamental")
         fm_revenue = _cache_read(stock_id, "revenue")
         fm_exdiv = _cache_read(stock_id, "exdiv")
+        fm_balance = _cache_read(stock_id, "balance")
         technical = await fetcher.fetch_technical(stock_id)
         current_price = technical.get("current_price", 0)
 
-        fundamental = fetcher.parse_fundamental_dynamic(stock_id, fm_fundamental, fm_revenue)
+        fundamental = fetcher.parse_fundamental_dynamic(stock_id, fm_fundamental, fm_revenue, fm_balance)
         if fundamental.get("cash_dividend", 0) == 0 and fm_exdiv:
             fundamental["cash_dividend"] = fm_exdiv.get("data", {}).get("div", 0)
         valuation = fetcher.parse_valuation_dynamic(stock_id, current_price, fundamental, fm_fundamental)

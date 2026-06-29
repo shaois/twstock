@@ -93,6 +93,7 @@ async def update_cache():
     revenue_db     = load_old_cache("revenue.json")
     price_db       = load_old_cache("price.json")
     exdiv_db       = load_old_cache("exdiv.json")
+    balance_db     = load_old_cache("balance.json")
     
     progress_file = CACHE_DIR / "progress.json"
     start_index = 0
@@ -136,7 +137,15 @@ async def update_cache():
                 elif data and data.get("status") == 200 and data.get("data"): revenue_db[sid] = data["data"]
                 await asyncio.sleep(1.2)
             if stop_fetching: break
-            
+
+            if sid not in balance_db or is_weekend:
+                url_b = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockBalanceSheet&data_id={sid}&start_date={(today - timedelta(days=540)).strftime('%Y-%m-%d')}&token={FINMIND_TOKEN}"
+                sc, data = await fetch_api(client, url_b)
+                if sc == 402 or (data and data.get("status") == 402): stop_fetching = True
+                elif data and data.get("status") == 200 and data.get("data"): balance_db[sid] = data["data"]
+                await asyncio.sleep(1.2)
+            if stop_fetching: break
+
             # 3. 抓除權息
             if sid not in exdiv_db or is_weekend:
                 url_e = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividendResult&data_id={sid}&start_date={(today - timedelta(days=365)).strftime('%Y-%m-%d')}&token={FINMIND_TOKEN}"
@@ -164,6 +173,7 @@ async def update_cache():
     (CACHE_DIR / "revenue.json").write_text(json.dumps({"_saved_at": timestamp, "data": revenue_db}, ensure_ascii=False))
     (CACHE_DIR / "price.json").write_text(json.dumps({"_saved_at": timestamp, "data": price_db}, ensure_ascii=False))
     (CACHE_DIR / "exdiv.json").write_text(json.dumps({"_saved_at": timestamp, "data": exdiv_db}, ensure_ascii=False))
+    (CACHE_DIR / "balance.json").write_text(json.dumps({"_saved_at": timestamp, "data": balance_db}, ensure_ascii=False))
     
     if stop_fetching:
         print(f"⚠️ 遇到 API 額度限制 (402)！進度停留在第 {last_processed_index + 1} 支，已安穩存檔。下一批次會繼續接力。")

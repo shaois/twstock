@@ -146,7 +146,7 @@ const GH_CACHE_BASE = "https://raw.githubusercontent.com/shaois/twstock/main/cac
 let allStocks = [];
 let allScores = {};
 let currentStock = null;
-let ghCache = {fundamental:{}, revenue:{}, price:{}, exdiv:{}, loaded:false};
+let ghCache = {fundamental:{}, revenue:{}, price:{}, exdiv:{}, balance:{}, loaded:false};
 
 // 🔥 200支強勢股票陣列，保證對齊！
 const CANDIDATES = [
@@ -276,6 +276,29 @@ function calcEMA(data,p){const k=2/(p+1);let ema=[data[0]];for(let i=1;i<data.le
 function calcMACD(closes){if(closes.length<26)return{macd:0,hist:0};const e12=calcEMA(closes,12),e26=calcEMA(closes,26);const ml=e12.map((v,i)=>v-e26[i]);const sig=calcEMA(ml,9);return{macd:ml[ml.length-1],hist:ml[ml.length-1]-sig[sig.length-1]};}
 function avg(arr,n){const a=arr.slice(-n);return a.reduce((s,v)=>s+v,0)/a.length;}
 
+function calcRoeFromCache(fRows, balanceRows){
+  if(!fRows?.length || !balanceRows?.length) return 0;
+  const incomeRows = fRows
+    .filter(r=>r.type==='IncomeAfterTaxes' && Number(r.value))
+    .sort((a,b)=>b.date.localeCompare(a.date))
+    .slice(0,4);
+  const equityRows = balanceRows
+    .filter(r=>{
+      const type = String(r.type || '');
+      return Number(r.value) && (
+        type === 'EquityAttributableToOwnersOfParent' ||
+        type === 'TotalEquity' ||
+        type === 'Equity'
+      );
+    })
+    .sort((a,b)=>b.date.localeCompare(a.date));
+  if(!incomeRows.length || !equityRows.length) return 0;
+  const annualIncome = incomeRows.reduce((sum,row)=>sum + Number(row.value || 0), 0);
+  const equity = Math.abs(Number(equityRows[0].value || 0));
+  if(equity <= 0) return 0;
+  return Math.round((annualIncome / equity) * 10000) / 100;
+}
+
 function daysToExDiv(stockId){
   const ex = ghCache?.exdiv?.[stockId]; if(!ex) return null;
   const today = new Date(); today.setHours(0,0,0,0);
@@ -297,16 +320,18 @@ async function loadGitHubCache(){
   if(ghCache.loaded) return ghCache;
   try{
     const nocache = `?t=${Date.now()}`;
-    const [f,r,p,ex] = await Promise.all([
+    const [f,r,p,ex,b] = await Promise.all([
       fetch(`${GH_CACHE_BASE}/fundamental.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/revenue.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/price.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/exdiv.json${nocache}`).then(x=>x.ok?x.json():{}),
+      fetch(`${GH_CACHE_BASE}/balance.json${nocache}`).then(x=>x.ok?x.json():{}),
     ]);
     ghCache.fundamental = f?.data || {};
     ghCache.revenue = r?.data || {};
     ghCache.price = p?.data || {};
     ghCache.exdiv = ex?.data || {};
+    ghCache.balance = b?.data || {};
     ghCache.loaded = true;
     console.log("[GH Cache] 成功載入，檔案庫數量:", Object.keys(ghCache.price).length);
   }catch(e){ 
@@ -342,6 +367,7 @@ function extractDataFromCache(stockId) {
         
         const roeRow = fRows.filter(r=>r.type==='ReturnOnEquityAfterTax').sort((a,b)=>b.date.localeCompare(a.date))[0];
         if(roeRow) { let rv = roeRow.value||0; if(Math.abs(rv)<2&&rv!==0)rv*=100; result.roe=Math.round(rv*100)/100; }
+        if(result.roe === 0) result.roe = calcRoeFromCache(fRows, ghCache.balance[stockId]);
         
         const divRow = fRows.filter(r=>r.type==='CashDividendReceivedPerShare').sort((a,b)=>b.date.localeCompare(a.date))[0];
         if(divRow) result.div = divRow.value||0;

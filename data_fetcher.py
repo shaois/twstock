@@ -253,7 +253,7 @@ class TWStockFetcher:
             "data_points":        len(closes),
         }
 
-    def parse_fundamental_dynamic(self, stock_id: str, fm_fundamental: dict | None, fm_revenue: dict | None) -> dict:
+    def parse_fundamental_dynamic(self, stock_id: str, fm_fundamental: dict | None, fm_revenue: dict | None, fm_balance: dict | None = None) -> dict:
         base = FUNDAMENTAL_FALLBACK.get(stock_id, {"eps": 0.0, "roe": 0.0, "revenue_yoy": 0.0, "cash_dividend": 0.0})
         ttm_eps = None
         latest_roe = None
@@ -276,6 +276,19 @@ class TWStockFetcher:
             if roe_records:
                 roe_records.sort(key=lambda x: x.get("date", ""))
                 latest_roe = roe_records[-1]["value"]
+            elif fm_balance and fm_balance.get("status") == 200:
+                income_records = [row for row in data_list if row.get("type") == "IncomeAfterTaxes" and row.get("value")]
+                equity_records = [
+                    row for row in fm_balance.get("data", [])
+                    if row.get("type") in ("EquityAttributableToOwnersOfParent", "TotalEquity", "Equity") and row.get("value")
+                ]
+                if income_records and equity_records:
+                    income_records.sort(key=lambda x: x.get("date", ""))
+                    equity_records.sort(key=lambda x: x.get("date", ""))
+                    annual_income = sum(float(row.get("value", 0)) for row in income_records[-4:])
+                    equity = abs(float(equity_records[-1].get("value", 0)))
+                    if equity > 0:
+                        latest_roe = annual_income / equity * 100
                 
             div_records = [row for row in data_list if row.get("type") == "CashDividendReceivedPerShare"]
             if div_records:
