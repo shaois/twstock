@@ -105,11 +105,15 @@ async def get_stock_score(stock_id: str):
         cache_key = f"score_{stock_id}"
         if data := cache.get(cache_key): return {"success": True, "data": data}
         
-        fm_fundamental, fm_revenue = _cache_read(stock_id, "fundamental"), _cache_read(stock_id, "revenue")
+        fm_fundamental = _cache_read(stock_id, "fundamental")
+        fm_revenue = _cache_read(stock_id, "revenue")
+        fm_exdiv = _cache_read(stock_id, "exdiv")
         technical = await fetcher.fetch_technical(stock_id)
         current_price = technical.get("current_price", 0)
 
         fundamental = fetcher.parse_fundamental_dynamic(stock_id, fm_fundamental, fm_revenue)
+        if fundamental.get("cash_dividend", 0) == 0 and fm_exdiv:
+            fundamental["cash_dividend"] = fm_exdiv.get("data", {}).get("div", 0)
         valuation = fetcher.parse_valuation_dynamic(stock_id, current_price, fundamental, fm_fundamental)
 
         data = scorer.calculate(stock_id, fundamental, technical, valuation)

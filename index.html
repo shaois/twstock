@@ -347,6 +347,11 @@ function extractDataFromCache(stockId) {
         if(divRow) result.div = divRow.value||0;
     }
 
+    const exDiv = ghCache.exdiv[stockId];
+    if (result.div === 0 && exDiv && exDiv.div) {
+        result.div = exDiv.div;
+    }
+
     const rRows = ghCache.revenue[stockId];
     if (rRows && rRows.length > 0) {
         const revs = rRows.sort((a,b)=>b.date.localeCompare(a.date));
