@@ -36,18 +36,29 @@ cache = DataCache()
 
 CACHE_DIR = Path("/tmp/twstock_cache")
 CACHE_DIR.mkdir(exist_ok=True)
+STATIC_CACHE_DIR = Path(__file__).parent / "cache"
 
 def _cache_path(stock_id: str, dtype: str) -> Path:
     return CACHE_DIR / f"{dtype}_{stock_id}.json"
 
 def _cache_read(stock_id: str, dtype: str) -> dict | None:
     p = _cache_path(stock_id, dtype)
-    if not p.exists(): return None
+    if p.exists():
+        try:
+            data = json.loads(p.read_text())
+            saved_at = datetime.fromisoformat(data.get("_saved_at", "2000-01-01"))
+            if datetime.now() - saved_at <= timedelta(hours=25):
+                return data
+        except Exception:
+            pass
+
+    static_path = STATIC_CACHE_DIR / f"{dtype}.json"
+    if not static_path.exists(): return None
     try:
-        data = json.loads(p.read_text())
-        saved_at = datetime.fromisoformat(data.get("_saved_at", "2000-01-01"))
-        if datetime.now() - saved_at > timedelta(hours=25): return None
-        return data
+        data = json.loads(static_path.read_text(encoding="utf-8"))
+        rows = data.get("data", {}).get(stock_id)
+        if rows is None: return None
+        return {"status": 200, "data": rows, "_saved_at": data.get("_saved_at")}
     except Exception: return None
 
 def _cache_write(stock_id: str, dtype: str, payload: dict):
@@ -102,6 +113,11 @@ async def get_stock_score(stock_id: str):
         valuation = fetcher.parse_valuation_dynamic(stock_id, current_price, fundamental, fm_fundamental)
 
         data = scorer.calculate(stock_id, fundamental, technical, valuation)
+        data.update({
+            "fundamental": fundamental,
+            "technical": technical,
+            "valuation": valuation,
+        })
         cache.set(cache_key, data, ttl_hours=6)
         return {"success": True, "data": data}
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
