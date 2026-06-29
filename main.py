@@ -107,6 +107,11 @@ async def get_stock_score(stock_id: str):
     try:
         cache_key = f"score_{stock_id}"
         if data := cache.get(cache_key): return {"success": True, "data": data}
+        if score_snapshot := _cache_read(stock_id, "scores"):
+            data = score_snapshot.get("data")
+            if data:
+                cache.set(cache_key, data, ttl_hours=6)
+                return {"success": True, "data": data}
         
         fm_fundamental = _cache_read(stock_id, "fundamental")
         fm_revenue = _cache_read(stock_id, "revenue")

@@ -2,9 +2,9 @@
 GitHub Actions 專用：台股 200 大快取每日更新腳本 (保證 200 支完整版)
 """
 import asyncio
-import httpx
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -75,6 +75,266 @@ def load_old_cache(filename):
         except: return {}
     return {}
 
+SECTOR_PE = {
+    "??擃?": 22, "IC閮剛?": 25, "?餃?鋆賡?": 15, "?餉": 18,
+    "撌交平?餉": 28, "?": 15, "?餃??嗥?隞?": 20, "?飛": 35,
+    "璈挺": 14, "??": 12, "?颱縑": 18, "?喳?": 12, "?潮": 12,
+    "瘙質?": 15, "憌?": 20, "?嗅": 22, "?楝": 14, "蝝∠?": 12,
+    "璈∟?": 12, "鋆賡?": 18, "鞈???": 16, "?芷?": 10,
+    "撱箸???": 12, "?餅?璈１": 20, "瘞湔野": 12, "?嗡??餃?": 18,
+    "???怎?": 25, "??": 12, "?芾?頠?": 15
+}
+
+FALLBACK = {
+    "2330": {"eps": 45.2, "roe": 28.5, "div": 13.0, "yoy": 33.9},
+    "2317": {"eps": 11.2, "roe": 14.8, "div": 4.0, "yoy": 8.3},
+    "2454": {"eps": 102.0, "roe": 32.1, "div": 55.0, "yoy": 20.5},
+    "2308": {"eps": 22.5, "roe": 24.3, "div": 11.0, "yoy": 12.1},
+    "2382": {"eps": 18.7, "roe": 22.6, "div": 8.0, "yoy": 25.3},
+    "3711": {"eps": 8.5, "roe": 15.2, "div": 5.0, "yoy": 12.5},
+    "2379": {"eps": 28.5, "roe": 24.2, "div": 15.0, "yoy": 22.5},
+    "3034": {"eps": 45.0, "roe": 30.5, "div": 25.0, "yoy": 18.5},
+    "3231": {"eps": 8.2, "roe": 15.5, "div": 4.5, "yoy": 28.5},
+    "2357": {"eps": 25.8, "roe": 18.5, "div": 25.0, "yoy": 5.2},
+    "2303": {"eps": 3.5, "roe": 9.8, "div": 3.0, "yoy": 15.2},
+    "2412": {"eps": 5.8, "roe": 12.5, "div": 5.48, "yoy": 2.1},
+    "2881": {"eps": 5.8, "roe": 11.2, "div": 3.0, "yoy": 6.5},
+    "2882": {"eps": 6.2, "roe": 10.8, "div": 2.5, "yoy": 7.1},
+}
+
+def load_stock_meta():
+    text = Path("index.html").read_text(encoding="utf-8", errors="ignore")
+    pattern = re.compile(r'\{id:"(?P<id>\d+)",name:"(?P<name>[^"]*)",sector:"(?P<sector>[^"]*)",shares:(?P<shares>\d+)\}')
+    return {
+        m.group("id"): {
+            "id": m.group("id"),
+            "name": m.group("name"),
+            "sector": m.group("sector"),
+            "shares": int(m.group("shares")),
+        }
+        for m in pattern.finditer(text)
+    }
+
+def avg(values, n):
+    arr = values[-n:]
+    return sum(arr) / len(arr) if arr else 0
+
+def calc_rsi(closes, period=14):
+    if len(closes) < period + 1: return 50.0
+    gains, losses = [], []
+    for i in range(1, len(closes)):
+        diff = closes[i] - closes[i - 1]
+        gains.append(max(diff, 0))
+        losses.append(max(-diff, 0))
+    avg_gain = sum(gains[-period:]) / period
+    avg_loss = sum(losses[-period:]) / period
+    if avg_loss == 0: return 100.0
+    return 100 - (100 / (1 + avg_gain / avg_loss))
+
+def calc_ema(values, period):
+    if not values: return []
+    k = 2 / (period + 1)
+    ema = [values[0]]
+    for value in values[1:]:
+        ema.append(value * k + ema[-1] * (1 - k))
+    return ema
+
+def calc_macd(closes):
+    if len(closes) < 26: return {"macd": 0.0, "hist": 0.0}
+    ema12 = calc_ema(closes, 12)
+    ema26 = calc_ema(closes, 26)
+    macd_line = [a - b for a, b in zip(ema12, ema26)]
+    signal = calc_ema(macd_line, 9)
+    return {"macd": macd_line[-1], "hist": macd_line[-1] - signal[-1]}
+
+def calc_roe_from_cache(f_rows, balance_rows):
+    income_rows = [r for r in f_rows if r.get("type") == "IncomeAfterTaxes" and r.get("value")]
+    equity_rows = [
+        r for r in balance_rows
+        if r.get("type") in ("EquityAttributableToOwnersOfParent", "TotalEquity", "Equity") and r.get("value")
+    ]
+    if not income_rows or not equity_rows: return 0.0
+    income_rows.sort(key=lambda r: r.get("date", ""))
+    equity_rows.sort(key=lambda r: r.get("date", ""))
+    annual_income = sum(float(r.get("value", 0)) for r in income_rows[-4:])
+    equity = abs(float(equity_rows[-1].get("value", 0)))
+    return round(annual_income / equity * 100, 2) if equity > 0 else 0.0
+
+def extract_stock_data(stock_id, fundamental_db, revenue_db, price_db, exdiv_db, balance_db):
+    result = {"hasData": False, "price": 0, "high52": 0, "low52": 0, "closes": [], "volumes": [], "eps": 0, "roe": 0, "yoy": 0, "rev_slope": 1.0, "div": 0}
+    price_rows = price_db.get(stock_id, [])
+    sorted_prices = sorted([r for r in price_rows if r.get("close") is not None], key=lambda r: r.get("date", ""))
+    if sorted_prices:
+        result["closes"] = [float(r.get("close", 0)) for r in sorted_prices]
+        result["volumes"] = [float(r.get("Trading_Volume", 0) or 0) for r in sorted_prices]
+        result["price"] = result["closes"][-1]
+        result["high52"] = max(result["closes"])
+        result["low52"] = min(result["closes"])
+        result["hasData"] = True
+
+    f_rows = fundamental_db.get(stock_id, [])
+    if f_rows:
+        eps_rows = sorted([r for r in f_rows if r.get("type") == "EPS"], key=lambda r: r.get("date", ""), reverse=True)[:4]
+        if eps_rows:
+            result["eps"] = round(sum(float(r.get("value", 0) or 0) for r in eps_rows), 2)
+        roe_rows = sorted([r for r in f_rows if r.get("type") == "ReturnOnEquityAfterTax"], key=lambda r: r.get("date", ""), reverse=True)
+        if roe_rows:
+            roe = float(roe_rows[0].get("value", 0) or 0)
+            result["roe"] = round(roe * 100 if abs(roe) < 2 and roe != 0 else roe, 2)
+        if result["roe"] == 0:
+            result["roe"] = calc_roe_from_cache(f_rows, balance_db.get(stock_id, []))
+        div_rows = sorted([r for r in f_rows if r.get("type") == "CashDividendReceivedPerShare"], key=lambda r: r.get("date", ""), reverse=True)
+        if div_rows:
+            result["div"] = float(div_rows[0].get("value", 0) or 0)
+
+    ex_div = exdiv_db.get(stock_id)
+    if result["div"] == 0 and ex_div and ex_div.get("div"):
+        result["div"] = float(ex_div.get("div", 0) or 0)
+
+    rev_rows = revenue_db.get(stock_id, [])
+    if rev_rows:
+        revs = sorted(rev_rows, key=lambda r: r.get("date", ""), reverse=True)
+        if len(revs) >= 13:
+            current_rev = float(revs[0].get("revenue", 0) or 0)
+            last_year_rev = float(revs[12].get("revenue", 0) or 0)
+            result["yoy"] = round((current_rev - last_year_rev) / last_year_rev * 100, 1) if last_year_rev > 0 else 0
+            m3 = sum(float(r.get("revenue", 0) or 0) for r in revs[:3]) / 3
+            m12 = sum(float(r.get("revenue", 0) or 0) for r in revs[:12]) / 12
+            result["rev_slope"] = m3 / m12 if m12 > 0 else 1.0
+
+    fallback = FALLBACK.get(stock_id)
+    if fallback:
+        if result["eps"] == 0: result["eps"] = fallback["eps"]
+        if result["roe"] == 0: result["roe"] = fallback["roe"]
+        if result["div"] == 0: result["div"] = fallback["div"]
+        if result["yoy"] == 0 and fallback.get("yoy"): result["yoy"] = fallback["yoy"]
+    return result
+
+def get_exdiv_warning(stock_id, exdiv_db):
+    ex_div = exdiv_db.get(stock_id)
+    if not ex_div or not ex_div.get("date"): return None
+    try:
+        ex_date = datetime.strptime(ex_div["date"][:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+    days = (ex_date - datetime.today().date()).days
+    if days < -30: return None
+    div = ex_div.get("div", 0)
+    if days < 0: return {"text": f"已除息 {div}元（{ex_div['date']}）", "color": "#64748b", "icon": "v"}
+    if days == 0: return {"text": f"今日除息 {div}元", "color": "#ef4444", "icon": "!"}
+    if days <= 7: return {"text": f"{days}天內除息 {div}元（{ex_div['date']}）", "color": "#ef4444", "icon": "!"}
+    if days <= 30: return {"text": f"{days}天內除息 {div}元（{ex_div['date']}）", "color": "#f59e0b", "icon": "!"}
+    return None
+
+def score_stock(stock_id, stock_info, data, exdiv_db):
+    if not data["hasData"]: return None
+    closes, volumes = data["closes"], data["volumes"]
+    price = data["price"]
+    t = {"price": price, "high52": data["high52"], "low52": data["low52"], "ma5": 0, "ma20": 0, "ma60": 0, "ma120": 0, "rsi": 50, "macd": 0, "macdHist": 0, "volRatio": 1, "trend6m": 0, "pos52": 50}
+    if len(closes) >= 5:
+        t["ma5"] = avg(closes, 5)
+        t["ma20"] = avg(closes, min(20, len(closes)))
+        t["ma60"] = avg(closes, min(60, len(closes)))
+        t["ma120"] = avg(closes, min(120, len(closes)))
+        t["rsi"] = calc_rsi(closes)
+        macd = calc_macd(closes)
+        t["macd"] = macd["macd"]
+        t["macdHist"] = macd["hist"]
+        v5 = avg(volumes, min(5, len(volumes)))
+        v20 = avg(volumes, min(20, len(volumes)))
+        t["volRatio"] = v5 / v20 if v20 > 0 else 1
+        t["pos52"] = (price - t["low52"]) / (t["high52"] - t["low52"]) * 100 if t["high52"] != t["low52"] else 50
+        if len(closes) >= 120:
+            base = closes[-121]
+            t["trend6m"] = (price - base) / base * 100 if base > 0 else 0
+
+    f_score = 0
+    f_detail = {}
+    eps_s = 5 if data["eps"] >= 5 else (3 if data["eps"] > 0 else 0); f_score += eps_s; f_detail["eps"] = eps_s
+    roe_s = 20 if data["roe"] >= 20 else (15 if data["roe"] >= 15 else (10 if data["roe"] >= 10 else (5 if data["roe"] >= 5 else 0))); f_score += roe_s; f_detail["roe"] = roe_s
+    yoy_s = 15 if data["yoy"] >= 20 else (10 if data["yoy"] >= 10 else (5 if data["yoy"] >= 0 else 0)); f_score += yoy_s; f_detail["yoy"] = yoy_s
+    slope_s = 10 if data["rev_slope"] >= 1.1 else (7 if data["rev_slope"] >= 1.02 else (3 if data["rev_slope"] >= 0.95 else 0)); f_score += slope_s; f_detail["slope"] = slope_s
+
+    ma_s = 10
+    if t["ma5"] and t["ma20"] and t["ma60"]:
+        if t["ma5"] > t["ma20"] > t["ma60"]: ma_s = 20
+        elif t["ma20"] > t["ma60"]: ma_s = 12
+        elif t["ma5"] > t["ma20"]: ma_s = 8
+        else: ma_s = 2
+    rsi = t["rsi"]
+    rsi_s = 10 if 50 <= rsi <= 70 else (8 if rsi > 70 else (5 if 40 <= rsi < 50 else (3 if 30 <= rsi < 40 else 0)))
+    macd_s = 8 if t["macdHist"] > 0 else (4 if t["macdHist"] == 0 else 1)
+    vol = t["volRatio"]
+    vol_s = 7 if 1.2 <= vol <= 2.5 else (5 if 0.8 <= vol < 1.2 else (3 if vol > 2.5 else 1))
+    pos = t["pos52"]
+    trend_s = 5 if 60 <= pos <= 85 else (3 if 40 <= pos < 60 else (2 if pos > 85 else 0))
+    t_score = ma_s + rsi_s + macd_s + vol_s + trend_s
+    t_detail = {"ma": ma_s, "rsi": rsi_s, "macd": macd_s, "vol": vol_s, "trend": trend_s, "trendHot": t["trend6m"] >= 50}
+
+    sector = stock_info.get("sector", "")
+    pe = price / data["eps"] if price > 0 and data["eps"] > 0 else None
+    div_yield = data["div"] / price * 100 if price > 0 and data["div"] > 0 else 0
+    base_pe = SECTOR_PE.get(sector, 18)
+    if stock_id == "2330": base_pe = 22
+    if stock_id == "2454": base_pe = 20
+    if pe is None:
+        pe_percentile = None
+    else:
+        low_pe, high_pe = base_pe * 0.7, base_pe * 1.5
+        pe_percentile = 10 if pe <= low_pe else (95 if pe >= high_pe else ((pe - low_pe) / (high_pe - low_pe)) * 100)
+    is_moat = data["roe"] >= 20 and data["rev_slope"] >= 1.0
+    if pe is None: pe_s = 6
+    elif is_moat: pe_s = 12 if pe_percentile <= 50 else (10 if pe_percentile <= 80 else (7 if pe_percentile <= 98 else 4))
+    else: pe_s = 12 if pe_percentile <= 25 else (10 if pe_percentile <= 55 else (7 if pe_percentile <= 75 else (4 if pe_percentile <= 90 else 0)))
+    if is_moat:
+        dy_s = 8 if div_yield >= 3.5 else (6 if div_yield >= 1.8 else (4 if div_yield >= 1.0 else 2))
+    else:
+        dy_s = 8 if div_yield >= 5.0 else (6 if div_yield >= 4.0 else (3 if div_yield >= 2.5 else 0))
+    v_score = pe_s + dy_s
+    v_detail = {"pe": pe, "divYield": div_yield, "pe_percentile": pe_percentile, "peScore": pe_s, "dyScore": dy_s, "is_moat": is_moat, "avgPE": base_pe}
+
+    total = round(f_score + t_score + v_score, 1)
+    grade = "A+" if total >= 95 else ("A" if total >= 80 else ("B" if total >= 65 else ("C" if total >= 50 else "D")))
+    suggestion = "值得追蹤" if total >= 65 else ("中性觀望" if total >= 50 else "風險偏高")
+    cyclical = sector in {"?芷?", "?潮", "?喳?", "?Ｘ", "瘞湔野", "蝝∠?"}
+    return {
+        "id": stock_id, "name": stock_info.get("name", ""), "sector": sector,
+        "total": total, "fScore": f_score, "tScore": t_score, "vScore": v_score,
+        "stock_id": stock_id, "total_score": total,
+        "fundamental_score": f_score, "technical_score": t_score, "valuation_score": v_score,
+        "grade": grade, "suggestion": suggestion,
+        "overheatWarning": {"text": f"半年漲幅達{t['trend6m']:.0f}%，追高風險偏高", "color": "#f97316"} if t["trend6m"] >= 50 else None,
+        "cyclicalPeWarning": {"text": f"循環股PE僅{pe:.1f}倍，可能為獲利高點，非真正低估", "color": "#f97316"} if cyclical and pe is not None and pe < 8 else None,
+        "exDivWarning": get_exdiv_warning(stock_id, exdiv_db),
+        "isCyclical": cyclical,
+        "f": {"eps": round(data["eps"], 2), "roe": round(data["roe"], 2), "yoy": round(data["yoy"], 1), "rev_slope": round(data["rev_slope"], 2), "div": round(data["div"], 2), "roe_estimated": bool(data["roe"])},
+        "t": {k: round(v, 3) if isinstance(v, float) else v for k, v in t.items()},
+        "fDetail": f_detail, "tDetail": t_detail, "vDetail": {k: round(v, 3) if isinstance(v, float) else v for k, v in v_detail.items()},
+        "fundamental": {"eps": round(data["eps"], 2), "roe": round(data["roe"], 2), "revenue_yoy": round(data["yoy"], 1), "revenue_slope": round(data["rev_slope"], 2), "cash_dividend": round(data["div"], 2)},
+        "technical": {
+            "current_price": round(t["price"], 2), "ma5": round(t["ma5"], 2), "ma20": round(t["ma20"], 2),
+            "ma60": round(t["ma60"], 2), "ma120": round(t["ma120"], 2), "rsi14": round(t["rsi"], 1),
+            "macd": round(t["macd"], 3), "macd_hist": round(t["macdHist"], 3),
+            "vol_ratio_5_20": round(t["volRatio"], 2), "price_position_52w": round(t["pos52"], 1),
+            "high52": round(t["high52"], 2), "low52": round(t["low52"], 2), "trend_6m": round(t["trend6m"], 1),
+        },
+        "valuation": {"pe": round(pe, 2) if pe is not None else None, "div_yield": round(div_yield, 2), "pe_percentile": round(pe_percentile, 1) if pe_percentile is not None else None},
+        "details": {"fundamental": f_detail, "technical": t_detail, "valuation": {"pe_score": pe_s, "yield_score": dy_s, "pe_percentile_val": pe_percentile}},
+        "marketCap": price * stock_info.get("shares", 0) * 1000,
+    }
+
+def build_scores(fundamental_db, revenue_db, price_db, exdiv_db, balance_db):
+    meta = load_stock_meta()
+    scores = {}
+    for stock in STOCK_LIST:
+        sid = stock["id"]
+        stock_info = meta.get(sid, {"id": sid, "name": stock.get("name", ""), "sector": "", "shares": 0})
+        data = extract_stock_data(sid, fundamental_db, revenue_db, price_db, exdiv_db, balance_db)
+        score = score_stock(sid, stock_info, data, exdiv_db)
+        if score:
+            scores[sid] = score
+    return {"_saved_at": datetime.now().isoformat(), "data": scores, "count": len(scores)}
+
 async def fetch_api(client, url):
     try:
         r = await client.get(url, timeout=20.0)
@@ -84,6 +344,8 @@ async def fetch_api(client, url):
         return 500, None
 
 async def update_cache():
+    import httpx
+
     today = datetime.today()
     today_str = today.strftime('%Y-%m-%d')
     # 週末強制全面重抓財報營收
@@ -101,7 +363,7 @@ async def update_cache():
     if progress_file.exists():
         try:
             prog = json.loads(progress_file.read_text(encoding="utf-8"))
-            if prog.get("date") == today_str:
+            if "index" in prog:
                 saved_index = prog.get("index", 0)
                 if 0 < saved_index < len(STOCK_LIST):
                     start_index = saved_index
@@ -110,9 +372,11 @@ async def update_cache():
 
     stop_fetching = False
     last_processed_index = start_index
+    batch_size = max(1, int(os.environ.get("CACHE_BATCH_SIZE", "50")))
+    end_index = min(start_index + batch_size, len(STOCK_LIST))
 
     async with httpx.AsyncClient() as client:
-        for i in range(start_index, len(STOCK_LIST)):
+        for i in range(start_index, end_index):
             if stop_fetching: break
                 
             stock = STOCK_LIST[i]
@@ -174,10 +438,15 @@ async def update_cache():
     (CACHE_DIR / "price.json").write_text(json.dumps({"_saved_at": timestamp, "data": price_db}, ensure_ascii=False))
     (CACHE_DIR / "exdiv.json").write_text(json.dumps({"_saved_at": timestamp, "data": exdiv_db}, ensure_ascii=False))
     (CACHE_DIR / "balance.json").write_text(json.dumps({"_saved_at": timestamp, "data": balance_db}, ensure_ascii=False))
+    scores_out = build_scores(fundamental_db, revenue_db, price_db, exdiv_db, balance_db)
+    (CACHE_DIR / "scores.json").write_text(json.dumps(scores_out, ensure_ascii=False))
     
     if stop_fetching:
         print(f"⚠️ 遇到 API 額度限制 (402)！進度停留在第 {last_processed_index + 1} 支，已安穩存檔。下一批次會繼續接力。")
         progress_file.write_text(json.dumps({"date": today_str, "index": last_processed_index}))
+    elif end_index < len(STOCK_LIST):
+        print(f"Batch complete: processed {start_index + 1}-{end_index}, next index {end_index}")
+        progress_file.write_text(json.dumps({"date": today_str, "index": end_index}))
     else:
         print("✅ 200 支股票全數更新完畢！重置接力棒為 0，明天會從頭開始。")
         progress_file.write_text(json.dumps({"date": today_str, "index": 0}))

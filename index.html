@@ -146,7 +146,7 @@ const GH_CACHE_BASE = "https://raw.githubusercontent.com/shaois/twstock/main/cac
 let allStocks = [];
 let allScores = {};
 let currentStock = null;
-let ghCache = {fundamental:{}, revenue:{}, price:{}, exdiv:{}, balance:{}, loaded:false};
+let ghCache = {fundamental:{}, revenue:{}, price:{}, exdiv:{}, balance:{}, scores:{}, loaded:false};
 
 // 🔥 200支強勢股票陣列，保證對齊！
 const CANDIDATES = [
@@ -320,18 +320,20 @@ async function loadGitHubCache(){
   if(ghCache.loaded) return ghCache;
   try{
     const nocache = `?t=${Date.now()}`;
-    const [f,r,p,ex,b] = await Promise.all([
+    const [f,r,p,ex,b,scores] = await Promise.all([
       fetch(`${GH_CACHE_BASE}/fundamental.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/revenue.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/price.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/exdiv.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/balance.json${nocache}`).then(x=>x.ok?x.json():{}),
+      fetch(`${GH_CACHE_BASE}/scores.json${nocache}`).then(x=>x.ok?x.json():{}),
     ]);
     ghCache.fundamental = f?.data || {};
     ghCache.revenue = r?.data || {};
     ghCache.price = p?.data || {};
     ghCache.exdiv = ex?.data || {};
     ghCache.balance = b?.data || {};
+    ghCache.scores = scores?.data || {};
     ghCache.loaded = true;
     console.log("[GH Cache] 成功載入，檔案庫數量:", Object.keys(ghCache.price).length);
   }catch(e){ 
@@ -494,15 +496,19 @@ async function loadStocks(){
   allScores = {};
 
   for (const s of CANDIDATES) {
-      if (!ghCache.price || !ghCache.price[s.id]) continue; 
-      const cData = extractDataFromCache(s.id);
-      if (!cData.hasData) continue;
-      
-      allScores[s.id] = scoreStock(s.id, cData, s);
+      if (ghCache.scores && ghCache.scores[s.id]) {
+          allScores[s.id] = ghCache.scores[s.id];
+      } else {
+          if (!ghCache.price || !ghCache.price[s.id]) continue; 
+          const cData = extractDataFromCache(s.id);
+          if (!cData.hasData) continue;
+          allScores[s.id] = scoreStock(s.id, cData, s);
+      }
+      const displayPrice = allScores[s.id]?.t?.price || 0;
       allStocks.push({
           ...s,
-          price: cData.price,
-          marketCap: cData.price * (s.shares || 0) * 1000
+          price: displayPrice,
+          marketCap: allScores[s.id]?.marketCap || displayPrice * (s.shares || 0) * 1000
       });
   }
 
