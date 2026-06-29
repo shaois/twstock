@@ -1,5 +1,5 @@
 """
-GitHub Actions 專用：台股 200 大快取每日更新腳本 (真正 215 檔完整版)
+GitHub Actions 專用：台股 200 大快取每日更新腳本 (終極焊死 200 檔版)
 """
 import asyncio
 import httpx
@@ -9,7 +9,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# 🔥 這次絕對是精準的 215 支強勢與權值股名單，一字不漏！
+# 🔥 這次不讀任何外部檔案！直接把精挑細選的 200 支強勢大軍寫死在這裡！
 STOCK_LIST = [
   {"id":"2330","name":"台積電"},{"id":"2317","name":"鴻海"},{"id":"2454","name":"聯發科"},{"id":"2308","name":"台達電"},
   {"id":"2382","name":"廣達"},{"id":"2881","name":"富邦金"},{"id":"2882","name":"國泰金"},{"id":"2886","name":"兆豐金"},
@@ -57,7 +57,10 @@ STOCK_LIST = [
   {"id":"2014","name":"中鴻"},{"id":"1907","name":"永豐餘"},{"id":"2903","name":"遠百"},{"id":"2915","name":"潤泰全"},
   {"id":"2504","name":"國產"},{"id":"2548","name":"華固"},{"id":"1434","name":"福懋"},{"id":"1409","name":"新纖"},
   {"id":"1722","name":"台肥"},{"id":"1717","name":"長興"},{"id":"2351","name":"順德"},{"id":"8081","name":"致新"},
-  {"id":"6147","name":"頎邦"},{"id":"6269","name":"台郡"},{"id":"5434","name":"崇越"},{"id":"8150","name":"南茂"}
+  {"id":"6147","name":"頎邦"},{"id":"6269","name":"台郡"},{"id":"5434","name":"崇越"},{"id":"8150","name":"南茂"},
+  {"id":"1560","name":"中砂"},{"id":"3406","name":"玉晶光"},{"id":"6642","name":"富鼎"},{"id":"3515","name":"華擎"},
+  {"id":"6202","name":"盛群"},{"id":"2451","name":"創見"},{"id":"8215","name":"明基材"},{"id":"3376","name":"新日興"},
+  {"id":"6139","name":"亞翔"},{"id":"3033","name":"威健"},{"id":"6414","name":"樺漢"},{"id":"8112","name":"兆赫"}
 ]
 
 FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
@@ -83,7 +86,7 @@ async def fetch_api(client, url):
 async def update_cache():
     today = datetime.today()
     today_str = today.strftime('%Y-%m-%d')
-    # 週末強制大掃除
+    # 週末強制全面重抓財報營收
     is_weekend = today.weekday() >= 5 
     
     fundamental_db = load_old_cache("fundamental.json")
@@ -93,16 +96,20 @@ async def update_cache():
     
     progress_file = CACHE_DIR / "progress.json"
     start_index = 0
+    
+    # 大隊接力機制：只要有進度檔案，就接續往下跑
     if progress_file.exists():
         try:
             prog = json.loads(progress_file.read_text(encoding="utf-8"))
-            saved_index = prog.get("index", 0)
-            if saved_index > 0 and saved_index < len(STOCK_LIST):
-                start_index = saved_index
-                print(f"🔄 偵測到接力紀錄，從第 {start_index + 1} 支開始！")
+            if prog.get("date") == today_str:
+                saved_index = prog.get("index", 0)
+                if 0 < saved_index < len(STOCK_LIST):
+                    start_index = saved_index
+                    print(f"🔄 偵測到今日未完成的接力紀錄，從第 {start_index + 1} 支開始衝刺！")
         except: pass
 
     stop_fetching = False
+    last_processed_index = start_index
 
     async with httpx.AsyncClient() as client:
         for i in range(start_index, len(STOCK_LIST)):
@@ -110,9 +117,10 @@ async def update_cache():
                 
             stock = STOCK_LIST[i]
             sid = stock["id"]
+            last_processed_index = i
             print(f"[{i+1}/{len(STOCK_LIST)}] 處理 {sid} {stock['name']}...")
 
-            # 1. 抓財報
+            # 1. 抓財報 (平日：資料庫有了就不抓)
             if sid not in fundamental_db or is_weekend:
                 url_f = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={sid}&start_date={(today - timedelta(days=540)).strftime('%Y-%m-%d')}&token={FINMIND_TOKEN}"
                 sc, data = await fetch_api(client, url_f)
@@ -121,7 +129,7 @@ async def update_cache():
                 await asyncio.sleep(1.2)
             if stop_fetching: break
 
-            # 2. 抓營收
+            # 2. 抓營收 (平日：資料庫有了就不抓)
             if sid not in revenue_db or is_weekend:
                 url_r = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={sid}&start_date={(today - timedelta(days=400)).strftime('%Y-%m-%d')}&token={FINMIND_TOKEN}"
                 sc, data = await fetch_api(client, url_r)
@@ -129,16 +137,8 @@ async def update_cache():
                 elif data and data.get("status") == 200 and data.get("data"): revenue_db[sid] = data["data"]
                 await asyncio.sleep(1.2)
             if stop_fetching: break
-
-            # 3. 抓股價 (每天變動，每天必抓)
-            url_p = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={sid}&start_date={(today - timedelta(days=270)).strftime('%Y-%m-%d')}&token={FINMIND_TOKEN}"
-            sc, data = await fetch_api(client, url_p)
-            if sc == 402 or (data and data.get("status") == 402): stop_fetching = True
-            elif data and data.get("status") == 200 and data.get("data"): price_db[sid] = data["data"]
-            await asyncio.sleep(1.2)
-            if stop_fetching: break
             
-            # 4. 抓除權息
+            # 3. 抓除權息 (平日：資料庫有了就不抓)
             if sid not in exdiv_db or is_weekend:
                 url_e = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividendResult&data_id={sid}&start_date={(today - timedelta(days=365)).strftime('%Y-%m-%d')}&token={FINMIND_TOKEN}"
                 sc, data = await fetch_api(client, url_e)
@@ -149,21 +149,28 @@ async def update_cache():
                         latest_ex = sorted(ex_list, key=lambda x: x["date"], reverse=True)[0]
                         exdiv_db[sid] = {"date": latest_ex["date"], "div": latest_ex.get("CashDividend", 0)}
                 await asyncio.sleep(1.2)
+            if stop_fetching: break
 
-            # 邊抓邊存
-            if (i + 1) % 5 == 0 or i == len(STOCK_LIST) - 1:
-                timestamp = datetime.now().isoformat()
-                (CACHE_DIR / "fundamental.json").write_text(json.dumps({"_saved_at": timestamp, "data": fundamental_db}, ensure_ascii=False))
-                (CACHE_DIR / "revenue.json").write_text(json.dumps({"_saved_at": timestamp, "data": revenue_db}, ensure_ascii=False))
-                (CACHE_DIR / "price.json").write_text(json.dumps({"_saved_at": timestamp, "data": price_db}, ensure_ascii=False))
-                (CACHE_DIR / "exdiv.json").write_text(json.dumps({"_saved_at": timestamp, "data": exdiv_db}, ensure_ascii=False))
-                
-                current_stop_index = i if stop_fetching else i + 1
-                progress_file.write_text(json.dumps({"date": today_str, "index": current_stop_index}))
-                print(f"  ...已暫存進度到磁碟，目前準備跑到第 {current_stop_index} 支。")
+            # 4. 抓股價 (每天都會變動，所以每天強制更新)
+            url_p = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={sid}&start_date={(today - timedelta(days=270)).strftime('%Y-%m-%d')}&token={FINMIND_TOKEN}"
+            sc, data = await fetch_api(client, url_p)
+            if sc == 402 or (data and data.get("status") == 402): stop_fetching = True
+            elif data and data.get("status") == 200 and data.get("data"): price_db[sid] = data["data"]
+            await asyncio.sleep(1.2)
+            if stop_fetching: break
 
-    if not stop_fetching:
-        print(f"✅ {len(STOCK_LIST)} 支股票全數更新完畢！重置接力棒為 0。")
+    # 無論中途是否被 402 擋下，最後一定要強制存檔，保證資料不流失！
+    timestamp = datetime.now().isoformat()
+    (CACHE_DIR / "fundamental.json").write_text(json.dumps({"_saved_at": timestamp, "data": fundamental_db}, ensure_ascii=False))
+    (CACHE_DIR / "revenue.json").write_text(json.dumps({"_saved_at": timestamp, "data": revenue_db}, ensure_ascii=False))
+    (CACHE_DIR / "price.json").write_text(json.dumps({"_saved_at": timestamp, "data": price_db}, ensure_ascii=False))
+    (CACHE_DIR / "exdiv.json").write_text(json.dumps({"_saved_at": timestamp, "data": exdiv_db}, ensure_ascii=False))
+    
+    if stop_fetching:
+        print(f"⚠️ 遇到 API 額度限制 (402)！進度停留在第 {last_processed_index + 1} 支，已安穩存檔。下一批次會繼續接力。")
+        progress_file.write_text(json.dumps({"date": today_str, "index": last_processed_index}))
+    else:
+        print("✅ 200 支股票全數更新完畢！重置接力棒為 0，明天會從頭開始。")
         progress_file.write_text(json.dumps({"date": today_str, "index": 0}))
 
 if __name__ == "__main__":
