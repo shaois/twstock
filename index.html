@@ -38,8 +38,6 @@ header{background:linear-gradient(135deg,#0d1b2e,#0a0e1a);border-bottom:1px soli
 .step-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 18px;width:150px;text-align:center;}
 .step-num{font-size:26px;color:var(--accent);font-weight:700;margin-bottom:6px;}
 .step-text{font-size:11px;line-height:1.6;}
-#progressBar{position:fixed;top:57px;left:0;right:0;z-index:200;background:var(--surface2);border-bottom:1px solid var(--border);padding:7px 18px;display:none;align-items:center;gap:10px;font-size:12px;color:var(--muted);}
-#progressBar.show{display:flex;}
 .stock-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;}
 .stock-title h1{font-size:24px;font-weight:700;}
 .stock-title .sub{color:var(--muted);font-size:13px;margin-top:2px;}
@@ -93,7 +91,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
   </div>
   <div class="header-right">
     <input class="api-input" id="apiKeyInput" type="password" placeholder="NVIDIA API Key（AI分析用）">
-    <button class="btn btn-primary" onclick="loadStocks()">載入最新快取</button>
+    <button class="btn btn-primary" onclick="loadStocks()">載入當前資料庫</button>
     <button class="btn btn-secondary" onclick="runScreener()">篩選優質股</button>
     <button class="btn btn-gold" onclick="findTop5Buys()">🏆 嚴選 Top 5</button>
   </div>
@@ -114,7 +112,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
         <option>金融</option><option>電信</option><option>石化</option>
         <option>電腦</option><option>電子零組件</option><option>工業電腦</option>
         <option>電機機械</option><option>光學</option><option>汽車</option><option>食品</option><option>零售</option>
-        <option>航運</option><option>鋼鐵</option><option>水泥</option><option>生技醫療</option>
+        <option>航運</option><option>鋼鐵</option><option>水泥</option><option>生技醫療</option><option>造紙</option><option>自行車</option>
       </select>
     </div>
     <div class="sidebar-label" style="margin-top:4px">股票清單 <span id="stockCount" style="color:var(--accent)"></span></div>
@@ -138,7 +136,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
 
 <script>
 const PROXY = "https://twstock-app.onrender.com";
-const NVIDIA_API = "https://integrate.api.nvidia.com/v1/chat/completions";
+const NVIDIA_API = "https://integrate.api.nvidia.com/v1/chat/completions"; 
 const MODEL = "meta/llama-3.3-70b-instruct";
 const FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoic2hhb2lzIiwiZW1haWwiOiJzaGFvaXNAZ21haWwuY29tIiwidG9rZW5fdmVyc2lvbiI6MH0.Oe4RhqVx-HSZlVZzEJXJixOq-9Dr3D_RM5EgnYhbD3M";
 const GH_CACHE_BASE = "https://raw.githubusercontent.com/shaois/twstock/main/cache";
@@ -148,6 +146,7 @@ let allScores = {};
 let currentStock = null;
 let ghCache = {fundamental:{}, revenue:{}, price:{}, exdiv:{}, loaded:false};
 
+// 🔥 200支強勢股票陣列 (對齊後端)
 const CANDIDATES = [
   {id:"2330",name:"台積電",sector:"半導體",shares:25930000},{id:"2317",name:"鴻海",sector:"電子製造",shares:13860000},
   {id:"2454",name:"聯發科",sector:"IC設計",shares:1590000},{id:"2308",name:"台達電",sector:"電子零組件",shares:2580000},
@@ -244,6 +243,22 @@ function calcEMA(data,p){const k=2/(p+1);let ema=[data[0]];for(let i=1;i<data.le
 function calcMACD(closes){if(closes.length<26)return{macd:0,hist:0};const e12=calcEMA(closes,12),e26=calcEMA(closes,26);const ml=e12.map((v,i)=>v-e26[i]);const sig=calcEMA(ml,9);return{macd:ml[ml.length-1],hist:ml[ml.length-1]-sig[sig.length-1]};}
 function avg(arr,n){const a=arr.slice(-n);return a.reduce((s,v)=>s+v,0)/a.length;}
 
+function daysToExDiv(stockId){
+  const ex = ghCache?.exdiv?.[stockId]; if(!ex) return null;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const exDate = new Date(ex.date);
+  return Math.round((exDate - today) / (1000*60*60*24));
+}
+function getExDivWarning(stockId){
+  const ex = ghCache?.exdiv?.[stockId]; if(!ex) return null;
+  const days = daysToExDiv(stockId); if(days === null || days < -30) return null;
+  if(days < 0) return {text:`已除息 ${ex.div}元（${ex.date}）`, color:'#64748b', icon:'✓'};
+  if(days === 0) return {text:`⚠️ 今日除息 ${ex.div}元`, color:'#ef4444', icon:'🔴'};
+  if(days <= 7) return {text:`⚠️ ${days}天後除息 ${ex.div}元（${ex.date}）`, color:'#ef4444', icon:'🔴'};
+  if(days <= 30) return {text:`📅 ${days}天後除息 ${ex.div}元（${ex.date}）`, color:'#f59e0b', icon:'🟡'};
+  return null;
+}
+
 async function loadGitHubCache(){
   if(ghCache.loaded) return ghCache;
   try{
@@ -259,7 +274,7 @@ async function loadGitHubCache(){
     ghCache.price = p?.data || {};
     ghCache.exdiv = ex?.data || {};
     ghCache.loaded = true;
-    console.log("[GH Cache] 載入資料庫，檔案庫數量:", Object.keys(ghCache.price).length);
+    console.log("[GH Cache] 成功載入，檔案庫數量:", Object.keys(ghCache.price).length);
   }catch(e){ 
     ghCache.loaded = true; 
     console.log("[GH Cache] 載入異常。");
@@ -319,19 +334,6 @@ function extractDataFromCache(stockId) {
     }
     
     return result;
-}
-
-function getExDivWarning(stockId){
-  const ex = ghCache?.exdiv?.[stockId]; if(!ex) return null;
-  const today = new Date(); today.setHours(0,0,0,0);
-  const exDate = new Date(ex.date);
-  const days = Math.round((exDate - today) / (1000*60*60*24));
-  if(days < -30) return null;
-  if(days < 0) return {text:`已除息 ${ex.div}元（${ex.date}）`, color:'#64748b', icon:'✓'};
-  if(days === 0) return {text:`⚠️ 今日除息 ${ex.div}元`, color:'#ef4444', icon:'🔴'};
-  if(days <= 7) return {text:`⚠️ ${days}天後除息 ${ex.div}元（${ex.date}）`, color:'#ef4444', icon:'🔴'};
-  if(days <= 30) return {text:`📅 ${days}天後除息 ${ex.div}元（${ex.date}）`, color:'#f59e0b', icon:'🟡'};
-  return null;
 }
 
 function scoreStock(id, cData, stockInfo){
@@ -641,6 +643,7 @@ async function runAI(id){
 ═══ 估值面 ═══
 • PE：${vd.pe?vd.pe.toFixed(1):'N/A'}倍（歷史位階：${vd.pe_percentile?vd.pe_percentile.toFixed(0):'N/A'}%）
 • 股息殖利率：${vd.divYield.toFixed(2)}%
+• 估值評分：${sc.vScore}/20
 
 ═══ 基本面 ═══
 • EPS：${f.eps}元  ROE：${f.roe}%  營收年增率：${f.yoy}%  營收動能：${(f.rev_slope||1.0).toFixed(2)}x
