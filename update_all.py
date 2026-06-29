@@ -372,7 +372,7 @@ async def update_cache():
 
     stop_fetching = False
     last_processed_index = start_index
-    batch_size = max(1, int(os.environ.get("CACHE_BATCH_SIZE", "50")))
+    batch_size = max(1, int(os.environ.get("CACHE_BATCH_SIZE", "25")))
     end_index = min(start_index + batch_size, len(STOCK_LIST))
 
     async with httpx.AsyncClient() as client:
