@@ -575,7 +575,8 @@ function showDetail(id){
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <span class="grade-badge g${sc.grade.replace('+','p')}" style="font-size:14px;padding:5px 12px">${sc.grade} 級</span>
-        <button class="btn btn-primary" onclick="runAI('${sc.id}')">🤖 AI 分析</button>
+        <button class="btn btn-primary" onclick="runAI('${sc.id}')">AI 中長期</button>
+        <button class="btn btn-secondary" onclick="runAIShort('${sc.id}')">AI 短線</button>
       </div>
     </div>
     <div class="score-overview">
@@ -1141,6 +1142,118 @@ ${missing.length ? missing.map(x => `- ${x}`).join('\n') : '- 無明顯缺漏'}
   }finally{
     clearTimeout(timer);
   }
+}
+async function askAI(id, mode){
+  const apiKey = getApiKey();
+  if(!apiKey){showToast('請先輸入 NVIDIA API Key');return;}
+  const sc = allScores[id];
+  if(!sc){showToast('找不到這檔股票資料');return;}
+
+  const panel = document.getElementById('aiPanel');
+  const content = document.getElementById('aiContent');
+  const title = panel?.querySelector('.panel-title');
+  if(title) title.textContent = mode === 'short' ? 'AI 短線動能分析' : 'AI 中長期分析';
+  panel.style.display = 'block';
+  content.innerHTML = `<div class="ai-loading"><div class="spinner"></div> AI ${mode === 'short' ? '短線' : '中長期'}分析中，通常需要 10 到 60 秒...</div>`;
+  panel.scrollIntoView({behavior:'smooth',block:'start'});
+
+  const f = sc.f || {};
+  const t = sc.t || {};
+  const v = sc.vDetail || {};
+  const inst = sc.instData;
+  const rank = allStocks.findIndex(x => x.id === id) + 1;
+  const missing = [];
+  if(!f.div) missing.push('現金股利為 0 或缺資料');
+  if(!f.roe) missing.push('ROE 為 0 或缺資料');
+  if(!f.eps) missing.push('EPS 為 0 或缺資料');
+  if(!v.pe) missing.push('PE 無法正常計算');
+  if(!inst) missing.push('法人資料未更新');
+
+  const baseData = `
+股票：${id} ${sc.name}
+產業：${sc.sector || sc.industry || '未知'}
+系統排名：#${rank}
+系統等級：${sc.grade}
+總分：${sc.total}/120，基本面：${sc.fScore}/50，技術面：${sc.tScore}/50，估值面：${sc.vScore}/20
+EPS：${f.eps ?? 'N/A'}，ROE：${f.roe ?? 'N/A'}%，月營收年增率：${f.yoy ?? 'N/A'}%，現金股利：${f.div ?? 0} 元
+股價：${t.price ?? 'N/A'} 元，52週高低：${t.high52 ?? 'N/A'} / ${t.low52 ?? 'N/A'}，52週位置：${t.pos52 ?? 'N/A'}%
+MA20/60/120：${t.ma20 ?? 'N/A'} / ${t.ma60 ?? 'N/A'} / ${t.ma120 ?? 'N/A'}
+RSI14：${t.rsi ?? 'N/A'}，MACD Hist：${t.macdHist ?? 'N/A'}，量比：${t.volRatio ?? 'N/A'}x，6個月漲跌幅：${t.trend6m ?? 'N/A'}%
+PE：${v.pe ?? 'N/A'}x，產業平均PE：${v.industry_pe ?? 'N/A'}x，歷史估值位置：${v.pe_percentile ?? 'N/A'}%，股息殖利率：${v.divYield ?? 'N/A'}%
+法人：${inst ? `外資 ${inst.foreign} 張，投信 ${inst.trust} 張，自營商 ${inst.dealer} 張，合計 ${inst.total} 張，近5日 ${inst.total5d} 張，日期 ${inst.date}` : '缺資料'}
+資料警示：${missing.length ? missing.join('、') : '無明顯缺漏'}
+`;
+
+  const longPrompt = `
+你是台股中長期投資分析助理。請只根據以下資料分析，不要編造新聞，不要保證獲利。
+${baseData}
+請用繁體中文，分成 5 段：
+1. 中長期結論：適合長線、只適合觀察、或不適合。
+2. 基本面優點與弱點。
+3. 估值是否合理，是否有追高風險。
+4. 買進前要等待的條件。
+5. 最後用一句保守結論收尾。
+`;
+
+  const shortPrompt = `
+你是台股短線動能分析助理。請只根據以下資料分析，不要編造新聞，不要保證獲利。短線分析只看 1 到 20 個交易日，不要把長線好公司直接當成短線買點。
+${baseData}
+請用繁體中文，分成 6 段：
+1. 短線結論：可短打、觀察等回檔、或不適合追。
+2. 動能判斷：用 RSI、MACD Hist、量比、均線排列說明。
+3. 位置判斷：用 52週位置、6個月漲幅，判斷是突破、盤整、還是過熱。
+4. 進場條件：明確說需要站上哪條均線、量能條件、或回測不破什麼位置。
+5. 停損/失效條件：如果跌破哪種條件，短線想法失效。
+6. 一句話提醒：如果已經漲太多，請直接說不要追高。
+`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 115000);
+
+  try{
+    const r = await fetch(NVIDIA_API,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      signal:controller.signal,
+      body:JSON.stringify({
+        api_key:apiKey,
+        body:{
+          model:MODEL,
+          messages:[{role:'user',content:mode === 'short' ? shortPrompt : longPrompt}],
+          temperature:0.25,
+          max_tokens:1200
+        }
+      })
+    });
+
+    let d;
+    try{ d = await r.json(); }
+    catch(_){ d = {error:{message:await r.text()}}; }
+    if(!r.ok){
+      const msg = d?.detail || d?.error?.message || `AI API 回傳 ${r.status}`;
+      throw new Error(msg);
+    }
+
+    const answer = d?.choices?.[0]?.message?.content;
+    if(!answer) throw new Error(d?.error?.message || 'AI 沒有回傳分析內容');
+    content.textContent = answer;
+    showToast(`AI ${mode === 'short' ? '短線' : '中長期'}分析完成`);
+  }catch(e){
+    let msg = e.message || 'AI 分析失敗';
+    if(e.name === 'AbortError') msg = 'AI 回應逾時，請稍後再按一次。';
+    if(msg.includes('Failed to fetch')) msg = 'AI 連線失敗。可能是 Render 服務冷啟動、正在部署，或 NVIDIA API 暫時無回應，請等 1 分鐘再試。';
+    content.innerHTML = `<span style="color:var(--red)">錯誤：${msg}</span>`;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+async function runAI(id){
+  return askAI(id, 'long');
+}
+
+async function runAIShort(id){
+  return askAI(id, 'short');
 }
 </script>
 </body>
