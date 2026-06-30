@@ -854,6 +854,92 @@ function findTop5Buys() {
       </table>
     </div>`;
 }
+function findTop5Buys(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  let candidates = Object.values(allScores).map(sc => {
+    const f = sc.f || {};
+    const t = sc.t || {};
+    const v = sc.vDetail || {};
+    const pe = v.pe ?? null;
+    const pePct = v.pe_percentile ?? null;
+    const divYield = v.divYield ?? 0;
+    const pos52 = t.pos52 ?? 50;
+    const rsi = t.rsi ?? 50;
+    const trend6m = t.trend6m ?? 0;
+    const revSlope = f.rev_slope ?? 1;
+    const roe = f.roe ?? 0;
+    const yoy = f.yoy ?? 0;
+    const maBull = t.ma5 > t.ma20 && t.ma20 > t.ma60;
+    const hasGrowthSupport = roe >= 10 || yoy >= 10 || revSlope >= 1.02;
+    const fairPeLimit = v.is_moat ? 35 : 25;
+    const rejects = [];
+
+    if(sc.total < 65) rejects.push('總分不足65');
+    if(sc.fScore < 30) rejects.push('基本面不足30');
+    if(sc.vScore < 10) rejects.push('估值分不足10');
+    if(!hasGrowthSupport) rejects.push('成長支撐不足');
+    if(pe !== null && pe > fairPeLimit) rejects.push(`PE高於${fairPeLimit}`);
+    if(pePct !== null && pePct > 75 && divYield < 4) rejects.push('估值位階偏高');
+    if(rsi < 42 || rsi > 68) rejects.push('RSI不在買點區');
+    if(trend6m > 35) rejects.push('半年漲幅過大');
+    if(pos52 > 88) rejects.push('太接近52週高點');
+    if(sc.isCyclical && pe !== null && pe < 8) rejects.push('循環股低PE陷阱');
+    if(rejects.length) return null;
+
+    let buyScore = sc.total;
+    let reasons = [];
+    if(v.is_moat) { buyScore += 8; reasons.push('護城河'); }
+    if(rsi >= 45 && rsi <= 60) { buyScore += 8; reasons.push('買點區'); }
+    if(maBull) { buyScore += 5; reasons.push('均線多頭'); }
+    if(pos52 >= 45 && pos52 <= 78) { buyScore += 5; reasons.push('位置合理'); }
+    if(pePct !== null && pePct <= 55) { buyScore += 5; reasons.push('估值不貴'); }
+    if(divYield >= 3.5) { buyScore += 4; reasons.push('股息支撐'); }
+    if(trend6m >= -10 && trend6m <= 25) { buyScore += 4; reasons.push('未過熱'); }
+    return { ...sc, buyScore, reasons };
+  }).filter(Boolean);
+
+  candidates.sort((a,b) => b.buyScore - a.buyScore);
+  const top5 = candidates.slice(0, 5);
+  if(!top5.length){
+    container.innerHTML='<div style="padding:20px;color:var(--muted)">目前沒有通過嚴格買點條件的股票，寧可空手觀察。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--warn);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="panel-title" style="margin:0;color:var(--warn)">嚴格買點 Top 5</div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        先過體質、估值、買點三層門檻：基本面>=30、估值>=10、RSI 42~68、半年漲幅<=35%、不追52週高位。<br>
+        排名加分看護城河、買點區、估值不貴、股息支撐與未過熱；這份清單偏保守，適合作為候選觀察，不代表直接下單。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>總分</th><th>買點分</th><th>RSI14</th><th>PE</th><th>52W位置</th><th>入選理由</th></tr></thead>
+        <tbody>${top5.map((sc,index)=>{
+          const rsi=sc.t.rsi;
+          const rsiColor=rsi>=65?'#f97316':rsi>=50?'var(--green)':'var(--accent)';
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const reasonTags=sc.reasons.map(r=>`<span style="font-size:9px;background:rgba(245,158,11,0.15);color:var(--warn);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span>${index===0?'<span style="font-size:10px;margin-left:5px">TOP</span>':''}</td>
+            <td class="td-mono" style="color:${gc[sc.grade]||'var(--text)'}">${sc.total}</td>
+            <td class="td-mono" style="color:var(--warn);font-weight:700">${sc.buyScore.toFixed(1)}</td>
+            <td class="td-mono"><span style="color:${rsiColor};font-weight:700">${rsi.toFixed(1)}</span></td>
+            <td class="td-mono">${sc.vDetail.pe?sc.vDetail.pe.toFixed(1)+'x':'-'}</td>
+            <td class="td-mono">${sc.t.pos52!=null?sc.t.pos52.toFixed(0)+'%':'-'}</td>
+            <td>${reasonTags}</td>
+          </tr>`;}).join('')}</tbody>
+      </table>
+    </div>`;
+}
 </script>
 </body>
 </html>
