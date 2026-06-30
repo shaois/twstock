@@ -1661,6 +1661,146 @@ showDetail = function(id){
   actionBox.appendChild(longBtn);
   actionBox.appendChild(shortBtn);
 };
+
+function getDayTradeStatus(sc){
+  return { label:'待確認', note:'短線或當天買賣前，請先用券商確認是否可現股當沖。' };
+}
+
+function addDayTradeNotice(id){
+  const detail = document.getElementById('stockDetail');
+  if(!detail) return;
+  detail.querySelectorAll('.daytrade-notice').forEach(el => el.remove());
+  const sc = allScores[id];
+  if(!sc) return;
+  const status = getDayTradeStatus(sc);
+  const scoreBox = detail.querySelector('.score-overview');
+  if(!scoreBox) return;
+  const notice = document.createElement('div');
+  notice.className = 'daytrade-notice';
+  notice.style.cssText = 'margin:-8px 0 14px;padding:10px 14px;background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.35);border-radius:8px;font-size:12px;color:var(--text);display:flex;gap:10px;align-items:center';
+  notice.innerHTML = `<b style="color:var(--accent2)">現股當沖：${status.label}</b><span style="color:var(--muted)">${status.note}</span>`;
+  scoreBox.insertAdjacentElement('afterend', notice);
+}
+
+const _showDetailDayTradeFinal = showDetail;
+showDetail = function(id){
+  _showDetailDayTradeFinal(id);
+  const actionBox = document.getElementById('stockDetail')?.querySelector('.stock-header > div:last-child');
+  if(actionBox){
+    actionBox.querySelectorAll('button').forEach(btn => btn.remove());
+    const longBtn = document.createElement('button');
+    longBtn.className = 'btn btn-primary';
+    longBtn.textContent = 'AI 中長期';
+    longBtn.onclick = () => runAI(id);
+    const shortBtn = document.createElement('button');
+    shortBtn.className = 'btn btn-secondary';
+    shortBtn.textContent = 'AI 短線';
+    shortBtn.onclick = () => runAIShort(id);
+    actionBox.appendChild(longBtn);
+    actionBox.appendChild(shortBtn);
+  }
+  addDayTradeNotice(id);
+};
+
+function findMomentumTop5(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  let candidates = Object.values(allScores).map(sc => {
+    const t = sc.t || {};
+    const f = sc.f || {};
+    const v = sc.vDetail || {};
+    const rsi = t.rsi ?? 50;
+    const macdHist = t.macdHist ?? 0;
+    const volRatio = t.volRatio ?? 1;
+    const trend6m = t.trend6m ?? 0;
+    const pos52 = t.pos52 ?? 50;
+    const ma20 = t.ma20 ?? 0;
+    const ma60 = t.ma60 ?? 0;
+    const ma120 = t.ma120 ?? 0;
+    const price = t.price ?? 0;
+    const aboveMa20 = price > ma20;
+    const maSupport = ma20 >= ma60 && ma60 >= ma120;
+    const nearMa20 = ma20 > 0 ? Math.abs(price - ma20) / ma20 * 100 <= 8 : false;
+    const rejects = [];
+
+    if(sc.tScore < 38) rejects.push('技術分不足');
+    if(rsi < 50 || rsi > 68) rejects.push('RSI不在進場區');
+    if(macdHist <= 0) rejects.push('MACD未轉強');
+    if(volRatio < 1.05 || volRatio > 2.4) rejects.push('量能不理想');
+    if(trend6m < -5 || trend6m > 28) rejects.push('半年漲幅不適合');
+    if(pos52 < 45 || pos52 > 78) rejects.push('位置不適合追');
+    if(!aboveMa20 || !nearMa20) rejects.push('離MA20太遠或未站上');
+    if(!maSupport) rejects.push('均線支撐不足');
+    if(v.pe !== null && v.pe > 70 && sc.fScore < 30) rejects.push('估值過高');
+    if(rejects.length) return null;
+
+    let entryScore = 0;
+    let reasons = [];
+    if(rsi >= 54 && rsi <= 63) { entryScore += 25; reasons.push('RSI進場區'); }
+    else { entryScore += 15; reasons.push('RSI偏強'); }
+    if(macdHist > 0) { entryScore += 18; reasons.push('MACD轉強'); }
+    if(volRatio >= 1.15 && volRatio <= 1.9) { entryScore += 18; reasons.push('量能溫和放大'); }
+    else { entryScore += 10; reasons.push('量能可接受'); }
+    if(pos52 >= 52 && pos52 <= 72) { entryScore += 16; reasons.push('位置未過熱'); }
+    else { entryScore += 8; reasons.push('位置可觀察'); }
+    if(trend6m >= 0 && trend6m <= 22) { entryScore += 13; reasons.push('漲幅可控'); }
+    if(nearMa20 && aboveMa20) { entryScore += 10; reasons.push('貼近MA20支撐'); }
+    if(sc.fScore >= 30) reasons.push('基本面不弱');
+    if((f.yoy ?? 0) > 0) reasons.push('營收正成長');
+    return { ...sc, entryScore, reasons, dayTradeStatus:getDayTradeStatus(sc) };
+  }).filter(Boolean);
+
+  candidates.sort((a,b) => b.entryScore - a.entryScore);
+  const top5 = candidates.slice(0, 5);
+  if(!top5.length){
+    container.innerHTML='<div style="padding:20px;color:var(--muted)">目前沒有符合「短線可進場」條件的股票。若要當天買賣，也請先確認該股是否可現股當沖。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent2);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="panel-title" style="margin:0;color:var(--accent2)">短線可進場 Top 5</div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        這份清單找「動能轉強、位置未過熱、靠近MA20、有短線進場條件」的候選股。若要當天買賣，仍需先用券商確認是否可現股當沖。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>長線等級</th><th>進場分</th><th>RSI14</th><th>量比</th><th>52W位置</th><th>6M漲跌</th><th>現股當沖</th><th>理由</th></tr></thead>
+        <tbody>${top5.map(sc=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const reasonTags=sc.reasons.map(r=>`<span style="font-size:9px;background:rgba(59,130,246,0.15);color:var(--accent2);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${sc.grade.replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent2);font-weight:700">${sc.entryScore.toFixed(1)}</td>
+            <td class="td-mono">${sc.t.rsi.toFixed(1)}</td>
+            <td class="td-mono">${sc.t.volRatio.toFixed(2)}x</td>
+            <td class="td-mono">${sc.t.pos52.toFixed(0)}%</td>
+            <td class="td-mono">${sc.t.trend6m.toFixed(1)}%</td>
+            <td><span style="font-size:10px;background:rgba(245,158,11,0.15);color:var(--warn);padding:2px 6px;border-radius:3px">${sc.dayTradeStatus.label}</span></td>
+            <td>${reasonTags}</td>
+          </tr>`;}).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+const _askAIWithDayTrade = askAI;
+askAI = async function(id, mode){
+  const sc = allScores[id];
+  if(sc){
+    const status = getDayTradeStatus(sc);
+    sc.dayTradeStatus = status.label;
+    sc.dayTradeNote = status.note;
+  }
+  return _askAIWithDayTrade(id, mode);
+};
 </script>
 </body>
 </html>
