@@ -1281,6 +1281,366 @@ showDetail = function(id){
   actionBox.appendChild(longBtn);
   actionBox.appendChild(shortBtn);
 };
+
+function findMomentumTop5(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  let candidates = Object.values(allScores).map(sc => {
+    const t = sc.t || {};
+    const f = sc.f || {};
+    const v = sc.vDetail || {};
+    const rsi = t.rsi ?? 50;
+    const macdHist = t.macdHist ?? 0;
+    const volRatio = t.volRatio ?? 1;
+    const trend6m = t.trend6m ?? 0;
+    const pos52 = t.pos52 ?? 50;
+    const ma20 = t.ma20 ?? 0;
+    const ma60 = t.ma60 ?? 0;
+    const ma120 = t.ma120 ?? 0;
+    const price = t.price ?? 0;
+    const aboveMa20 = price > ma20;
+    const maSupport = ma20 >= ma60 && ma60 >= ma120;
+    const nearMa20 = ma20 > 0 ? Math.abs(price - ma20) / ma20 * 100 <= 8 : false;
+    const rejects = [];
+
+    if(sc.tScore < 38) rejects.push('技術分不足');
+    if(rsi < 50 || rsi > 68) rejects.push('RSI不在進場區');
+    if(macdHist <= 0) rejects.push('MACD未轉強');
+    if(volRatio < 1.05 || volRatio > 2.4) rejects.push('量能不理想');
+    if(trend6m < -5 || trend6m > 28) rejects.push('半年漲幅不適合');
+    if(pos52 < 45 || pos52 > 78) rejects.push('位置不適合追');
+    if(!aboveMa20 || !nearMa20) rejects.push('離MA20太遠或未站上');
+    if(!maSupport) rejects.push('均線支撐不足');
+    if(v.pe !== null && v.pe > 70 && sc.fScore < 30) rejects.push('估值過高');
+    if(rejects.length) return null;
+
+    let entryScore = 0;
+    let reasons = [];
+    if(rsi >= 54 && rsi <= 63) { entryScore += 25; reasons.push('RSI進場區'); }
+    else { entryScore += 15; reasons.push('RSI偏強'); }
+    if(macdHist > 0) { entryScore += 18; reasons.push('MACD轉強'); }
+    if(volRatio >= 1.15 && volRatio <= 1.9) { entryScore += 18; reasons.push('量能溫和放大'); }
+    else { entryScore += 10; reasons.push('量能可接受'); }
+    if(pos52 >= 52 && pos52 <= 72) { entryScore += 16; reasons.push('位置未過熱'); }
+    else { entryScore += 8; reasons.push('位置可觀察'); }
+    if(trend6m >= 0 && trend6m <= 22) { entryScore += 13; reasons.push('漲幅可控'); }
+    if(nearMa20 && aboveMa20) { entryScore += 10; reasons.push('貼近MA20支撐'); }
+    if(sc.fScore >= 30) reasons.push('基本面不弱');
+    if((f.yoy ?? 0) > 0) reasons.push('營收正成長');
+
+    return { ...sc, entryScore, reasons };
+  }).filter(Boolean);
+
+  candidates.sort((a,b) => b.entryScore - a.entryScore);
+  const top5 = candidates.slice(0, 5);
+  if(!top5.length){
+    container.innerHTML='<div style="padding:20px;color:var(--muted)">目前沒有符合「短線可進場」條件的股票。這代表多數強勢股已偏高，先觀察比硬追更合理。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent2);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="panel-title" style="margin:0;color:var(--accent2)">短線可進場 Top 5</div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        這份清單不是找最會漲的股票，而是找「動能轉強、位置未過熱、靠近MA20、有短線進場條件」的候選股。已經離均線太遠、半年漲太多、RSI過熱的股票會被排除。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>長線等級</th><th>進場分</th><th>RSI14</th><th>量比</th><th>52W位置</th><th>6M漲跌</th><th>理由</th></tr></thead>
+        <tbody>${top5.map(sc=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const reasonTags=sc.reasons.map(r=>`<span style="font-size:9px;background:rgba(59,130,246,0.15);color:var(--accent2);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${sc.grade.replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent2);font-weight:700">${sc.entryScore.toFixed(1)}</td>
+            <td class="td-mono">${sc.t.rsi.toFixed(1)}</td>
+            <td class="td-mono">${sc.t.volRatio.toFixed(2)}x</td>
+            <td class="td-mono">${sc.t.pos52.toFixed(0)}%</td>
+            <td class="td-mono">${sc.t.trend6m.toFixed(1)}%</td>
+            <td>${reasonTags}</td>
+          </tr>`;}).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+async function askAI(id, mode){
+  const apiKey = getApiKey();
+  if(!apiKey){showToast('請先輸入 NVIDIA API Key');return;}
+  const sc = allScores[id];
+  if(!sc){showToast('找不到這檔股票資料');return;}
+
+  const panel = document.getElementById('aiPanel');
+  const content = document.getElementById('aiContent');
+  const title = panel?.querySelector('.panel-title');
+  if(title) title.textContent = mode === 'short' ? 'AI 短線進場分析' : 'AI 中長期分析';
+  panel.style.display = 'block';
+  content.innerHTML = `<div class="ai-loading"><div class="spinner"></div> AI ${mode === 'short' ? '短線' : '中長期'}分析中，通常需要 10 到 60 秒...</div>`;
+  panel.scrollIntoView({behavior:'smooth',block:'start'});
+
+  const f = sc.f || {};
+  const t = sc.t || {};
+  const v = sc.vDetail || {};
+  const inst = sc.instData;
+  const rank = allStocks.findIndex(x => x.id === id) + 1;
+  const ma20Gap = t.ma20 ? ((t.price - t.ma20) / t.ma20 * 100).toFixed(1) : 'N/A';
+  const missing = [];
+  if(!f.div) missing.push('現金股利為0或缺資料');
+  if(!f.roe) missing.push('ROE為0或缺資料');
+  if(!f.eps) missing.push('EPS為0或缺資料');
+  if(!inst) missing.push('法人資料未更新');
+
+  const baseData = `
+股票：${id} ${sc.name}
+產業：${sc.sector || sc.industry || '未知'}
+系統排名：#${rank}
+等級：${sc.grade}
+總分：${sc.total}/120，基本面：${sc.fScore}/50，技術面：${sc.tScore}/50，估值面：${sc.vScore}/20
+EPS：${f.eps ?? 'N/A'}，ROE：${f.roe ?? 'N/A'}%，月營收年增率：${f.yoy ?? 'N/A'}%，現金股利：${f.div ?? 0}元
+股價：${t.price ?? 'N/A'}元，MA20/60/120：${t.ma20 ?? 'N/A'} / ${t.ma60 ?? 'N/A'} / ${t.ma120 ?? 'N/A'}，距MA20：${ma20Gap}%
+52週高低：${t.high52 ?? 'N/A'} / ${t.low52 ?? 'N/A'}，52週位置：${t.pos52 ?? 'N/A'}%
+RSI14：${t.rsi ?? 'N/A'}，MACD Hist：${t.macdHist ?? 'N/A'}，量比：${t.volRatio ?? 'N/A'}x，6個月漲跌幅：${t.trend6m ?? 'N/A'}%
+PE：${v.pe ?? 'N/A'}x，產業平均PE：${v.industry_pe ?? 'N/A'}x，股息殖利率：${v.divYield ?? 'N/A'}%
+法人：${inst ? `外資${inst.foreign}張，投信${inst.trust}張，自營商${inst.dealer}張，合計${inst.total}張，近5日${inst.total5d}張，日期${inst.date}` : '缺資料'}
+資料警示：${missing.length ? missing.join('、') : '無明顯缺漏'}
+`;
+
+  const longPrompt = `
+你是台股中長期投資分析助理。請只根據以下資料分析，不要編造新聞，不要保證獲利。
+${baseData}
+請用繁體中文，分成 5 段：
+1. 中長期結論：適合長線、只適合觀察、或不適合。
+2. 基本面優點與弱點。
+3. 估值是否合理，是否有追高風險。
+4. 買進前要等待的條件。
+5. 最後用一句保守結論收尾。
+`;
+
+  const shortPrompt = `
+你是台股短線進場分析助理。短線只看1到20個交易日。請不要一律保守，也不要一律叫人追高；要根據資料判斷「現在可小量試單」、「等回測」、「不適合」。
+${baseData}
+判斷規則：
+- RSI 50到68、MACD Hist大於0、量比1.05到2.4、股價站上且距MA20不遠，屬於可評估短線進場。
+- 52週位置高於78%、半年漲幅高於28%、RSI高於70，偏向不追高。
+- 如果可進場，也要說明只適合分批小量，並列出停損條件。
+
+請用繁體中文，分成 6 段：
+1. 短線結論：明確寫「可小量試單」、「等回測」、「不適合追高」其中一種。
+2. 進場理由：只講支持進場或等待的技術條件。
+3. 風險：講過熱、離均線太遠、法人反向、資料缺漏。
+4. 進場條件：寫清楚站上/回測哪條均線、量能需要如何。
+5. 停損/失效條件：跌破什麼條件就放棄。
+6. 一句話提醒。
+`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 115000);
+  try{
+    const r = await fetch(NVIDIA_API,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      signal:controller.signal,
+      body:JSON.stringify({
+        api_key:apiKey,
+        body:{model:MODEL,messages:[{role:'user',content:mode === 'short' ? shortPrompt : longPrompt}],temperature:0.25,max_tokens:1200}
+      })
+    });
+    let d;
+    try{ d = await r.json(); }
+    catch(_){ d = {error:{message:await r.text()}}; }
+    if(!r.ok) throw new Error(d?.detail || d?.error?.message || `AI API 回傳 ${r.status}`);
+    const answer = d?.choices?.[0]?.message?.content;
+    if(!answer) throw new Error(d?.error?.message || 'AI 沒有回傳分析內容');
+    content.textContent = answer;
+    showToast(`AI ${mode === 'short' ? '短線' : '中長期'}分析完成`);
+  }catch(e){
+    let msg = e.message || 'AI 分析失敗';
+    if(e.name === 'AbortError') msg = 'AI 回應逾時，請稍後再按一次。';
+    if(msg.includes('Failed to fetch')) msg = 'AI 連線失敗。可能是 Render 服務冷啟動、正在部署，或 NVIDIA API 暫時無回應，請等1分鐘再試。';
+    content.innerHTML = `<span style="color:var(--red)">錯誤：${msg}</span>`;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+runAI = async function(id){ return askAI(id, 'long'); };
+runAIShort = async function(id){ return askAI(id, 'short'); };
+
+const _showDetailCleanAiButtons = showDetail;
+showDetail = function(id){
+  _showDetailCleanAiButtons(id);
+  const detail = document.getElementById('stockDetail');
+  const actionBox = detail?.querySelector('.stock-header > div:last-child');
+  if(!actionBox) return;
+  actionBox.querySelectorAll('button').forEach(btn => {
+    const action = btn.getAttribute('onclick') || '';
+    if(action.includes('runAI')) btn.remove();
+  });
+  const longBtn = document.createElement('button');
+  longBtn.className = 'btn btn-primary';
+  longBtn.textContent = 'AI 中長期';
+  longBtn.onclick = () => runAI(id);
+  const shortBtn = document.createElement('button');
+  shortBtn.className = 'btn btn-secondary';
+  shortBtn.textContent = 'AI 短線';
+  shortBtn.onclick = () => runAIShort(id);
+  actionBox.appendChild(longBtn);
+  actionBox.appendChild(shortBtn);
+};
+
+function _fmtPrice(v){
+  if(!Number.isFinite(v) || v <= 0) return 'N/A';
+  return v >= 100 ? v.toFixed(0) : v.toFixed(1);
+}
+
+function _targetZones(sc){
+  const t = sc.t || {};
+  const f = sc.f || {};
+  const v = sc.vDetail || {};
+  const price = Number(t.price || 0);
+  const eps = Number(f.eps || 0);
+  const industryPe = Number(v.industry_pe || 0);
+  const ma20 = Number(t.ma20 || 0);
+  const ma60 = Number(t.ma60 || 0);
+  const ma120 = Number(t.ma120 || 0);
+  const rsi = Number(t.rsi || 50);
+  const shortUp = rsi >= 65 ? [1.03, 1.06] : [1.04, 1.09];
+  let longLow = price * 1.12;
+  let longHigh = price * 1.25;
+  if(eps > 0 && industryPe > 0){
+    longLow = eps * industryPe * 0.9;
+    longHigh = eps * industryPe * 1.1;
+    if(longHigh < price * 1.08){
+      longLow = price * 1.08;
+      longHigh = price * 1.18;
+    }
+  }
+  const shortStopBase = ma20 > 0 ? Math.min(ma20 * 0.98, price * 0.94) : price * 0.94;
+  const longStopBase = ma120 > 0 ? Math.min(ma120 * 0.97, price * 0.88) : price * 0.88;
+  return {
+    shortTarget: `${_fmtPrice(price * shortUp[0])} ~ ${_fmtPrice(price * shortUp[1])}`,
+    shortStop: _fmtPrice(shortStopBase),
+    longTarget: `${_fmtPrice(longLow)} ~ ${_fmtPrice(longHigh)}`,
+    longStop: _fmtPrice(longStopBase),
+    ma20: _fmtPrice(ma20),
+    ma60: _fmtPrice(ma60),
+    ma120: _fmtPrice(ma120)
+  };
+}
+
+async function askAI(id, mode){
+  const apiKey = getApiKey();
+  if(!apiKey){showToast('請先輸入 NVIDIA API Key');return;}
+  const sc = allScores[id];
+  if(!sc){showToast('找不到這檔股票資料');return;}
+
+  const panel = document.getElementById('aiPanel');
+  const content = document.getElementById('aiContent');
+  const title = panel?.querySelector('.panel-title');
+  if(title) title.textContent = mode === 'short' ? 'AI 短線結論' : 'AI 中長期結論';
+  panel.style.display = 'block';
+  content.innerHTML = `<div class="ai-loading"><div class="spinner"></div> AI ${mode === 'short' ? '短線' : '中長期'}結論產生中...</div>`;
+  panel.scrollIntoView({behavior:'smooth',block:'start'});
+
+  const f = sc.f || {};
+  const t = sc.t || {};
+  const v = sc.vDetail || {};
+  const inst = sc.instData;
+  const zone = _targetZones(sc);
+  const ma20Gap = t.ma20 ? ((t.price - t.ma20) / t.ma20 * 100).toFixed(1) : 'N/A';
+  const data = `
+股票：${id} ${sc.name}
+目前股價：${t.price ?? 'N/A'} 元
+評級：${sc.grade}，總分：${sc.total}/120，基本面：${sc.fScore}/50，技術面：${sc.tScore}/50，估值面：${sc.vScore}/20
+EPS：${f.eps ?? 'N/A'}，ROE：${f.roe ?? 'N/A'}%，月營收年增率：${f.yoy ?? 'N/A'}%，現金股利：${f.div ?? 0} 元
+PE：${v.pe ?? 'N/A'}x，產業平均PE：${v.industry_pe ?? 'N/A'}x，股息殖利率：${v.divYield ?? 'N/A'}%
+RSI14：${t.rsi ?? 'N/A'}，MACD Hist：${t.macdHist ?? 'N/A'}，量比：${t.volRatio ?? 'N/A'}x，6個月漲跌幅：${t.trend6m ?? 'N/A'}%
+52週位置：${t.pos52 ?? 'N/A'}%，MA20/60/120：${t.ma20 ?? 'N/A'} / ${t.ma60 ?? 'N/A'} / ${t.ma120 ?? 'N/A'}，距MA20：${ma20Gap}%
+法人：${inst ? `三大法人今日合計 ${inst.total} 張，近5日 ${inst.total5d} 張` : '缺資料'}
+系統估算中長期目標賣出區：${zone.longTarget} 元，中長期停損參考：${zone.longStop} 元
+系統估算短線目標賣出區：${zone.shortTarget} 元，短線停損參考：${zone.shortStop} 元
+`;
+
+  const prompt = mode === 'short' ? `
+你是台股短線交易助理。請根據資料給非常簡潔的短線結論，不要長篇分析，不要保證獲利。
+${data}
+請固定用下面格式回答，每行都要有：
+結論：只能填「買進」「觀望」「不買」「賣出」
+目標賣出區：填價格區間，優先使用系統估算短線目標賣出區，可微調
+停損價：填價格，優先使用系統短線停損參考，可微調
+理由：最多3點，每點不超過18字
+提醒：一句話，若偏高請直接說不要追高
+` : `
+你是台股中長期投資助理。請根據資料給非常簡潔的中長期結論，不要長篇分析，不要保證獲利。
+${data}
+請固定用下面格式回答，每行都要有：
+結論：只能填「買進」「觀望」「不買」「賣出」
+目標賣出區：填價格區間，優先使用系統估算中長期目標賣出區，可微調
+停損價：填價格，優先使用系統中長期停損參考，可微調
+理由：最多3點，每點不超過18字
+提醒：一句話，若估值偏高請直接說分批或等待
+`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 115000);
+  try{
+    const r = await fetch(NVIDIA_API,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      signal:controller.signal,
+      body:JSON.stringify({
+        api_key:apiKey,
+        body:{model:MODEL,messages:[{role:'user',content:prompt}],temperature:0.15,max_tokens:500}
+      })
+    });
+    let d;
+    try{ d = await r.json(); }
+    catch(_){ d = {error:{message:await r.text()}}; }
+    if(!r.ok) throw new Error(d?.detail || d?.error?.message || `AI API 回傳 ${r.status}`);
+    const answer = d?.choices?.[0]?.message?.content;
+    if(!answer) throw new Error(d?.error?.message || 'AI 沒有回傳分析內容');
+    content.textContent = answer;
+    showToast(`AI ${mode === 'short' ? '短線' : '中長期'}結論完成`);
+  }catch(e){
+    let msg = e.message || 'AI 分析失敗';
+    if(e.name === 'AbortError') msg = 'AI 回應逾時，請稍後再按一次。';
+    if(msg.includes('Failed to fetch')) msg = 'AI 連線失敗。可能是 Render 服務冷啟動或 NVIDIA API 暫時無回應，請等1分鐘再試。';
+    content.innerHTML = `<span style="color:var(--red)">錯誤：${msg}</span>`;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+runAI = async function(id){ return askAI(id, 'long'); };
+runAIShort = async function(id){ return askAI(id, 'short'); };
+
+const _showDetailFinalAiButtons = showDetail;
+showDetail = function(id){
+  _showDetailFinalAiButtons(id);
+  const actionBox = document.getElementById('stockDetail')?.querySelector('.stock-header > div:last-child');
+  if(!actionBox) return;
+  actionBox.querySelectorAll('button').forEach(btn => {
+    const action = btn.getAttribute('onclick') || '';
+    if(action.includes('runAI')) btn.remove();
+  });
+  const longBtn = document.createElement('button');
+  longBtn.className = 'btn btn-primary';
+  longBtn.textContent = 'AI 中長期';
+  longBtn.onclick = () => runAI(id);
+  const shortBtn = document.createElement('button');
+  shortBtn.className = 'btn btn-secondary';
+  shortBtn.textContent = 'AI 短線';
+  shortBtn.onclick = () => runAIShort(id);
+  actionBox.appendChild(longBtn);
+  actionBox.appendChild(shortBtn);
+};
 </script>
 </body>
 </html>
