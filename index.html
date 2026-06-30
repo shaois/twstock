@@ -1641,6 +1641,26 @@ showDetail = function(id){
   actionBox.appendChild(longBtn);
   actionBox.appendChild(shortBtn);
 };
+const _showDetailOnlyOneAiPair = showDetail;
+showDetail = function(id){
+  _showDetailOnlyOneAiPair(id);
+  const actionBox = document.getElementById('stockDetail')?.querySelector('.stock-header > div:last-child');
+  if(!actionBox) return;
+  actionBox.querySelectorAll('button').forEach(btn => btn.remove());
+
+  const longBtn = document.createElement('button');
+  longBtn.className = 'btn btn-primary';
+  longBtn.textContent = 'AI 中長期';
+  longBtn.onclick = () => runAI(id);
+
+  const shortBtn = document.createElement('button');
+  shortBtn.className = 'btn btn-secondary';
+  shortBtn.textContent = 'AI 短線';
+  shortBtn.onclick = () => runAIShort(id);
+
+  actionBox.appendChild(longBtn);
+  actionBox.appendChild(shortBtn);
+};
 </script>
 </body>
 </html>
