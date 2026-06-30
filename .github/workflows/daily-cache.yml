@@ -1,14 +1,13 @@
 name: Daily FinMind Cache Refresh
 
-# 這裡只能有一個 on，且 workflow_dispatch 要跟 schedule 對齊
 on:
   schedule:
-    # 第一批: 台灣時間凌晨 1 點 (UTC 17:00)
+    # Taiwan time 01:00-05:00. 5 batches x 40 stocks = 200 stocks per day.
     - cron: '0 17 * * *'
-    # 第二批: 台灣時間凌晨 2 點 (UTC 18:00)
     - cron: '0 18 * * *'
-    # 第三批: 台灣時間凌晨 3 點 (UTC 19:00)
     - cron: '0 19 * * *'
+    - cron: '0 20 * * *'
+    - cron: '0 21 * * *'
   workflow_dispatch:
 
 permissions:
@@ -26,13 +25,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      # 新增：安裝 Python 抓資料必備的套件
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install httpx
 
-      # 修正：執行我們上一篇寫好的防爆程式 update_all.py
       - name: Fetch FinMind data
         env:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
