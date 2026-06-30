@@ -96,6 +96,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
     <button class="btn btn-primary" onclick="loadStocks()">載入當前資料庫</button>
     <button class="btn btn-secondary" onclick="runScreener()">篩選優質股</button>
     <button class="btn btn-gold" onclick="findTop5Buys()">🏆 嚴選 Top 5</button>
+    <button class="btn btn-secondary" onclick="findMomentumTop5()">短線動能 Top 5</button>
   </div>
 </header>
 
@@ -936,6 +937,85 @@ function findTop5Buys(){
             <td class="td-mono"><span style="color:${rsiColor};font-weight:700">${rsi.toFixed(1)}</span></td>
             <td class="td-mono">${sc.vDetail.pe?sc.vDetail.pe.toFixed(1)+'x':'-'}</td>
             <td class="td-mono">${sc.t.pos52!=null?sc.t.pos52.toFixed(0)+'%':'-'}</td>
+            <td>${reasonTags}</td>
+          </tr>`;}).join('')}</tbody>
+      </table>
+    </div>`;
+}
+function findMomentumTop5(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  let candidates = Object.values(allScores).map(sc => {
+    const t = sc.t || {};
+    const v = sc.vDetail || {};
+    const rsi = t.rsi ?? 50;
+    const macdHist = t.macdHist ?? 0;
+    const volRatio = t.volRatio ?? 1;
+    const trend6m = t.trend6m ?? 0;
+    const pos52 = t.pos52 ?? 50;
+    const maBull = t.ma5 > t.ma20 && t.ma20 > t.ma60;
+    const nearBreakout = pos52 >= 65 && pos52 <= 92;
+    const notTooHot = rsi <= 82 && trend6m <= 80;
+    const hasMomentum = rsi >= 50 && macdHist > -0.5 && volRatio >= 1.0;
+    const rejects = [];
+
+    if(!hasMomentum) rejects.push('動能不足');
+    if(!notTooHot) rejects.push('過熱');
+    if(pos52 < 45) rejects.push('位置太弱');
+    if(v.pe !== null && v.pe > 80 && sc.fScore < 25) rejects.push('估值過高且基本面弱');
+    if(rejects.length) return null;
+
+    let momentumScore = 0;
+    let reasons = [];
+    if(rsi >= 55 && rsi <= 75) { momentumScore += 25; reasons.push('RSI強勢'); }
+    else if(rsi > 75) { momentumScore += 15; reasons.push('RSI偏熱'); }
+    else { momentumScore += 10; reasons.push('RSI回升'); }
+    if(macdHist > 0) { momentumScore += 20; reasons.push('MACD轉強'); }
+    else if(macdHist > -0.5) { momentumScore += 8; reasons.push('MACD止跌'); }
+    if(volRatio >= 1.5 && volRatio <= 3.5) { momentumScore += 20; reasons.push('量能放大'); }
+    else if(volRatio >= 1.0) { momentumScore += 10; reasons.push('量能溫和'); }
+    if(maBull) { momentumScore += 15; reasons.push('均線多頭'); }
+    if(nearBreakout) { momentumScore += 10; reasons.push('接近突破'); }
+    if(trend6m >= 0 && trend6m <= 45) { momentumScore += 10; reasons.push('趨勢未過熱'); }
+    if(sc.fScore < 25) reasons.push('基本面偏弱');
+    if((v.dyScore ?? 0) <= 0) reasons.push('股息支撐弱');
+
+    return { ...sc, momentumScore, reasons };
+  }).filter(Boolean);
+
+  candidates.sort((a,b) => b.momentumScore - a.momentumScore);
+  const top5 = candidates.slice(0, 5);
+  if(!top5.length){
+    container.innerHTML='<div style="padding:20px;color:var(--muted)">目前沒有符合短線動能條件的股票。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent2);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="panel-title" style="margin:0;color:var(--accent2)">短線動能 Top 5</div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        這份清單看短線動能，不等於長期優質股。條件偏向 RSI、MACD、量能、均線與突破位置；若基本面偏弱，會直接標註提醒。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>長線等級</th><th>動能分</th><th>RSI14</th><th>量比</th><th>6M漲跌</th><th>提醒</th></tr></thead>
+        <tbody>${top5.map(sc=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const reasonTags=sc.reasons.map(r=>`<span style="font-size:9px;background:rgba(59,130,246,0.15);color:var(--accent2);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${sc.grade.replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent2);font-weight:700">${sc.momentumScore.toFixed(1)}</td>
+            <td class="td-mono">${sc.t.rsi.toFixed(1)}</td>
+            <td class="td-mono">${sc.t.volRatio.toFixed(2)}x</td>
+            <td class="td-mono">${sc.t.trend6m.toFixed(1)}%</td>
             <td>${reasonTags}</td>
           </tr>`;}).join('')}</tbody>
       </table>
