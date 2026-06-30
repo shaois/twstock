@@ -1255,6 +1255,32 @@ async function runAI(id){
 async function runAIShort(id){
   return askAI(id, 'short');
 }
+
+const _showDetailWithAiModes = showDetail;
+showDetail = function(id){
+  _showDetailWithAiModes(id);
+  const detail = document.getElementById('stockDetail');
+  const actionBox = detail?.querySelector('.stock-header > div:last-child');
+  if(!actionBox) return;
+
+  actionBox.querySelectorAll('button').forEach(btn => {
+    const action = btn.getAttribute('onclick') || '';
+    if(action.includes('runAI')) btn.remove();
+  });
+
+  const longBtn = document.createElement('button');
+  longBtn.className = 'btn btn-primary';
+  longBtn.textContent = 'AI 中長期';
+  longBtn.onclick = () => runAI(id);
+
+  const shortBtn = document.createElement('button');
+  shortBtn.className = 'btn btn-secondary';
+  shortBtn.textContent = 'AI 短線';
+  shortBtn.onclick = () => runAIShort(id);
+
+  actionBox.appendChild(longBtn);
+  actionBox.appendChild(shortBtn);
+};
 </script>
 </body>
 </html>
