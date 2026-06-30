@@ -243,13 +243,25 @@ async def finmind_proxy(stock_id: str, token: str = "", start_date: str = "2026-
 async def nvidia_proxy(request: dict):
     api_key = request.get("api_key") or NVIDIA_API_KEY_ENV
     if not api_key: raise HTTPException(status_code=400, detail="需要 NVIDIA API Key")
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        r = await client.post(
-            "https://integrate.api.nvidia.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=request.get("body", {})
-        )
-        return JSONResponse(content=r.json(), status_code=r.status_code)
+    body = request.get("body", {})
+    try:
+        timeout = httpx.Timeout(120.0, connect=20.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(
+                "https://integrate.api.nvidia.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=body
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="AI 回應逾時，請稍後再試一次")
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"AI 連線失敗：{str(e)}")
+
+    try:
+        payload = r.json()
+    except ValueError:
+        payload = {"error": {"message": r.text[:1000] or "AI 服務回傳空白內容"}}
+    return JSONResponse(content=payload, status_code=r.status_code)
 
 @app.get("/", response_class=HTMLResponse)
 async def root():

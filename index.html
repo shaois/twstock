@@ -1021,6 +1021,127 @@ function findMomentumTop5(){
       </table>
     </div>`;
 }
+
+async function runAI(id){
+  const apiKey = getApiKey();
+  if(!apiKey){showToast('請先輸入 NVIDIA API Key');return;}
+  const sc = allScores[id];
+  if(!sc){showToast('找不到這檔股票資料');return;}
+
+  const panel = document.getElementById('aiPanel');
+  const content = document.getElementById('aiContent');
+  panel.style.display = 'block';
+  content.innerHTML = '<div class="ai-loading"><div class="spinner"></div> AI 分析中，通常需要 10 到 60 秒...</div>';
+  panel.scrollIntoView({behavior:'smooth',block:'start'});
+
+  const f = sc.f || {};
+  const t = sc.t || {};
+  const v = sc.vDetail || {};
+  const rank = allStocks.findIndex(x => x.id === id) + 1;
+  const missing = [];
+  if(!f.div) missing.push('現金股利為 0 或缺資料');
+  if(!f.roe) missing.push('ROE 為 0 或缺資料');
+  if(!f.eps) missing.push('EPS 為 0 或缺資料');
+  if(!v.pe) missing.push('PE 無法正常計算');
+  if(!sc.instData) missing.push('三大法人資料未更新');
+
+  const inst = sc.instData;
+  const instText = inst
+    ? `外資 ${inst.foreign} 張，投信 ${inst.trust} 張，自營商 ${inst.dealer} 張，三大法人合計 ${inst.total} 張，近 5 日合計 ${inst.total5d} 張，日期 ${inst.date}`
+    : '三大法人資料缺漏';
+
+  const prompt = `
+你是台股投資分析助理。請只根據我提供的資料分析，不要保證獲利，不要編造新聞或財報。
+
+股票：${id} ${sc.name}
+產業：${sc.industry || '未知'}
+目前系統排名：#${rank}
+系統等級：${sc.grade}
+總分：${sc.total}/120
+基本面：${sc.fScore}/50
+技術面：${sc.tScore}/50
+估值面：${sc.vScore}/20
+
+基本面資料：
+- EPS：${f.eps ?? 'N/A'}
+- ROE：${f.roe ?? 'N/A'}%
+- 月營收年增率：${f.yoy ?? 'N/A'}%
+- 營收動能斜率：${f.rev_slope ?? 'N/A'}x
+- 現金股利：${f.div ?? 0} 元
+
+技術面資料：
+- 股價：${t.price ?? 'N/A'} 元
+- 52 週高低：${t.high52 ?? 'N/A'} / ${t.low52 ?? 'N/A'}
+- 52 週位置：${t.pos52 ?? 'N/A'}%
+- MA20/60/120：${t.ma20 ?? 'N/A'} / ${t.ma60 ?? 'N/A'} / ${t.ma120 ?? 'N/A'}
+- RSI14：${t.rsi ?? 'N/A'}
+- MACD Hist：${t.macdHist ?? 'N/A'}
+- 量比：${t.volRatio ?? 'N/A'}x
+- 6 個月漲跌幅：${t.trend6m ?? 'N/A'}%
+
+估值資料：
+- 本益比 PE：${v.pe ?? 'N/A'}x
+- 產業平均 PE：${v.industry_pe ?? 'N/A'}x
+- 歷史估值位置：${v.pe_percentile ?? 'N/A'}%
+- 股息殖利率：${v.divYield ?? 'N/A'}%
+- 是否護城河股：${v.is_moat ? '是' : '否'}
+
+法人資料：
+${instText}
+
+資料警示：
+${missing.length ? missing.map(x => `- ${x}`).join('\n') : '- 無明顯缺漏'}
+
+請用繁體中文，分成以下 5 段，每段 2 到 4 句：
+1. 總結判斷：分成「長線投資」、「短線動能」、「目前不適合」三種角度講清楚。
+2. 優點：只講數據支持的優點。
+3. 風險：特別注意高檔、估值過高、股利為 0、資料缺漏、法人反向。
+4. 操作想法：如果要買，應該等什麼條件；如果不該追，請直接說。
+5. 最後一句：用一句話給保守結論，不要叫使用者無腦買進。
+`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 115000);
+
+  try{
+    const r = await fetch(NVIDIA_API,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      signal:controller.signal,
+      body:JSON.stringify({
+        api_key:apiKey,
+        body:{
+          model:MODEL,
+          messages:[{role:'user',content:prompt}],
+          temperature:0.25,
+          max_tokens:1200
+        }
+      })
+    });
+
+    let d;
+    try{ d = await r.json(); }
+    catch(_){ d = {error:{message:await r.text()}}; }
+
+    if(!r.ok){
+      const msg = d?.detail || d?.error?.message || `AI API 回傳 ${r.status}`;
+      throw new Error(msg);
+    }
+
+    const answer = d?.choices?.[0]?.message?.content;
+    if(!answer) throw new Error(d?.error?.message || 'AI 沒有回傳分析內容');
+
+    content.textContent = answer;
+    showToast(`AI 分析完成（${d.usage?.completion_tokens || 0} tokens）`);
+  }catch(e){
+    let msg = e.message || 'AI 分析失敗';
+    if(e.name === 'AbortError') msg = 'AI 回應逾時，請稍後再按一次。';
+    if(msg.includes('Failed to fetch')) msg = 'AI 連線失敗。可能是 Render 服務冷啟動、正在部署，或 NVIDIA API 暫時無回應，請等 1 分鐘再試。';
+    content.innerHTML = `<span style="color:var(--red)">❌ ${msg}</span>`;
+  }finally{
+    clearTimeout(timer);
+  }
+}
 </script>
 </body>
 </html>
