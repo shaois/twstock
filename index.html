@@ -1801,6 +1801,278 @@ askAI = async function(id, mode){
   }
   return _askAIWithDayTrade(id, mode);
 };
+function getChipMood(sc){
+  const inst = sc.instData || {};
+  const today = Number(inst.total || 0);
+  const five = Number(inst.total5d || 0);
+  const trust = Number(inst.trust || 0);
+  const foreign = Number(inst.foreign || 0);
+  let score = 0;
+  const reasons = [];
+  if(today > 0){ score += 2; reasons.push('法人今日買超'); }
+  if(five > 0){ score += 3; reasons.push('近5日偏買'); }
+  if(trust > 0){ score += 2; reasons.push('投信買超'); }
+  if(foreign > 0){ score += 1; reasons.push('外資買超'); }
+  if(today < 0){ score -= 2; reasons.push('法人今日賣超'); }
+  if(five < 0){ score -= 3; reasons.push('近5日偏賣'); }
+  if(!sc.instData) reasons.push('籌碼待更新');
+  const label = score >= 5 ? '偏多' : score >= 2 ? '小多' : score <= -4 ? '偏空' : score <= -1 ? '轉弱' : '中性';
+  return { score, label, reasons: reasons.slice(0,3) };
+}
+
+function getMarketMood(){
+  const rows = Object.values(allScores || {});
+  if(!rows.length) return { label:'未知', score:0, note:'尚未載入市場資料' };
+  const strong = rows.filter(sc => (sc.t?.rsi ?? 0) >= 55 && (sc.t?.macdHist ?? 0) > 0).length;
+  const hot = rows.filter(sc => (sc.t?.rsi ?? 0) >= 70 || (sc.t?.trend6m ?? 0) >= 45).length;
+  const weak = rows.filter(sc => (sc.t?.rsi ?? 50) < 45 || (sc.t?.macdHist ?? 0) < 0).length;
+  const strongPct = strong / rows.length;
+  const hotPct = hot / rows.length;
+  const weakPct = weak / rows.length;
+  let label = '中性';
+  let note = '多空訊號混合';
+  let score = 0;
+  if(strongPct >= 0.45 && hotPct < 0.25){ label = '偏多'; note = '強勢股比例高，尚未全面過熱'; score = 2; }
+  else if(hotPct >= 0.3){ label = '過熱'; note = '不少股票漲幅或RSI偏高，短線追價要保守'; score = -1; }
+  else if(weakPct >= 0.45){ label = '偏弱'; note = '弱勢股票比例偏高，短線勝率較差'; score = -2; }
+  return { label, score, note, strong, hot, weak, total:rows.length };
+}
+
+function getSectorMood(sc){
+  const sector = sc.sector || sc.industry || '';
+  const rows = Object.values(allScores || {}).filter(x => (x.sector || x.industry || '') === sector);
+  if(!sector || rows.length < 2) return { label:'未知', note:'同族群樣本不足' };
+  const avgRsi = rows.reduce((s,x)=>s+(x.t?.rsi ?? 50),0) / rows.length;
+  const strong = rows.filter(x => (x.t?.macdHist ?? 0) > 0 && (x.t?.rsi ?? 0) >= 55).length;
+  const hot = rows.filter(x => (x.t?.rsi ?? 0) >= 70 || (x.t?.trend6m ?? 0) >= 45).length;
+  const label = hot / rows.length >= 0.35 ? '族群過熱' : strong / rows.length >= 0.4 ? '族群轉強' : avgRsi < 45 ? '族群偏弱' : '族群中性';
+  return { label, note:`${sector}：${strong}/${rows.length} 檔偏強，平均RSI ${avgRsi.toFixed(1)}` };
+}
+
+function addMoodNotice(id){
+  const detail = document.getElementById('stockDetail');
+  if(!detail) return;
+  detail.querySelectorAll('.mood-notice').forEach(el => el.remove());
+  const sc = allScores[id];
+  if(!sc) return;
+  const chip = getChipMood(sc);
+  const market = getMarketMood();
+  const sector = getSectorMood(sc);
+  const scoreBox = detail.querySelector('.score-overview');
+  if(!scoreBox) return;
+  const notice = document.createElement('div');
+  notice.className = 'mood-notice';
+  notice.style.cssText = 'margin:-8px 0 14px;padding:10px 14px;background:rgba(0,212,170,0.07);border:1px solid rgba(0,212,170,0.3);border-radius:8px;font-size:12px;color:var(--text);display:grid;grid-template-columns:repeat(3,1fr);gap:10px';
+  notice.innerHTML = `
+    <div><b style="color:var(--accent)">籌碼：${chip.label}</b><br><span style="color:var(--muted)">${chip.reasons.join('、') || '無明顯訊號'}</span></div>
+    <div><b style="color:var(--accent2)">市場情緒：${market.label}</b><br><span style="color:var(--muted)">${market.note}</span></div>
+    <div><b style="color:var(--warn)">族群：${sector.label}</b><br><span style="color:var(--muted)">${sector.note}</span></div>`;
+  scoreBox.insertAdjacentElement('afterend', notice);
+}
+
+const _showDetailMoodFinal = showDetail;
+showDetail = function(id){
+  _showDetailMoodFinal(id);
+  addMoodNotice(id);
+  addDayTradeNotice(id);
+  const actionBox = document.getElementById('stockDetail')?.querySelector('.stock-header > div:last-child');
+  if(actionBox){
+    actionBox.querySelectorAll('button').forEach(btn => btn.remove());
+    const longBtn = document.createElement('button');
+    longBtn.className = 'btn btn-primary';
+    longBtn.textContent = 'AI 中長期';
+    longBtn.onclick = () => runAI(id);
+    const shortBtn = document.createElement('button');
+    shortBtn.className = 'btn btn-secondary';
+    shortBtn.textContent = 'AI 短線';
+    shortBtn.onclick = () => runAIShort(id);
+    actionBox.appendChild(longBtn);
+    actionBox.appendChild(shortBtn);
+  }
+};
+
+function findMomentumTop5(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+  const market = getMarketMood();
+
+  let candidates = Object.values(allScores).map(sc => {
+    const t = sc.t || {};
+    const f = sc.f || {};
+    const v = sc.vDetail || {};
+    const rsi = t.rsi ?? 50;
+    const macdHist = t.macdHist ?? 0;
+    const volRatio = t.volRatio ?? 1;
+    const trend6m = t.trend6m ?? 0;
+    const pos52 = t.pos52 ?? 50;
+    const ma20 = t.ma20 ?? 0;
+    const ma60 = t.ma60 ?? 0;
+    const ma120 = t.ma120 ?? 0;
+    const price = t.price ?? 0;
+    const chip = getChipMood(sc);
+    const sector = getSectorMood(sc);
+    const aboveMa20 = price > ma20;
+    const maSupport = ma20 >= ma60 && ma60 >= ma120;
+    const nearMa20 = ma20 > 0 ? Math.abs(price - ma20) / ma20 * 100 <= 8 : false;
+    const rejects = [];
+
+    if(sc.tScore < 38) rejects.push('技術分不足');
+    if(rsi < 50 || rsi > 68) rejects.push('RSI不在進場區');
+    if(macdHist <= 0) rejects.push('MACD未轉強');
+    if(volRatio < 1.05 || volRatio > 2.4) rejects.push('量能不理想');
+    if(trend6m < -5 || trend6m > 28) rejects.push('半年漲幅不適合');
+    if(pos52 < 45 || pos52 > 78) rejects.push('位置不適合追');
+    if(!aboveMa20 || !nearMa20) rejects.push('離MA20太遠或未站上');
+    if(!maSupport) rejects.push('均線支撐不足');
+    if(v.pe !== null && v.pe > 70 && sc.fScore < 30) rejects.push('估值過高');
+    if(chip.score <= -4) rejects.push('籌碼偏空');
+    if(market.label === '偏弱') rejects.push('市場偏弱');
+    if(rejects.length) return null;
+
+    let entryScore = 0;
+    let reasons = [];
+    if(rsi >= 54 && rsi <= 63) { entryScore += 25; reasons.push('RSI進場區'); }
+    else { entryScore += 15; reasons.push('RSI偏強'); }
+    if(macdHist > 0) { entryScore += 18; reasons.push('MACD轉強'); }
+    if(volRatio >= 1.15 && volRatio <= 1.9) { entryScore += 18; reasons.push('量能溫和放大'); }
+    else { entryScore += 10; reasons.push('量能可接受'); }
+    if(pos52 >= 52 && pos52 <= 72) { entryScore += 16; reasons.push('位置未過熱'); }
+    else { entryScore += 8; reasons.push('位置可觀察'); }
+    if(trend6m >= 0 && trend6m <= 22) { entryScore += 13; reasons.push('漲幅可控'); }
+    if(nearMa20 && aboveMa20) { entryScore += 10; reasons.push('貼近MA20支撐'); }
+    if(chip.score >= 2) { entryScore += 8; reasons.push(`籌碼${chip.label}`); }
+    if(sector.label === '族群轉強') { entryScore += 5; reasons.push('族群轉強'); }
+    if(sc.fScore >= 30) reasons.push('基本面不弱');
+    if((f.yoy ?? 0) > 0) reasons.push('營收正成長');
+    return { ...sc, entryScore, reasons, chip, sector, dayTradeStatus:getDayTradeStatus(sc) };
+  }).filter(Boolean);
+
+  candidates.sort((a,b) => b.entryScore - a.entryScore);
+  const top5 = candidates.slice(0, 5);
+  if(!top5.length){
+    container.innerHTML='<div style="padding:20px;color:var(--muted)">目前沒有符合「短線可進場」條件的股票。若要當天買賣，也請先確認該股是否可現股當沖。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent2);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="panel-title" style="margin:0;color:var(--accent2)">短線可進場 Top 5</div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        已加入市場情緒、族群熱度與籌碼提醒。市場目前：${market.label}，${market.note}。若要當天買賣，仍需先用券商確認是否可現股當沖。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>長線等級</th><th>進場分</th><th>RSI14</th><th>52W位置</th><th>籌碼</th><th>族群</th><th>現股當沖</th><th>理由</th></tr></thead>
+        <tbody>${top5.map(sc=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const reasonTags=sc.reasons.map(r=>`<span style="font-size:9px;background:rgba(59,130,246,0.15);color:var(--accent2);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${sc.grade.replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent2);font-weight:700">${sc.entryScore.toFixed(1)}</td>
+            <td class="td-mono">${sc.t.rsi.toFixed(1)}</td>
+            <td class="td-mono">${sc.t.pos52.toFixed(0)}%</td>
+            <td><span style="font-size:10px;background:rgba(0,212,170,0.15);color:var(--accent);padding:2px 6px;border-radius:3px">${sc.chip.label}</span></td>
+            <td><span style="font-size:10px;background:rgba(245,158,11,0.15);color:var(--warn);padding:2px 6px;border-radius:3px">${sc.sector.label}</span></td>
+            <td><span style="font-size:10px;background:rgba(245,158,11,0.15);color:var(--warn);padding:2px 6px;border-radius:3px">${sc.dayTradeStatus.label}</span></td>
+            <td>${reasonTags}</td>
+          </tr>`;}).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+async function askAI(id, mode){
+  const apiKey = getApiKey();
+  if(!apiKey){showToast('請先輸入 NVIDIA API Key');return;}
+  const sc = allScores[id];
+  if(!sc){showToast('找不到這檔股票資料');return;}
+  const panel = document.getElementById('aiPanel');
+  const content = document.getElementById('aiContent');
+  const title = panel?.querySelector('.panel-title');
+  if(title) title.textContent = mode === 'short' ? 'AI 短線結論' : 'AI 中長期結論';
+  panel.style.display = 'block';
+  content.innerHTML = `<div class="ai-loading"><div class="spinner"></div> AI ${mode === 'short' ? '短線' : '中長期'}結論產生中...</div>`;
+  panel.scrollIntoView({behavior:'smooth',block:'start'});
+
+  const f = sc.f || {};
+  const t = sc.t || {};
+  const v = sc.vDetail || {};
+  const inst = sc.instData;
+  const chip = getChipMood(sc);
+  const market = getMarketMood();
+  const sector = getSectorMood(sc);
+  const zone = _targetZones(sc);
+  const ma20Gap = t.ma20 ? ((t.price - t.ma20) / t.ma20 * 100).toFixed(1) : 'N/A';
+  const dayTrade = getDayTradeStatus(sc);
+  const data = `
+股票：${id} ${sc.name}
+目前股價：${t.price ?? 'N/A'} 元
+評級：${sc.grade}，總分：${sc.total}/120，基本面：${sc.fScore}/50，技術面：${sc.tScore}/50，估值面：${sc.vScore}/20
+EPS：${f.eps ?? 'N/A'}，ROE：${f.roe ?? 'N/A'}%，月營收年增率：${f.yoy ?? 'N/A'}%，現金股利：${f.div ?? 0} 元
+PE：${v.pe ?? 'N/A'}x，產業平均PE：${v.industry_pe ?? 'N/A'}x，股息殖利率：${v.divYield ?? 'N/A'}%
+RSI14：${t.rsi ?? 'N/A'}，MACD Hist：${t.macdHist ?? 'N/A'}，量比：${t.volRatio ?? 'N/A'}x，6個月漲跌幅：${t.trend6m ?? 'N/A'}%
+52週位置：${t.pos52 ?? 'N/A'}%，MA20/60/120：${t.ma20 ?? 'N/A'} / ${t.ma60 ?? 'N/A'} / ${t.ma120 ?? 'N/A'}，距MA20：${ma20Gap}%
+籌碼：${chip.label}，${chip.reasons.join('、') || '無明顯訊號'}；法人：${inst ? `今日合計 ${inst.total} 張，近5日 ${inst.total5d} 張` : '缺資料'}
+市場情緒：${market.label}，${market.note}
+族群熱度：${sector.label}，${sector.note}
+現股當沖：${dayTrade.label}，${dayTrade.note}
+系統估算中長期目標賣出區：${zone.longTarget} 元，中長期停損參考：${zone.longStop} 元
+系統估算短線目標賣出區：${zone.shortTarget} 元，短線停損參考：${zone.shortStop} 元
+`;
+  const prompt = mode === 'short' ? `
+你是台股短線交易助理。請根據資料給非常簡潔的短線結論，不要長篇分析，不要保證獲利。必須把籌碼、市場情緒、族群熱度、現股當沖提醒一起納入判斷。
+${data}
+請固定用下面格式回答，每行都要有：
+結論：只能填「買進」「觀望」「不買」「賣出」
+目標賣出區：填價格區間
+停損價：填價格
+理由：最多3點，每點不超過18字
+提醒：一句話，若偏高或不可確認當沖，請直接提醒
+` : `
+你是台股中長期投資助理。請根據資料給非常簡潔的中長期結論，不要長篇分析，不要保證獲利。必須把基本面、估值、籌碼、市場情緒、族群熱度一起納入判斷。
+${data}
+請固定用下面格式回答，每行都要有：
+結論：只能填「買進」「觀望」「不買」「賣出」
+目標賣出區：填價格區間
+停損價：填價格
+理由：最多3點，每點不超過18字
+提醒：一句話，若估值偏高請直接說分批或等待
+`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 115000);
+  try{
+    const r = await fetch(NVIDIA_API,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      signal:controller.signal,
+      body:JSON.stringify({api_key:apiKey,body:{model:MODEL,messages:[{role:'user',content:prompt}],temperature:0.15,max_tokens:500}})
+    });
+    let d;
+    try{ d = await r.json(); }
+    catch(_){ d = {error:{message:await r.text()}}; }
+    if(!r.ok) throw new Error(d?.detail || d?.error?.message || `AI API 回傳 ${r.status}`);
+    const answer = d?.choices?.[0]?.message?.content;
+    if(!answer) throw new Error(d?.error?.message || 'AI 沒有回傳分析內容');
+    content.textContent = answer;
+    showToast(`AI ${mode === 'short' ? '短線' : '中長期'}結論完成`);
+  }catch(e){
+    let msg = e.message || 'AI 分析失敗';
+    if(e.name === 'AbortError') msg = 'AI 回應逾時，請稍後再按一次。';
+    if(msg.includes('Failed to fetch')) msg = 'AI 連線失敗。可能是 Render 服務冷啟動或 NVIDIA API 暫時無回應，請等1分鐘再試。';
+    content.innerHTML = `<span style="color:var(--red)">錯誤：${msg}</span>`;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+runAI = async function(id){ return askAI(id, 'long'); };
+runAIShort = async function(id){ return askAI(id, 'short'); };
 </script>
 </body>
 </html>
