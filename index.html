@@ -250,7 +250,7 @@ const CANDIDATES = [
   {id:"6202",name:"盛群",sector:"IC設計",shares:220000},{id:"2451",name:"創見",sector:"電腦",shares:420000},
   {id:"8215",name:"明基材",sector:"電子零組件",shares:320000},{id:"3376",name:"新日興",sector:"電子零組件",shares:180000},
   {id:"6139",name:"亞翔",sector:"半導體",shares:220000},{id:"3033",name:"威健",sector:"通路",shares:420000},
-  {id:"6414",name:"樺漢",sector:"電腦",shares:100000},{id:"8112",name:"兆赫",sector:"電信",shares:320000}
+  {id:"6414",name:"樺漢",sector:"電腦",shares:100000},{id:"2485",name:"兆赫",sector:"電信",shares:320000}
 ];
 
 const SECTOR_PE = {
@@ -505,6 +505,9 @@ async function loadStocks(){
           if (!cData.hasData) continue;
           allScores[s.id] = scoreStock(s.id, cData, s);
       }
+      allScores[s.id].id = s.id;
+      allScores[s.id].name = s.name;
+      allScores[s.id].sector = s.sector;
       const displayPrice = allScores[s.id]?.t?.price || 0;
       allStocks.push({
           ...s,
