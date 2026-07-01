@@ -2375,6 +2375,349 @@ ${data}
 
 runAI = async function(id){ return askAI(id, 'long'); };
 runAIShort = async function(id){ return askAI(id, 'short'); };
+
+function _parseDateOnly(value){
+  if(!value) return null;
+  const d = new Date(value);
+  if(Number.isNaN(d.getTime())) return null;
+  d.setHours(0,0,0,0);
+  return d;
+}
+
+function getExDividendContext(sc){
+  const id = sc?.id;
+  const ex = id ? ghCache?.exdiv?.[id] : null;
+  const div = Number(ex?.div || sc?.f?.div || 0);
+  const exDate = _parseDateOnly(ex?.date);
+  if(!exDate || !div) return {label:'無除息風險', note:'近期沒有可用除息資料', days:null, div};
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const days = Math.round((today - exDate) / (1000*60*60*24));
+  const t = sc?.t || {};
+  const price = Number(t.price || 0);
+  const ma20 = Number(t.ma20 || 0);
+  const macdHist = Number(t.macdHist || 0);
+  const nearEx = days >= 0 && days <= 15;
+  const beforeEx = days < 0 && days >= -7;
+  const weakAfterEx = nearEx && ((ma20 && price < ma20) || macdHist < 0);
+  if(beforeEx) return {label:'除息前保守', note:`${Math.abs(days)} 天後除息 ${div} 元，短線需避開除息波動`, days, div, blocker:true};
+  if(weakAfterEx) return {label:'除息後待填息', note:`除息後 ${days} 天，尚未站回 MA20 或 MACD 偏弱，先等填息確認`, days, div, blocker:true};
+  if(nearEx) return {label:'除息後觀察', note:`除息後 ${days} 天，需觀察是否能填息並站穩均線`, days, div, caution:true};
+  return {label:'除息影響降低', note:`距離除息已 ${days} 天，除息影響下降`, days, div};
+}
+
+function getDailyChangeContext(sc){
+  const rows = ghCache?.price?.[sc?.id] || [];
+  const sorted = rows.filter(x => x.close != null).sort((a,b) => String(a.date).localeCompare(String(b.date)));
+  if(sorted.length < 2) return {label:'缺資料', note:'缺少近兩日股價資料', stockPct:null, marketPct:null, diff:null};
+  const last = Number(sorted[sorted.length - 1].close || 0);
+  const prev = Number(sorted[sorted.length - 2].close || 0);
+  const stockPct = prev ? (last - prev) / prev * 100 : null;
+  const changes = Object.values(allScores || {}).map(x => {
+    const r = ghCache?.price?.[x.id] || [];
+    const s = r.filter(y => y.close != null).sort((a,b) => String(a.date).localeCompare(String(b.date)));
+    if(s.length < 2) return null;
+    const l = Number(s[s.length - 1].close || 0);
+    const p = Number(s[s.length - 2].close || 0);
+    return p ? (l - p) / p * 100 : null;
+  }).filter(x => Number.isFinite(x));
+  const marketPct = changes.length ? changes.reduce((a,b)=>a+b,0) / changes.length : null;
+  const diff = Number.isFinite(stockPct) && Number.isFinite(marketPct) ? stockPct - marketPct : null;
+  if(diff !== null && diff <= -2) return {label:'明顯弱於樣本', note:`近一日 ${stockPct.toFixed(2)}%，比樣本平均弱 ${Math.abs(diff).toFixed(2)} 個百分點`, stockPct, marketPct, diff, blocker:true};
+  if(diff !== null && diff < -0.8) return {label:'偏弱', note:`近一日 ${stockPct.toFixed(2)}%，弱於樣本平均`, stockPct, marketPct, diff, caution:true};
+  if(diff !== null && diff >= 1) return {label:'相對強勢', note:`近一日 ${stockPct.toFixed(2)}%，強於樣本平均`, stockPct, marketPct, diff};
+  return {label:'接近大盤', note: stockPct === null ? '缺少比較資料' : `近一日 ${stockPct.toFixed(2)}%，接近樣本平均`, stockPct, marketPct, diff};
+}
+
+function getTrendRiskContext(sc){
+  const t = sc?.t || {};
+  const price = Number(t.price || 0);
+  const ma20 = Number(t.ma20 || 0);
+  const ma60 = Number(t.ma60 || 0);
+  const rsi = Number(t.rsi ?? 50);
+  const macdHist = Number(t.macdHist || 0);
+  const blockers = [];
+  const cautions = [];
+  if(ma20 && price < ma20) blockers.push('跌破 MA20');
+  if(ma60 && price < ma60) cautions.push('低於 MA60');
+  if(macdHist < 0) blockers.push('MACD 偏弱');
+  if(rsi < 45) cautions.push('RSI 偏弱');
+  if(rsi > 68) cautions.push('RSI 過熱');
+  const label = blockers.length ? '趨勢偏弱' : cautions.length ? '趨勢需觀察' : '趨勢正常';
+  return {label, blockers, cautions, note:[...blockers, ...cautions].join('、') || '均線與動能未見明顯風險'};
+}
+
+function getAIDecisionGuard(sc, mode){
+  const ex = getExDividendContext(sc);
+  const rel = getDailyChangeContext(sc);
+  const trend = getTrendRiskContext(sc);
+  const chip = typeof getChipMood === 'function' ? getChipMood(sc) : {score:0, label:'缺資料'};
+  const rules = [];
+  let maxConclusion = '買進';
+  if(ex.blocker){ rules.push(ex.note); maxConclusion = '觀望'; }
+  if(trend.blockers.length){
+    rules.push(`技術面：${trend.blockers.join('、')}`);
+    maxConclusion = mode === 'short' ? '不買' : (maxConclusion === '買進' ? '觀望' : maxConclusion);
+  }
+  if(rel.blocker){
+    rules.push(rel.note);
+    maxConclusion = mode === 'short' ? '不買' : (maxConclusion === '買進' ? '觀望' : maxConclusion);
+  }
+  if(chip.score <= -4){
+    rules.push(`籌碼偏弱：${chip.label}`);
+    maxConclusion = mode === 'short' ? '不買' : (maxConclusion === '買進' ? '觀望' : maxConclusion);
+  }
+  if(mode === 'short' && (ex.caution || trend.cautions.length)){
+    rules.push('短線仍有波動風險');
+    if(maxConclusion === '買進') maxConclusion = '觀望';
+  }
+  return {
+    maxConclusion,
+    rules,
+    ex,
+    rel,
+    trend,
+    text: rules.length ? rules.join('；') : '沒有觸發硬性風控限制'
+  };
+}
+
+function buildAIDataTextV2(id, sc, mode){
+  const base = buildAIDataText(id, sc);
+  const guard = getAIDecisionGuard(sc, mode);
+  return `${base}
+系統風控閘門：${guard.text}
+AI 最高允許結論：${guard.maxConclusion}
+除息/填息：${guard.ex.label}，${guard.ex.note}
+相對強弱：${guard.rel.label}，${guard.rel.note}
+趨勢風險：${guard.trend.label}，${guard.trend.note}
+`;
+}
+
+async function askAI(id, mode){
+  const apiKey = getApiKey();
+  if(!apiKey){showToast(`請先輸入 ${getAIProvider() === 'groq' ? 'Groq' : 'NVIDIA'} API Key`);return;}
+  const sc = allScores[id];
+  if(!sc){showToast('找不到這檔股票資料');return;}
+
+  const panel = document.getElementById('aiPanel');
+  const content = document.getElementById('aiContent');
+  const title = panel?.querySelector('.panel-title');
+  const badge = panel?.querySelector('.ai-badge');
+  if(title) title.textContent = mode === 'short' ? 'AI 短線結論' : 'AI 中長期結論';
+  if(badge) badge.textContent = getAIName();
+  panel.style.display = 'block';
+  content.innerHTML = `<div class="ai-loading"><div class="spinner"></div> ${getAIName()} 依新版風控規則分析中...</div>`;
+  panel.scrollIntoView({behavior:'smooth', block:'start'});
+
+  const guard = getAIDecisionGuard(sc, mode);
+  const data = buildAIDataTextV2(id, sc, mode);
+  const role = mode === 'short' ? '台股短線交易助理' : '台股中長期投資助理';
+  const focus = mode === 'short'
+    ? '短線必須優先看：除息後是否填息、相對大盤強弱、MA20、MACD、RSI、量比、籌碼。'
+    : '中長期必須優先看：基本面與估值，但若除息後未填息、跌破 MA20、相對弱於大盤，不可直接追買。';
+  const prompt = `你是${role}。請只根據下列資料做判斷，不要編造新聞、訂單、政策或內線消息。
+${focus}
+硬性規則：
+1. 若「AI 最高允許結論」不是買進，你的結論不可高於該限制。
+2. 除息後 15 天內且未站回 MA20 或 MACD 偏弱，中長期最多觀望，短線不可買進。
+3. 若明顯弱於樣本平均且技術面偏弱，短線結論應為不買，中長期最多觀望。
+4. 若基本面好但技術面弱，請寫觀望，不要寫買進。
+5. 目標賣出區必須保守，先看填息/前高/壓力，不可過度樂觀。
+${data}
+請固定用下面格式，簡潔回答：
+結論：只能填「買進」「觀望」「不買」「賣出」，且不可高於「${guard.maxConclusion}」
+目標賣出區：填價格區間
+停損價：填價格
+理由：最多3點，每點不超過18字
+提醒：一句話`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90000);
+  try{
+    const r = await fetch(getAIEndpoint(), {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      signal:controller.signal,
+      body:JSON.stringify({
+        api_key:apiKey,
+        body:{
+          model:getAIModel(),
+          messages:[{role:'user', content:prompt}],
+          temperature:0.08,
+          max_tokens:420
+        }
+      })
+    });
+    let d;
+    try{ d = await r.json(); }
+    catch(_){ d = {error:{message:await r.text()}}; }
+    if(!r.ok) throw new Error(d?.detail || d?.error?.message || `AI API 回傳 ${r.status}`);
+    let answer = d?.choices?.[0]?.message?.content;
+    if(!answer) throw new Error(d?.error?.message || 'AI 沒有回傳分析內容');
+    content.textContent = answer;
+    showToast(`${getAIName()} 新版規則分析完成`);
+  }catch(e){
+    let msg = e.message || 'AI 分析失敗';
+    if(e.name === 'AbortError') msg = 'AI 回應逾時，請切 Groq 8B 或稍後再試。';
+    if(msg.includes('Failed to fetch')) msg = 'AI 連線失敗，可能是 Render 冷啟動或 API 暫時無回應。';
+    content.innerHTML = `<span style="color:var(--red)">錯誤：${msg}</span>`;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+function addAIGuardNotice(id){
+  const detail = document.getElementById('stockDetail');
+  const scoreBox = detail?.querySelector('.score-overview');
+  const sc = allScores[id];
+  if(!detail || !scoreBox || !sc) return;
+  detail.querySelectorAll('.ai-guard-notice').forEach(el => el.remove());
+  const guard = getAIDecisionGuard(sc, 'long');
+  const notice = document.createElement('div');
+  notice.className = 'ai-guard-notice';
+  const risky = guard.maxConclusion !== '買進';
+  notice.style.cssText = `margin:-8px 0 14px;padding:10px 14px;background:${risky ? 'rgba(245,158,11,0.08)' : 'rgba(0,212,170,0.07)'};border:1px solid ${risky ? 'rgba(245,158,11,0.35)' : 'rgba(0,212,170,0.3)'};border-radius:8px;font-size:12px;color:var(--text)`;
+  notice.innerHTML = `<b style="color:${risky ? 'var(--warn)' : 'var(--accent)'}">AI 風控：最高 ${guard.maxConclusion}</b> <span style="color:var(--muted)">${guard.text}</span>`;
+  scoreBox.insertAdjacentElement('afterend', notice);
+}
+
+const _showDetailWithAIGuard = showDetail;
+showDetail = function(id){
+  _showDetailWithAIGuard(id);
+  addAIGuardNotice(id);
+};
+
+runAI = async function(id){ return askAI(id, 'long'); };
+runAIShort = async function(id){ return askAI(id, 'short'); };
+
+function findTop5Buys(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  const candidates = Object.values(allScores).map(sc => {
+    const guard = getAIDecisionGuard(sc, 'long');
+    const f = sc.f || {};
+    const t = sc.t || {};
+    const v = sc.vDetail || {};
+    const reasons = [];
+    const rejects = [];
+    if(guard.maxConclusion !== '買進') rejects.push(`風控限制：${guard.maxConclusion}`);
+    if((sc.fScore || 0) < 30) rejects.push('基本面不足');
+    if((sc.vScore || 0) < 6) rejects.push('估值吸引力不足');
+    if((t.rsi ?? 50) > 68) rejects.push('RSI 過熱');
+    if((t.macdHist ?? 0) < 0) rejects.push('MACD 偏弱');
+    if(t.ma20 && t.price < t.ma20) rejects.push('跌破 MA20');
+    if((f.div || 0) <= 0 && (v.divYield || 0) <= 0) rejects.push('股息支撐不足');
+    if(rejects.length) return null;
+
+    let buyScore = 0;
+    buyScore += Math.min(sc.fScore || 0, 50);
+    buyScore += Math.min(sc.vScore || 0, 20);
+    buyScore += Math.min(sc.tScore || 0, 50) * 0.55;
+    if((f.yoy || 0) > 10){ buyScore += 8; reasons.push('營收成長'); }
+    if((f.roe || 0) >= 10){ buyScore += 6; reasons.push('ROE達標'); }
+    if((v.pe || 999) <= (v.industry_pe || 999)){ buyScore += 6; reasons.push('PE合理'); }
+    if((v.divYield || 0) >= 2){ buyScore += 5; reasons.push('股息支撐'); }
+    if((t.rsi ?? 50) >= 42 && (t.rsi ?? 50) <= 62){ buyScore += 6; reasons.push('位置不過熱'); }
+    if((t.price || 0) >= (t.ma20 || 0)){ buyScore += 5; reasons.push('站上MA20'); }
+    return {...sc, buyScore, reasons, guard};
+  }).filter(Boolean).sort((a,b)=>b.buyScore-a.buyScore).slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML='<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">目前沒有通過新版風控的嚴選買進名單。這是正常的，代表系統先保護你不要在除息、弱勢或技術轉弱時追買。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--warn);">
+      <div class="panel-title" style="margin-bottom:14px;color:var(--warn)">嚴格買進 TOP 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        新版規則會先排除除息後待填息、跌破 MA20、MACD 偏弱、相對弱勢、基本面或估值不足的股票。這份名單偏保守，目的不是每天硬選 5 檔，而是只列出真正可追蹤買進的候選。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>買進分</th><th>總分</th><th>RSI14</th><th>PE</th><th>52W位置</th><th>入選理由</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const tags=sc.reasons.map(r=>`<span style="font-size:9px;background:rgba(245,158,11,0.15);color:var(--warn);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank || i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--warn);font-weight:700">${sc.buyScore.toFixed(1)}</td>
+            <td class="td-mono">${sc.total}</td>
+            <td class="td-mono">${(sc.t?.rsi ?? 0).toFixed(1)}</td>
+            <td class="td-mono">${sc.vDetail?.pe ?? 'N/A'}x</td>
+            <td class="td-mono">${(sc.t?.pos52 ?? 0).toFixed(0)}%</td>
+            <td>${tags}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function findMomentumTop5(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  const candidates = Object.values(allScores).map(sc => {
+    const guard = getAIDecisionGuard(sc, 'short');
+    const t = sc.t || {};
+    const reasons = [];
+    if(guard.maxConclusion !== '買進') return null;
+    if((t.rsi ?? 50) < 52 || (t.rsi ?? 50) > 66) return null;
+    if((t.macdHist ?? 0) <= 0) return null;
+    if((t.volRatio ?? 1) < 1.05 || (t.volRatio ?? 1) > 2.3) return null;
+    if(t.ma20 && t.price < t.ma20) return null;
+    if((t.pos52 ?? 50) > 78) return null;
+
+    let entryScore = 0;
+    entryScore += (t.rsi >= 55 && t.rsi <= 62) ? 25 : 15;
+    entryScore += 20;
+    entryScore += Math.min((t.volRatio || 1) * 10, 20);
+    entryScore += (t.pos52 >= 50 && t.pos52 <= 72) ? 18 : 8;
+    entryScore += Math.min(sc.tScore || 0, 50) * 0.45;
+    reasons.push('風控通過','MACD轉強','站上MA20');
+    return {...sc, entryScore, reasons, guard};
+  }).filter(Boolean).sort((a,b)=>b.entryScore-a.entryScore).slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML='<div class="screener-panel" style="border:1px solid var(--accent2);color:var(--muted)">目前沒有通過新版風控的短線可進場名單。短線沒有符合條件時，空手也是策略。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent2);">
+      <div class="panel-title" style="margin-bottom:14px;color:var(--accent2)">短線可進場 TOP 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        新版短線規則會排除除息後待填息、弱於樣本、跌破 MA20、MACD 偏弱與過熱股。短線名單可能少於 5 檔。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>進場分</th><th>RSI14</th><th>量比</th><th>52W位置</th><th>理由</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const tags=sc.reasons.map(r=>`<span style="font-size:9px;background:rgba(59,130,246,0.15);color:var(--accent2);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank || i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent2);font-weight:700">${sc.entryScore.toFixed(1)}</td>
+            <td class="td-mono">${(sc.t?.rsi ?? 0).toFixed(1)}</td>
+            <td class="td-mono">${(sc.t?.volRatio ?? 0).toFixed(2)}x</td>
+            <td class="td-mono">${(sc.t?.pos52 ?? 0).toFixed(0)}%</td>
+            <td>${tags}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
 </script>
 </body>
 </html>
