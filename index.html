@@ -157,7 +157,7 @@ const GH_CACHE_BASE = "https://raw.githubusercontent.com/shaois/twstock/main/cac
 let allStocks = [];
 let allScores = {};
 let currentStock = null;
-let ghCache = {fundamental:{}, revenue:{}, price:{}, exdiv:{}, balance:{}, scores:{}, news:{}, loaded:false};
+let ghCache = {fundamental:{}, revenue:{}, price:{}, exdiv:{}, balance:{}, scores:{}, news:{}, institutional:{}, loaded:false};
 
 // 🔥 200支強勢股票陣列，保證對齊！
 const CANDIDATES = [
@@ -331,7 +331,7 @@ async function loadGitHubCache(){
   if(ghCache.loaded) return ghCache;
   try{
     const nocache = `?t=${Date.now()}`;
-    const [f,r,p,ex,b,scores,news] = await Promise.all([
+    const [f,r,p,ex,b,scores,news,institutional] = await Promise.all([
       fetch(`${GH_CACHE_BASE}/fundamental.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/revenue.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/price.json${nocache}`).then(x=>x.ok?x.json():{}),
@@ -339,6 +339,7 @@ async function loadGitHubCache(){
       fetch(`${GH_CACHE_BASE}/balance.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/scores.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/news.json${nocache}`).then(x=>x.ok?x.json():{}),
+      fetch(`${GH_CACHE_BASE}/institutional.json${nocache}`).then(x=>x.ok?x.json():{}),
     ]);
     ghCache.fundamental = f?.data || {};
     ghCache.revenue = r?.data || {};
@@ -347,6 +348,7 @@ async function loadGitHubCache(){
     ghCache.balance = b?.data || {};
     ghCache.scores = scores?.data || {};
     ghCache.news = news?.data || {};
+    ghCache.institutional = institutional?.data || {};
     ghCache.loaded = true;
     console.log("[GH Cache] 成功載入，檔案庫數量:", Object.keys(ghCache.price).length);
   }catch(e){ 
@@ -521,6 +523,7 @@ async function loadStocks(){
       allScores[s.id].name = s.name;
       allScores[s.id].sector = s.sector;
       allScores[s.id].newsData = ghCache.news?.[s.id] || null;
+      allScores[s.id].instData = ghCache.institutional?.[s.id] || allScores[s.id].instData || null;
       const displayPrice = allScores[s.id]?.t?.price || 0;
       allStocks.push({
           ...s,
@@ -2742,6 +2745,44 @@ function normalizeTopToolbar(){
   if(model?.options?.length >= 2) model.options[1].textContent = 'Groq 8B 快速';
 }
 
+function renderInstitutionalBox(id, inst, fromCache=true){
+  const box = document.getElementById('instLiveContent');
+  if(!box || !inst) return false;
+  function colorNum(v){
+    const n = Number(v || 0);
+    const color=n>0?'var(--green)':n<0?'var(--red)':'var(--muted)';
+    const sign=n>0?'+':'';
+    return`<span style="color:${color}">${sign}${n.toLocaleString()}</span>`;
+  }
+  let streakHtml = '';
+  if(Number(inst.consecutiveBuyDays || 0) >= 3) streakHtml = `<span style="color:var(--green)">連續買超${inst.consecutiveBuyDays}日</span>`;
+  else if(Number(inst.consecutiveSellDays || 0) >= 3) streakHtml = `<span style="color:var(--red)">連續賣超${inst.consecutiveSellDays}日</span>`;
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">
+      <div class="inst-card"><div class="inst-lbl">外資買賣超</div><div class="inst-val">${colorNum(inst.foreign)}</div><div style="font-size:9px;color:var(--muted)">張</div></div>
+      <div class="inst-card"><div class="inst-lbl">投信買賣超</div><div class="inst-val">${colorNum(inst.trust)}</div><div style="font-size:9px;color:var(--muted)">張</div></div>
+      <div class="inst-card"><div class="inst-lbl">自營商買賣超</div><div class="inst-val">${colorNum(inst.dealer)}</div><div style="font-size:9px;color:var(--muted)">張</div></div>
+      <div class="inst-card"><div class="inst-lbl">三大法人合計</div><div class="inst-val">${colorNum(inst.total)}</div><div style="font-size:9px;color:var(--muted)">張</div></div>
+    </div>
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;font-size:12px">
+      <span style="color:var(--muted)">資料日期: ${inst.date || 'N/A'} ｜ 近5日累計：<span style="font-weight:600">${colorNum(inst.total5d)}</span> 張 ｜ ${fromCache ? '快取資料' : '即時更新'}</span>
+      ${streakHtml}
+    </div>
+  `;
+  const sc = allScores[id];
+  if(sc) sc.instData = inst;
+  return true;
+}
+
+const _showDetailWithInstitutionalCache = showDetail;
+showDetail = function(id){
+  _showDetailWithInstitutionalCache(id);
+  const inst = allScores[id]?.instData || ghCache?.institutional?.[id];
+  if(inst){
+    renderInstitutionalBox(id, inst, true);
+  }
+};
+
 function getQualityWatchStatus(sc){
   const guard = typeof getAIDecisionGuard === 'function' ? getAIDecisionGuard(sc, 'long') : {maxConclusion:'買進', text:''};
   if(guard.maxConclusion === '買進') return {label:'可追蹤', color:'var(--accent)', note:'風控通過'};
@@ -2890,6 +2931,71 @@ function findBuyableTop5(){
 }
 
 normalizeTopToolbar();
+
+const _loadLiveInstOriginal = loadLiveInst;
+loadLiveInst = async function(id){
+  const box = document.getElementById('instLiveContent');
+  const btn = document.getElementById('btnInstLive');
+  if(btn) btn.disabled = true;
+  if(box) box.innerHTML = '<div class="spinner" style="margin-right:8px; display:inline-block; vertical-align:middle"></div> <span style="vertical-align:middle">更新法人籌碼中...</span>';
+  try{
+    const start=new Date(Date.now()-30*24*60*60*1000).toISOString().slice(0,10);
+    const r=await fetch(`${PROXY}/api/finmind/${id}?token=${FINMIND_TOKEN}&start_date=${start}`);
+    if(!r.ok) throw new Error();
+    const d=await r.json();
+    if(d.status!==200||!d.data?.length) throw new Error();
+    const allDates=[...new Set(d.data.map(x=>x.date))].sort((a,b)=>b.localeCompare(a));
+    const latest=allDates[0];
+    const last5Dates=allDates.slice(0,5);
+    function sumByDates(dates){
+      const rows=d.data.filter(x=>dates.includes(x.date));
+      let f=0,t=0,dealer=0;
+      for(const row of rows){
+        const net=(row.buy||0)-(row.sell||0);
+        const n=row.name;
+        if(n==='Foreign_Investor'||n==='Foreign_Dealer_Self')f+=net;
+        else if(n==='Investment_Trust')t+=net;
+        else if(String(n).includes('Dealer'))dealer+=net;
+      }
+      return {foreign:Math.round(f/1000),trust:Math.round(t/1000),dealer:Math.round(dealer/1000),total:Math.round((f+t+dealer)/1000)};
+    }
+    const todayData=sumByDates([latest]);
+    const trend5d=sumByDates(last5Dates);
+    let consecutiveBuyDays=0;
+    for(const dt of last5Dates){if(sumByDates([dt]).total>0)consecutiveBuyDays++; else break;}
+    let consecutiveSellDays=0;
+    for(const dt of last5Dates){if(sumByDates([dt]).total<0)consecutiveSellDays++; else break;}
+    const inst = {...todayData, date:latest, total5d:trend5d.total, consecutiveBuyDays, consecutiveSellDays};
+    if(allScores[id]) allScores[id].instData = inst;
+    renderInstitutionalBox(id, inst, false);
+  }catch(e){
+    if(box) box.innerHTML = '<span style="color:var(--red)">無法更新法人籌碼，已保留快取資料。</span>';
+  }finally{
+    if(btn) btn.disabled = false;
+  }
+};
+
+const autoInstLoading = new Set();
+
+function applyInstitutionalCacheOrAutoLoad(id){
+  const box = document.getElementById('instLiveContent');
+  if(!box) return;
+  const inst = allScores[id]?.instData || ghCache?.institutional?.[id];
+  if(inst){
+    renderInstitutionalBox(id, inst, true);
+    return;
+  }
+  if(autoInstLoading.has(id)) return;
+  autoInstLoading.add(id);
+  box.innerHTML = '<div class="spinner" style="margin-right:8px; display:inline-block; vertical-align:middle"></div> <span style="vertical-align:middle">快取尚未有這檔法人資料，正在自動更新一次...</span>';
+  loadLiveInst(id).finally(() => autoInstLoading.delete(id));
+}
+
+const _showDetailInstitutionalAutoFinal = showDetail;
+showDetail = function(id){
+  _showDetailInstitutionalAutoFinal(id);
+  setTimeout(() => applyInstitutionalCacheOrAutoLoad(id), 0);
+};
 </script>
 </body>
 </html>
