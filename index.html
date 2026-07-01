@@ -2074,6 +2074,134 @@ ${data}
   }
 }
 
+function getNewsMood(sc){
+  return { label:'未接入', note:'目前尚未串接即時新聞/題材資料，AI 不得自行編造題材。' };
+}
+
+const _showDetailCleanMood = showDetail;
+showDetail = function(id){
+  _showDetailCleanMood(id);
+  const actionBox = document.getElementById('stockDetail')?.querySelector('.stock-header > div:last-child');
+  if(actionBox){
+    actionBox.querySelectorAll('button').forEach(btn => btn.remove());
+    const longBtn = document.createElement('button');
+    longBtn.className = 'btn btn-primary';
+    longBtn.textContent = 'AI 中長期';
+    longBtn.onclick = () => runAI(id);
+    const shortBtn = document.createElement('button');
+    shortBtn.className = 'btn btn-secondary';
+    shortBtn.textContent = 'AI 短線';
+    shortBtn.onclick = () => runAIShort(id);
+    actionBox.appendChild(longBtn);
+    actionBox.appendChild(shortBtn);
+  }
+  const detail = document.getElementById('stockDetail');
+  const scoreBox = detail?.querySelector('.score-overview');
+  if(scoreBox){
+    detail.querySelectorAll('.news-notice').forEach(el => el.remove());
+    const news = getNewsMood(allScores[id]);
+    const notice = document.createElement('div');
+    notice.className = 'news-notice';
+    notice.style.cssText = 'margin:-8px 0 14px;padding:10px 14px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.35);border-radius:8px;font-size:12px;color:var(--text)';
+    notice.innerHTML = `<b style="color:var(--warn)">題材/新聞：${news.label}</b> <span style="color:var(--muted)">${news.note}</span>`;
+    scoreBox.insertAdjacentElement('afterend', notice);
+  }
+};
+
+async function askAI(id, mode){
+  const apiKey = getApiKey();
+  if(!apiKey){showToast('請先輸入 NVIDIA API Key');return;}
+  const sc = allScores[id];
+  if(!sc){showToast('找不到這檔股票資料');return;}
+
+  const panel = document.getElementById('aiPanel');
+  const content = document.getElementById('aiContent');
+  const title = panel?.querySelector('.panel-title');
+  if(title) title.textContent = mode === 'short' ? 'AI 短線結論' : 'AI 中長期結論';
+  panel.style.display = 'block';
+  content.innerHTML = `<div class="ai-loading"><div class="spinner"></div> AI ${mode === 'short' ? '短線' : '中長期'}結論產生中...</div>`;
+  panel.scrollIntoView({behavior:'smooth',block:'start'});
+
+  const f = sc.f || {};
+  const t = sc.t || {};
+  const v = sc.vDetail || {};
+  const inst = sc.instData;
+  const chip = getChipMood(sc);
+  const market = getMarketMood();
+  const sector = getSectorMood(sc);
+  const news = getNewsMood(sc);
+  const dayTrade = getDayTradeStatus(sc);
+  const zone = _targetZones(sc);
+  const ma20Gap = t.ma20 ? ((t.price - t.ma20) / t.ma20 * 100).toFixed(1) : 'N/A';
+
+  const data = `
+股票：${id} ${sc.name}
+目前股價：${t.price ?? 'N/A'} 元
+評級：${sc.grade}，總分：${sc.total}/120，基本面：${sc.fScore}/50，技術面：${sc.tScore}/50，估值面：${sc.vScore}/20
+EPS：${f.eps ?? 'N/A'}，ROE：${f.roe ?? 'N/A'}%，月營收年增率：${f.yoy ?? 'N/A'}%，現金股利：${f.div ?? 0} 元
+PE：${v.pe ?? 'N/A'}x，產業平均PE：${v.industry_pe ?? 'N/A'}x，股息殖利率：${v.divYield ?? 'N/A'}%
+RSI14：${t.rsi ?? 'N/A'}，MACD Hist：${t.macdHist ?? 'N/A'}，量比：${t.volRatio ?? 'N/A'}x，6個月漲跌幅：${t.trend6m ?? 'N/A'}%
+52週位置：${t.pos52 ?? 'N/A'}%，MA20/60/120：${t.ma20 ?? 'N/A'} / ${t.ma60 ?? 'N/A'} / ${t.ma120 ?? 'N/A'}，距MA20：${ma20Gap}%
+籌碼：${chip.label}，${chip.reasons.join('、') || '無明顯訊號'}；法人：${inst ? `今日合計 ${inst.total} 張，近5日 ${inst.total5d} 張` : '缺資料'}
+市場情緒：${market.label}，${market.note}
+族群熱度：${sector.label}，${sector.note}
+題材/新聞：${news.label}，${news.note}
+現股當沖：${dayTrade.label}，${dayTrade.note}
+系統估算中長期目標賣出區：${zone.longTarget} 元，中長期停損參考：${zone.longStop} 元
+系統估算短線目標賣出區：${zone.shortTarget} 元，短線停損參考：${zone.shortStop} 元
+`;
+
+  const prompt = mode === 'short' ? `
+你是台股短線交易助理。請根據資料給非常簡潔的短線結論，不要長篇分析，不要保證獲利。
+重要規則：題材/新聞目前未接入，不能自行編造新聞、利多、訂單、政策或市場傳聞。若資料不足，請在提醒中說明。
+必須一起評估：技術面、籌碼、市場情緒、族群熱度、現股當沖提醒。
+${data}
+請固定用下面格式回答，每行都要有：
+結論：只能填「買進」「觀望」「不買」「賣出」
+目標賣出區：填價格區間
+停損價：填價格
+理由：最多3點，每點不超過18字
+提醒：一句話，若題材未接入或當沖待確認，請直接提醒
+` : `
+你是台股中長期投資助理。請根據資料給非常簡潔的中長期結論，不要長篇分析，不要保證獲利。
+重要規則：題材/新聞目前未接入，不能自行編造新聞、利多、訂單、政策或市場傳聞。若資料不足，請在提醒中說明。
+必須一起評估：基本面、估值、技術面、籌碼、市場情緒、族群熱度。
+${data}
+請固定用下面格式回答，每行都要有：
+結論：只能填「買進」「觀望」「不買」「賣出」
+目標賣出區：填價格區間
+停損價：填價格
+理由：最多3點，每點不超過18字
+提醒：一句話，若估值偏高或題材未接入，請直接說等待或分批
+`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 115000);
+  try{
+    const r = await fetch(NVIDIA_API,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      signal:controller.signal,
+      body:JSON.stringify({api_key:apiKey,body:{model:MODEL,messages:[{role:'user',content:prompt}],temperature:0.15,max_tokens:500}})
+    });
+    let d;
+    try{ d = await r.json(); }
+    catch(_){ d = {error:{message:await r.text()}}; }
+    if(!r.ok) throw new Error(d?.detail || d?.error?.message || `AI API 回傳 ${r.status}`);
+    const answer = d?.choices?.[0]?.message?.content;
+    if(!answer) throw new Error(d?.error?.message || 'AI 沒有回傳分析內容');
+    content.textContent = answer;
+    showToast(`AI ${mode === 'short' ? '短線' : '中長期'}結論完成`);
+  }catch(e){
+    let msg = e.message || 'AI 分析失敗';
+    if(e.name === 'AbortError') msg = 'AI 回應逾時，請稍後再按一次。';
+    if(msg.includes('Failed to fetch')) msg = 'AI 連線失敗。可能是 Render 服務冷啟動或 NVIDIA API 暫時無回應，請等1分鐘再試。';
+    content.innerHTML = `<span style="color:var(--red)">錯誤：${msg}</span>`;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
 runAI = async function(id){ return askAI(id, 'long'); };
 runAIShort = async function(id){ return askAI(id, 'short'); };
 </script>
