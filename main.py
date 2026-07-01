@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 
 NVIDIA_API_KEY_ENV = os.environ.get("NVIDIA_API_KEY", "")
+GROQ_API_KEY_ENV = os.environ.get("GROQ_API_KEY", "")
 FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
 
 from data_fetcher import TWStockFetcher, TOP100_STATIC
@@ -261,6 +262,31 @@ async def nvidia_proxy(request: dict):
         payload = r.json()
     except ValueError:
         payload = {"error": {"message": r.text[:1000] or "AI 服務回傳空白內容"}}
+    return JSONResponse(content=payload, status_code=r.status_code)
+
+@app.post("/api/groq")
+async def groq_proxy(request: dict):
+    api_key = request.get("api_key") or GROQ_API_KEY_ENV
+    if not api_key:
+        raise HTTPException(status_code=400, detail="需要 Groq API Key")
+    body = request.get("body", {})
+    try:
+        timeout = httpx.Timeout(90.0, connect=15.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=body
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Groq AI 回應逾時，請稍後再試")
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Groq AI 連線失敗：{str(e)}")
+
+    try:
+        payload = r.json()
+    except ValueError:
+        payload = {"error": {"message": r.text[:1000] or "Groq AI 回傳內容無法解析"}}
     return JSONResponse(content=payload, status_code=r.status_code)
 
 @app.get("/", response_class=HTMLResponse)

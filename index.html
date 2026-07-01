@@ -14,6 +14,8 @@ header{background:linear-gradient(135deg,#0d1b2e,#0a0e1a);border-bottom:1px soli
 .header-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .api-input{background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:12px;font-family:'JetBrains Mono',monospace;width:220px;}
 .api-input:focus{outline:none;border-color:var(--accent);}
+.api-select{background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:6px;font-size:12px;font-family:'JetBrains Mono',monospace;}
+.api-select:focus{outline:none;border-color:var(--accent);}
 .btn{padding:7px 14px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-family:'Noto Sans TC',sans-serif;font-weight:500;transition:all .15s;}
 .btn-primary{background:var(--accent);color:#000;}.btn-primary:hover{background:#00bfa0;}
 .btn-secondary{background:var(--surface2);color:var(--text);border:1px solid var(--border);}.btn-secondary:hover{border-color:var(--accent);color:var(--accent);}
@@ -92,6 +94,14 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
     台股選股儀表板
   </div>
   <div class="header-right">
+    <select class="api-select" id="aiProvider">
+      <option value="groq">Groq</option>
+      <option value="nvidia">NVIDIA</option>
+    </select>
+    <select class="api-select" id="aiModel">
+      <option value="llama-3.3-70b-versatile">Groq 70B</option>
+      <option value="llama-3.1-8b-instant">Groq 8B 快速</option>
+    </select>
     <input class="api-input" id="apiKeyInput" type="password" placeholder="NVIDIA API Key（AI分析用）">
     <button class="btn btn-primary" onclick="loadStocks()">載入當前資料庫</button>
     <button class="btn btn-secondary" onclick="runScreener()">篩選優質股</button>
@@ -2237,6 +2247,134 @@ showDetail = function(id){
   notice.innerHTML = `<b style="color:${isMissing ? 'var(--warn)' : 'var(--green)'}">題材/新聞：${news.label}</b> <span style="color:var(--muted)">${news.note}</span>`;
   scoreBox.insertAdjacentElement('afterend', notice);
 };
+function getAIProvider(){
+  return document.getElementById('aiProvider')?.value || 'groq';
+}
+
+function getAIModel(){
+  const provider = getAIProvider();
+  const selected = document.getElementById('aiModel')?.value || '';
+  if(provider === 'nvidia') return 'meta/llama-3.3-70b-instruct';
+  return selected || 'llama-3.3-70b-versatile';
+}
+
+function getAIEndpoint(){
+  return getAIProvider() === 'groq' ? `${PROXY}/api/groq` : `${PROXY}/api/nvidia`;
+}
+
+function getAIName(){
+  if(getAIProvider() === 'nvidia') return 'NVIDIA 70B';
+  return getAIModel().includes('8b') ? 'Groq 8B' : 'Groq 70B';
+}
+
+function syncAIProviderUI(){
+  const provider = getAIProvider();
+  const model = document.getElementById('aiModel');
+  const keyInput = document.getElementById('apiKeyInput');
+  if(model) model.disabled = provider === 'nvidia';
+  if(keyInput) keyInput.placeholder = provider === 'groq' ? 'Groq API Key' : 'NVIDIA API Key';
+}
+
+document.getElementById('aiProvider')?.addEventListener('change', syncAIProviderUI);
+syncAIProviderUI();
+
+function buildAIDataText(id, sc){
+  const f = sc.f || {};
+  const t = sc.t || {};
+  const v = sc.vDetail || {};
+  const chip = typeof getChipMood === 'function' ? getChipMood(sc) : {label:'缺資料', reasons:[]};
+  const market = typeof getMarketMood === 'function' ? getMarketMood() : {label:'缺資料', note:''};
+  const sector = typeof getSectorMood === 'function' ? getSectorMood(sc) : {label:'缺資料', note:''};
+  const news = typeof getNewsMood === 'function' ? getNewsMood(sc) : {label:'待更新', note:''};
+  const dayTrade = typeof getDayTradeStatus === 'function' ? getDayTradeStatus(sc) : {label:'待確認', note:''};
+  const zone = typeof _targetZones === 'function' ? _targetZones(sc) : {longTarget:'N/A', longStop:'N/A', shortTarget:'N/A', shortStop:'N/A'};
+  const inst = sc.instData;
+  const ma20Gap = t.ma20 ? ((t.price - t.ma20) / t.ma20 * 100).toFixed(1) : 'N/A';
+  return `
+股票：${id} ${sc.name}
+目前股價：${t.price ?? 'N/A'} 元
+評級：${sc.grade}，總分：${sc.total}/120，基本面：${sc.fScore}/50，技術面：${sc.tScore}/50，估值面：${sc.vScore}/20
+EPS：${f.eps ?? 'N/A'}，ROE：${f.roe ?? 'N/A'}%，月營收年增率：${f.yoy ?? 'N/A'}%，現金股利：${f.div ?? 0} 元
+PE：${v.pe ?? 'N/A'}x，產業平均PE：${v.industry_pe ?? 'N/A'}x，股息殖利率：${v.divYield ?? 'N/A'}%
+RSI14：${t.rsi ?? 'N/A'}，MACD Hist：${t.macdHist ?? 'N/A'}，量比：${t.volRatio ?? 'N/A'}x，6個月漲跌幅：${t.trend6m ?? 'N/A'}%
+52週位置：${t.pos52 ?? 'N/A'}%，MA20/60/120：${t.ma20 ?? 'N/A'} / ${t.ma60 ?? 'N/A'} / ${t.ma120 ?? 'N/A'}，距MA20：${ma20Gap}%
+籌碼：${chip.label}，${(chip.reasons || []).join('、') || '無明顯訊號'}；法人：${inst ? `今日合計 ${inst.total} 張，近5日 ${inst.total5d} 張` : '缺資料'}
+市場情緒：${market.label}，${market.note}
+族群熱度：${sector.label}，${sector.note}
+題材/新聞：${news.label}，${news.note}
+現股當沖：${dayTrade.label}，${dayTrade.note}
+中長期目標賣出區：${zone.longTarget} 元，中長期停損：${zone.longStop} 元
+短線目標賣出區：${zone.shortTarget} 元，短線停損：${zone.shortStop} 元
+`;
+}
+
+async function askAI(id, mode){
+  const apiKey = getApiKey();
+  if(!apiKey){showToast(`請先輸入 ${getAIProvider() === 'groq' ? 'Groq' : 'NVIDIA'} API Key`);return;}
+  const sc = allScores[id];
+  if(!sc){showToast('找不到這檔股票資料');return;}
+
+  const panel = document.getElementById('aiPanel');
+  const content = document.getElementById('aiContent');
+  const title = panel?.querySelector('.panel-title');
+  const badge = panel?.querySelector('.ai-badge');
+  if(title) title.textContent = mode === 'short' ? 'AI 短線結論' : 'AI 中長期結論';
+  if(badge) badge.textContent = getAIName();
+  panel.style.display = 'block';
+  content.innerHTML = `<div class="ai-loading"><div class="spinner"></div> ${getAIName()} 分析中...</div>`;
+  panel.scrollIntoView({behavior:'smooth', block:'start'});
+
+  const data = buildAIDataText(id, sc);
+  const role = mode === 'short' ? '台股短線交易助理' : '台股中長期投資助理';
+  const focus = mode === 'short'
+    ? '重點看短線動能、RSI、MACD、均線、量比、籌碼、新聞題材、現股當沖。'
+    : '重點看基本面、估值、技術趨勢、籌碼、新聞題材、族群與市場情緒。';
+  const prompt = `你是${role}。請只根據下列資料做判斷，不要編造新聞、訂單、政策或內線消息。${focus}
+${data}
+請固定用下面格式，簡潔回答：
+結論：只能填「買進」「觀望」「不買」「賣出」
+目標賣出區：填價格區間
+停損價：填價格
+理由：最多3點，每點不超過18字
+提醒：一句話`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90000);
+  try{
+    const r = await fetch(getAIEndpoint(), {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      signal:controller.signal,
+      body:JSON.stringify({
+        api_key:apiKey,
+        body:{
+          model:getAIModel(),
+          messages:[{role:'user', content:prompt}],
+          temperature:0.12,
+          max_tokens:420
+        }
+      })
+    });
+    let d;
+    try{ d = await r.json(); }
+    catch(_){ d = {error:{message:await r.text()}}; }
+    if(!r.ok) throw new Error(d?.detail || d?.error?.message || `AI API 回傳 ${r.status}`);
+    const answer = d?.choices?.[0]?.message?.content;
+    if(!answer) throw new Error(d?.error?.message || 'AI 沒有回傳分析內容');
+    content.textContent = answer;
+    showToast(`${getAIName()} 分析完成`);
+  }catch(e){
+    let msg = e.message || 'AI 分析失敗';
+    if(e.name === 'AbortError') msg = 'AI 回應逾時，請切 Groq 8B 或稍後再試。';
+    if(msg.includes('Failed to fetch')) msg = 'AI 連線失敗，可能是 Render 冷啟動或 API 暫時無回應。';
+    content.innerHTML = `<span style="color:var(--red)">錯誤：${msg}</span>`;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+runAI = async function(id){ return askAI(id, 'long'); };
+runAIShort = async function(id){ return askAI(id, 'short'); };
 </script>
 </body>
 </html>
