@@ -386,6 +386,58 @@ async def fetch_api(client, url):
         print(f"  [連線錯誤] {e}")
         return 500, None
 
+def summarize_institutional(rows):
+    if not rows:
+        return None
+    dates = sorted({r.get("date") for r in rows if r.get("date")}, reverse=True)
+    if not dates:
+        return None
+    latest = dates[0]
+    last5 = dates[:5]
+
+    def sum_by_dates(date_list):
+        foreign = trust = dealer = 0
+        for row in rows:
+            if row.get("date") not in date_list:
+                continue
+            try:
+                net = float(row.get("buy", 0) or 0) - float(row.get("sell", 0) or 0)
+            except Exception:
+                net = 0
+            name = str(row.get("name", ""))
+            if name in ("Foreign_Investor", "Foreign_Dealer_Self"):
+                foreign += net
+            elif name == "Investment_Trust":
+                trust += net
+            elif "Dealer" in name:
+                dealer += net
+        return {
+            "foreign": round(foreign / 1000),
+            "trust": round(trust / 1000),
+            "dealer": round(dealer / 1000),
+            "total": round((foreign + trust + dealer) / 1000),
+        }
+
+    today = sum_by_dates([latest])
+    trend5d = sum_by_dates(last5)
+    consecutive_buy = 0
+    consecutive_sell = 0
+    for d in last5:
+        total = sum_by_dates([d])["total"]
+        if total > 0 and consecutive_sell == 0:
+            consecutive_buy += 1
+        elif total < 0 and consecutive_buy == 0:
+            consecutive_sell += 1
+        else:
+            break
+    return {
+        **today,
+        "date": latest,
+        "total5d": trend5d["total"],
+        "consecutiveBuyDays": consecutive_buy,
+        "consecutiveSellDays": consecutive_sell,
+    }
+
 async def update_cache():
     import httpx
 
@@ -400,6 +452,7 @@ async def update_cache():
     exdiv_db       = load_old_cache("exdiv.json")
     balance_db     = load_old_cache("balance.json")
     news_db        = load_old_cache("news.json")
+    institutional_db = load_old_cache("institutional.json")
     
     progress_file = CACHE_DIR / "progress.json"
     start_index = 0
@@ -478,6 +531,16 @@ async def update_cache():
             news_db[sid] = await fetch_news_for_stock(client, stock)
             await asyncio.sleep(0.6)
 
+            url_i = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={sid}&start_date={(today - timedelta(days=30)).strftime('%Y-%m-%d')}&token={FINMIND_TOKEN}"
+            sc, data = await fetch_api(client, url_i)
+            if sc == 402 or (data and data.get("status") == 402): stop_fetching = True
+            elif data and data.get("status") == 200 and data.get("data"):
+                summary = summarize_institutional(data["data"])
+                if summary:
+                    institutional_db[sid] = summary
+            await asyncio.sleep(0.8)
+            if stop_fetching: break
+
     # 無論中途是否被 402 擋下，最後一定要強制存檔，保證資料不流失！
     timestamp = datetime.now().isoformat()
     (CACHE_DIR / "fundamental.json").write_text(json.dumps({"_saved_at": timestamp, "data": fundamental_db}, ensure_ascii=False))
@@ -486,6 +549,7 @@ async def update_cache():
     (CACHE_DIR / "exdiv.json").write_text(json.dumps({"_saved_at": timestamp, "data": exdiv_db}, ensure_ascii=False))
     (CACHE_DIR / "balance.json").write_text(json.dumps({"_saved_at": timestamp, "data": balance_db}, ensure_ascii=False))
     (CACHE_DIR / "news.json").write_text(json.dumps({"_saved_at": timestamp, "data": news_db}, ensure_ascii=False))
+    (CACHE_DIR / "institutional.json").write_text(json.dumps({"_saved_at": timestamp, "data": institutional_db}, ensure_ascii=False))
     scores_out = build_scores(fundamental_db, revenue_db, price_db, exdiv_db, balance_db)
     (CACHE_DIR / "scores.json").write_text(json.dumps(scores_out, ensure_ascii=False))
     
