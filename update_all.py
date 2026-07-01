@@ -6,6 +6,8 @@ import json
 import os
 import re
 import sys
+import urllib.parse
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -74,6 +76,47 @@ def load_old_cache(filename):
         try: return json.loads(p.read_text(encoding="utf-8")).get("data", {})
         except: return {}
     return {}
+
+def classify_news(items):
+    if not items:
+        return "待更新", "目前沒有抓到最近新聞"
+    text = " ".join(item.get("title", "") for item in items)
+    hot_words = ["AI", "CoWoS", "GB200", "H20", "NVIDIA", "輝達", "訂單", "漲價", "併購", "轉盈", "新高", "題材", "法說"]
+    bad_words = ["虧損", "下修", "衰退", "裁員", "違約", "跌停", "處分", "罰", "訴訟", "調查", "減產"]
+    hot = sum(1 for w in hot_words if w.lower() in text.lower())
+    bad = sum(1 for w in bad_words if w.lower() in text.lower())
+    if bad >= 2 and bad >= hot:
+        return "偏空", "近期新聞偏負面，短線需保守"
+    if hot >= 2:
+        return "偏多", "近期有題材或市場關注"
+    return "中性", "有新聞但方向不明顯"
+
+async def fetch_news_for_stock(client, stock):
+    sid = stock.get("id", "")
+    name = stock.get("name", "")
+    query = urllib.parse.quote(f"{sid} {name} 股票 when:7d")
+    url = f"https://news.google.com/rss/search?q={query}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+    try:
+        r = await client.get(url, timeout=12.0, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code != 200:
+            return {"status": "待更新", "topic": [], "count": 0, "note": f"新聞抓取失敗 HTTP {r.status_code}", "items": []}
+        root = ET.fromstring(r.text)
+        raw_items = root.findall(".//item")[:5]
+        items = []
+        for item in raw_items:
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            pub_date = (item.findtext("pubDate") or "").strip()
+            if title:
+                items.append({"title": title, "link": link, "date": pub_date})
+        status, note = classify_news(items)
+        topics = []
+        for word in ["AI", "輝達", "CoWoS", "半導體", "電動車", "航運", "金融", "營收", "法說", "股利"]:
+            if any(word.lower() in item.get("title", "").lower() for item in items):
+                topics.append(word)
+        return {"status": status, "topic": topics[:4], "count": len(items), "note": note, "items": items[:3]}
+    except Exception as e:
+        return {"status": "待更新", "topic": [], "count": 0, "note": f"新聞抓取失敗: {e}", "items": []}
 
 SECTOR_PE = {
     "??擃?": 22, "IC閮剛?": 25, "?餃?鋆賡?": 15, "?餉": 18,
@@ -356,6 +399,7 @@ async def update_cache():
     price_db       = load_old_cache("price.json")
     exdiv_db       = load_old_cache("exdiv.json")
     balance_db     = load_old_cache("balance.json")
+    news_db        = load_old_cache("news.json")
     
     progress_file = CACHE_DIR / "progress.json"
     start_index = 0
@@ -431,6 +475,9 @@ async def update_cache():
             await asyncio.sleep(1.2)
             if stop_fetching: break
 
+            news_db[sid] = await fetch_news_for_stock(client, stock)
+            await asyncio.sleep(0.6)
+
     # 無論中途是否被 402 擋下，最後一定要強制存檔，保證資料不流失！
     timestamp = datetime.now().isoformat()
     (CACHE_DIR / "fundamental.json").write_text(json.dumps({"_saved_at": timestamp, "data": fundamental_db}, ensure_ascii=False))
@@ -438,6 +485,7 @@ async def update_cache():
     (CACHE_DIR / "price.json").write_text(json.dumps({"_saved_at": timestamp, "data": price_db}, ensure_ascii=False))
     (CACHE_DIR / "exdiv.json").write_text(json.dumps({"_saved_at": timestamp, "data": exdiv_db}, ensure_ascii=False))
     (CACHE_DIR / "balance.json").write_text(json.dumps({"_saved_at": timestamp, "data": balance_db}, ensure_ascii=False))
+    (CACHE_DIR / "news.json").write_text(json.dumps({"_saved_at": timestamp, "data": news_db}, ensure_ascii=False))
     scores_out = build_scores(fundamental_db, revenue_db, price_db, exdiv_db, balance_db)
     (CACHE_DIR / "scores.json").write_text(json.dumps(scores_out, ensure_ascii=False))
     

@@ -147,7 +147,7 @@ const GH_CACHE_BASE = "https://raw.githubusercontent.com/shaois/twstock/main/cac
 let allStocks = [];
 let allScores = {};
 let currentStock = null;
-let ghCache = {fundamental:{}, revenue:{}, price:{}, exdiv:{}, balance:{}, scores:{}, loaded:false};
+let ghCache = {fundamental:{}, revenue:{}, price:{}, exdiv:{}, balance:{}, scores:{}, news:{}, loaded:false};
 
 // 🔥 200支強勢股票陣列，保證對齊！
 const CANDIDATES = [
@@ -321,13 +321,14 @@ async function loadGitHubCache(){
   if(ghCache.loaded) return ghCache;
   try{
     const nocache = `?t=${Date.now()}`;
-    const [f,r,p,ex,b,scores] = await Promise.all([
+    const [f,r,p,ex,b,scores,news] = await Promise.all([
       fetch(`${GH_CACHE_BASE}/fundamental.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/revenue.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/price.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/exdiv.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/balance.json${nocache}`).then(x=>x.ok?x.json():{}),
       fetch(`${GH_CACHE_BASE}/scores.json${nocache}`).then(x=>x.ok?x.json():{}),
+      fetch(`${GH_CACHE_BASE}/news.json${nocache}`).then(x=>x.ok?x.json():{}),
     ]);
     ghCache.fundamental = f?.data || {};
     ghCache.revenue = r?.data || {};
@@ -335,6 +336,7 @@ async function loadGitHubCache(){
     ghCache.exdiv = ex?.data || {};
     ghCache.balance = b?.data || {};
     ghCache.scores = scores?.data || {};
+    ghCache.news = news?.data || {};
     ghCache.loaded = true;
     console.log("[GH Cache] 成功載入，檔案庫數量:", Object.keys(ghCache.price).length);
   }catch(e){ 
@@ -508,6 +510,7 @@ async function loadStocks(){
       allScores[s.id].id = s.id;
       allScores[s.id].name = s.name;
       allScores[s.id].sector = s.sector;
+      allScores[s.id].newsData = ghCache.news?.[s.id] || null;
       const displayPrice = allScores[s.id]?.t?.price || 0;
       allStocks.push({
           ...s,
@@ -2204,6 +2207,36 @@ ${data}
 
 runAI = async function(id){ return askAI(id, 'long'); };
 runAIShort = async function(id){ return askAI(id, 'short'); };
+
+function getNewsMood(sc){
+  const news = sc?.newsData;
+  if(!news || !news.count){
+    return {label:'待更新', note:'目前尚未抓到近 7 天新聞；AI 不得自行編造題材。'};
+  }
+  const topics = Array.isArray(news.topic) && news.topic.length ? `；題材：${news.topic.join('、')}` : '';
+  const titles = Array.isArray(news.items) ? news.items.slice(0,2).map(x=>x.title).filter(Boolean) : [];
+  const titleNote = titles.length ? `；新聞：${titles.join(' / ')}` : '';
+  return {
+    label: news.status || '中性',
+    note: `近 7 天 ${news.count} 則${topics}；${news.note || '方向不明顯'}${titleNote}`
+  };
+}
+
+const _showDetailNewsConnected = showDetail;
+showDetail = function(id){
+  _showDetailNewsConnected(id);
+  const detail = document.getElementById('stockDetail');
+  const scoreBox = detail?.querySelector('.score-overview');
+  if(!detail || !scoreBox) return;
+  detail.querySelectorAll('.news-notice').forEach(el => el.remove());
+  const news = getNewsMood(allScores[id]);
+  const isMissing = news.label === '待更新';
+  const notice = document.createElement('div');
+  notice.className = 'news-notice';
+  notice.style.cssText = `margin:-8px 0 14px;padding:10px 14px;background:${isMissing ? 'rgba(245,158,11,0.08)' : 'rgba(0,212,170,0.08)'};border:1px solid ${isMissing ? 'rgba(245,158,11,0.35)' : 'rgba(0,212,170,0.35)'};border-radius:8px;font-size:12px;color:var(--text)`;
+  notice.innerHTML = `<b style="color:${isMissing ? 'var(--warn)' : 'var(--green)'}">題材/新聞：${news.label}</b> <span style="color:var(--muted)">${news.note}</span>`;
+  scoreBox.insertAdjacentElement('afterend', notice);
+};
 </script>
 </body>
 </html>
