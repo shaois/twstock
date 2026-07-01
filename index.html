@@ -2718,6 +2718,178 @@ function findMomentumTop5(){
       </table>
     </div>`;
 }
+function normalizeTopToolbar(){
+  const header = document.querySelector('.header-right');
+  if(!header) return;
+  const loadBtn = header.querySelector('button[onclick="loadStocks()"]');
+  const screenBtn = header.querySelector('button[onclick="runScreener()"]');
+  const qualityBtn = header.querySelector('button[onclick="findTop5Buys()"]');
+  const momentumBtn = header.querySelector('button[onclick="findMomentumTop5()"]');
+  if(loadBtn) loadBtn.textContent = '載入最新快取';
+  if(screenBtn) screenBtn.textContent = '篩選優質股';
+  if(qualityBtn) qualityBtn.textContent = '嚴選 Top 5';
+  if(momentumBtn) momentumBtn.textContent = '短線動能 Top 5';
+  if(!header.querySelector('button[data-buyable-top5="1"]')){
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-secondary';
+    btn.dataset.buyableTop5 = '1';
+    btn.textContent = '可買進 Top 5';
+    btn.onclick = () => findBuyableTop5();
+    if(momentumBtn) header.insertBefore(btn, momentumBtn);
+    else header.appendChild(btn);
+  }
+  const model = document.getElementById('aiModel');
+  if(model?.options?.length >= 2) model.options[1].textContent = 'Groq 8B 快速';
+}
+
+function getQualityWatchStatus(sc){
+  const guard = typeof getAIDecisionGuard === 'function' ? getAIDecisionGuard(sc, 'long') : {maxConclusion:'買進', text:''};
+  if(guard.maxConclusion === '買進') return {label:'可追蹤', color:'var(--accent)', note:'風控通過'};
+  return {label:guard.maxConclusion, color:guard.maxConclusion === '不買' ? 'var(--red)' : 'var(--warn)', note:guard.text || '等待確認'};
+}
+
+function findTop5Buys(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  const candidates = Object.values(allScores).map(sc => {
+    const f = sc.f || {};
+    const t = sc.t || {};
+    const v = sc.vDetail || {};
+    const guard = typeof getAIDecisionGuard === 'function' ? getAIDecisionGuard(sc, 'long') : {maxConclusion:'買進', text:''};
+    const status = getQualityWatchStatus(sc);
+    const reasons = [];
+    let qualityScore = 0;
+
+    qualityScore += Math.min(sc.fScore || 0, 50) * 1.05;
+    qualityScore += Math.min(sc.vScore || 0, 20) * 1.15;
+    qualityScore += Math.min(sc.tScore || 0, 50) * 0.45;
+
+    if((f.roe || 0) >= 10){ qualityScore += 8; reasons.push('ROE達標'); }
+    if((f.yoy || 0) >= 10){ qualityScore += 8; reasons.push('營收成長'); }
+    if((v.pe || 999) <= (v.industry_pe || 999)){ qualityScore += 8; reasons.push('PE合理'); }
+    if((v.divYield || 0) >= 2 || (f.div || 0) > 0){ qualityScore += 5; reasons.push('股息支撐'); }
+    if((t.rsi ?? 50) >= 42 && (t.rsi ?? 50) <= 68){ qualityScore += 5; reasons.push('位置可觀察'); }
+
+    if(guard.maxConclusion !== '買進'){
+      qualityScore -= guard.maxConclusion === '觀望' ? 8 : 18;
+      reasons.push(guard.maxConclusion === '觀望' ? '待確認' : '暫不買');
+    }
+    if(t.ma20 && t.price < t.ma20) reasons.push('跌破MA20');
+    if((t.macdHist || 0) < 0) reasons.push('MACD偏弱');
+
+    return {...sc, qualityScore, reasons:reasons.slice(0,5), guard, status};
+  }).filter(sc => (sc.fScore || 0) >= 25 && (sc.total || 0) >= 60)
+    .sort((a,b)=>b.qualityScore-a.qualityScore)
+    .slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML='<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">目前沒有足夠條件的中長期嚴選名單。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--warn);">
+      <div class="panel-title" style="margin-bottom:14px;color:var(--warn)">嚴選 Top 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        這份名單是「中長期優質股候選」，不是全部都適合立刻買。若短線轉弱、剛除息或跌破 MA20，會保留在名單中但標示觀望風險。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>嚴選分</th><th>總分</th><th>RSI14</th><th>PE</th><th>52W位置</th><th>狀態</th><th>理由</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const tags=sc.reasons.map(r=>`<span style="font-size:9px;background:rgba(245,158,11,0.15);color:var(--warn);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank || i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--warn);font-weight:700">${sc.qualityScore.toFixed(1)}</td>
+            <td class="td-mono">${sc.total}</td>
+            <td class="td-mono">${(sc.t?.rsi ?? 0).toFixed(1)}</td>
+            <td class="td-mono">${sc.vDetail?.pe ?? 'N/A'}x</td>
+            <td class="td-mono">${(sc.t?.pos52 ?? 0).toFixed(0)}%</td>
+            <td><span style="font-size:10px;background:rgba(245,158,11,0.15);color:${sc.status.color};padding:2px 6px;border-radius:3px">${sc.status.label}</span></td>
+            <td>${tags}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function findBuyableTop5(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  const candidates = Object.values(allScores).map(sc => {
+    const guard = getAIDecisionGuard(sc, 'long');
+    const f = sc.f || {};
+    const t = sc.t || {};
+    const v = sc.vDetail || {};
+    const reasons = [];
+    const rejects = [];
+    if(guard.maxConclusion !== '買進') rejects.push(`風控限制：${guard.maxConclusion}`);
+    if((sc.fScore || 0) < 30) rejects.push('基本面不足');
+    if((sc.vScore || 0) < 6) rejects.push('估值吸引力不足');
+    if((t.rsi ?? 50) > 68) rejects.push('RSI過熱');
+    if((t.macdHist ?? 0) < 0) rejects.push('MACD偏弱');
+    if(t.ma20 && t.price < t.ma20) rejects.push('跌破MA20');
+    if((f.div || 0) <= 0 && (v.divYield || 0) <= 0) rejects.push('股息支撐不足');
+    if(rejects.length) return null;
+
+    let buyScore = 0;
+    buyScore += Math.min(sc.fScore || 0, 50);
+    buyScore += Math.min(sc.vScore || 0, 20);
+    buyScore += Math.min(sc.tScore || 0, 50) * 0.55;
+    if((f.yoy || 0) > 10){ buyScore += 8; reasons.push('營收成長'); }
+    if((f.roe || 0) >= 10){ buyScore += 6; reasons.push('ROE達標'); }
+    if((v.pe || 999) <= (v.industry_pe || 999)){ buyScore += 6; reasons.push('PE合理'); }
+    if((v.divYield || 0) >= 2){ buyScore += 5; reasons.push('股息支撐'); }
+    if((t.rsi ?? 50) >= 42 && (t.rsi ?? 50) <= 62){ buyScore += 6; reasons.push('位置不過熱'); }
+    if((t.price || 0) >= (t.ma20 || 0)){ buyScore += 5; reasons.push('站上MA20'); }
+    return {...sc, buyScore, reasons, guard};
+  }).filter(Boolean).sort((a,b)=>b.buyScore-a.buyScore).slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML='<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">目前沒有通過新版風控的可買進名單。這代表現在沒有足夠安全的進場點。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent);">
+      <div class="panel-title" style="margin-bottom:14px;color:var(--accent)">可買進 Top 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        這份名單才是「目前較適合進場」的候選，會排除除息後待填息、跌破 MA20、MACD 偏弱、相對弱勢與估值不足。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>買進分</th><th>總分</th><th>RSI14</th><th>PE</th><th>52W位置</th><th>入選理由</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const tags=sc.reasons.map(r=>`<span style="font-size:9px;background:rgba(0,212,170,0.15);color:var(--accent);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank || i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent);font-weight:700">${sc.buyScore.toFixed(1)}</td>
+            <td class="td-mono">${sc.total}</td>
+            <td class="td-mono">${(sc.t?.rsi ?? 0).toFixed(1)}</td>
+            <td class="td-mono">${sc.vDetail?.pe ?? 'N/A'}x</td>
+            <td class="td-mono">${(sc.t?.pos52 ?? 0).toFixed(0)}%</td>
+            <td>${tags}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+normalizeTopToolbar();
 </script>
 </body>
 </html>
