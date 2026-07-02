@@ -1489,6 +1489,58 @@ ${baseData}
   }
 }
 
+const _getPracticalTradeDecisionBeforePositionCap = getPracticalTradeDecision;
+getPracticalTradeDecision = function(sc, mode='long'){
+  const d = _getPracticalTradeDecisionBeforePositionCap(sc, mode);
+  const t = sc.t || {};
+  const price = Number(t.price || 0);
+  const high52 = Number(t.high52 || t.high_52w || 0);
+  const low52 = Number(t.low52 || t.low_52w || 0);
+  const pos52 = high52 > low52 && price ? ((price - low52) / (high52 - low52)) * 100 : Number(t.pos52 || 0);
+  const volRatio = Number(t.volRatio || 1);
+  const sixMonth = Number(t.return6m || t.sixMonthReturn || t.change6m || 0);
+  const rsi = Number(t.rsi || 50);
+  const ma20Gap = t.ma20 && price ? ((price - Number(t.ma20)) / Number(t.ma20)) * 100 : 0;
+  const actionRank = {'不買':0,'觀望':1,'小量試單':2,'買進':3,'積極買進':4};
+  const capTo = (action, position, reason) => {
+    if(actionRank[d.action] > actionRank[action]){
+      d.action = action;
+      d.position = position;
+      d.risks = Array.isArray(d.risks) ? d.risks : [];
+      if(reason && !d.risks.includes(reason)) d.risks.unshift(reason);
+    }
+  };
+
+  const rangeHighNoBreakout = pos52 >= 60 && volRatio < 1.3 && ma20Gap < 5;
+  const stretchedButNotHot = pos52 >= 65 && sixMonth >= 8 && rsi >= 55 && rsi < 68;
+  const overheat = pos52 >= 75 || ma20Gap >= 8 || rsi >= 68;
+
+  if(mode === 'short'){
+    if(overheat){
+      capTo('小量試單', '20-30%', '短線位置偏高，避免重倉追高');
+    }else if(rangeHighNoBreakout || stretchedButNotHot){
+      capTo('小量試單', '20-30%', '高檔未放量突破，只適合小量試單');
+    }
+  }else{
+    if(overheat){
+      capTo('買進', '30-40%', '位置偏高，分批不重倉');
+    }else if(rangeHighNoBreakout || stretchedButNotHot){
+      capTo('買進', '40-50%', '接近區間高位，先分批不要積極重倉');
+    }
+  }
+
+  d.summary = d.action === '積極買進'
+    ? '高勝率且風險可控'
+    : d.action === '買進'
+      ? '條件可進場，但需分批控管'
+      : d.action === '小量試單'
+        ? '有機會但位置或風險未完全理想'
+        : d.action === '觀望'
+          ? '等待更好的價格或訊號'
+          : '風險報酬不佳';
+  return d;
+};
+
 runAI = async function(id){ return askAI(id, 'long'); };
 runAIShort = async function(id){ return askAI(id, 'short'); };
 
