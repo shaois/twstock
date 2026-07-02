@@ -2996,6 +2996,407 @@ showDetail = function(id){
   _showDetailInstitutionalAutoFinal(id);
   setTimeout(() => applyInstitutionalCacheOrAutoLoad(id), 0);
 };
+
+function getChaseRiskContext(sc){
+  const rel = typeof getDailyChangeContext === 'function' ? getDailyChangeContext(sc) : {stockPct:null};
+  const t = sc?.t || {};
+  const price = Number(t.price || 0);
+  const ma20 = Number(t.ma20 || 0);
+  const rsi = Number(t.rsi ?? 50);
+  const pos52 = Number(t.pos52 ?? 50);
+  const stockPct = Number(rel.stockPct);
+  const notes = [];
+  let blocker = false;
+  let caution = false;
+  if(Number.isFinite(stockPct) && stockPct >= 5){
+    blocker = true;
+    notes.push(`單日急漲 ${stockPct.toFixed(2)}%，短線不追高`);
+  }else if(Number.isFinite(stockPct) && stockPct >= 3){
+    caution = true;
+    notes.push(`單日上漲 ${stockPct.toFixed(2)}%，需等拉回`);
+  }
+  if(ma20 && price > ma20 * 1.08){
+    caution = true;
+    notes.push('距 MA20 偏遠');
+  }
+  if(pos52 >= 75 && rsi >= 60){
+    caution = true;
+    notes.push('接近高位且 RSI 偏熱');
+  }
+  return {
+    blocker,
+    caution,
+    label: blocker ? '追高風險高' : caution ? '追高需觀察' : '追高風險低',
+    note: notes.join('；') || '沒有明顯追高風險',
+    stockPct
+  };
+}
+
+const _getAIDecisionGuardBeforeChase = getAIDecisionGuard;
+getAIDecisionGuard = function(sc, mode){
+  const guard = _getAIDecisionGuardBeforeChase(sc, mode);
+  const chase = getChaseRiskContext(sc);
+  guard.chase = chase;
+  if(mode === 'short' && chase.blocker){
+    guard.rules.push(chase.note);
+    guard.maxConclusion = '觀望';
+    guard.text = guard.rules.length ? guard.rules.join('；') : guard.text;
+  }else if(mode === 'short' && chase.caution && guard.maxConclusion === '買進'){
+    guard.rules.push(chase.note);
+    guard.maxConclusion = '觀望';
+    guard.text = guard.rules.length ? guard.rules.join('；') : guard.text;
+  }
+  return guard;
+};
+
+const _buildAIDataTextV2BeforeChase = buildAIDataTextV2;
+buildAIDataTextV2 = function(id, sc, mode){
+  const base = _buildAIDataTextV2BeforeChase(id, sc, mode);
+  const chase = getChaseRiskContext(sc);
+  return `${base}
+追高風險：${chase.label}，${chase.note}
+`;
+};
+
+const _findMomentumTop5BeforeChase = findMomentumTop5;
+findMomentumTop5 = function(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  const candidates = Object.values(allScores).map(sc => {
+    const guard = getAIDecisionGuard(sc, 'short');
+    const chase = getChaseRiskContext(sc);
+    const t = sc.t || {};
+    const reasons = [];
+    if(guard.maxConclusion !== '買進') return null;
+    if(chase.blocker || chase.caution) return null;
+    if((t.rsi ?? 50) < 52 || (t.rsi ?? 50) > 64) return null;
+    if((t.macdHist ?? 0) <= 0) return null;
+    if((t.volRatio ?? 1) < 1.05 || (t.volRatio ?? 1) > 2.3) return null;
+    if(t.ma20 && t.price < t.ma20) return null;
+    if((t.pos52 ?? 50) > 75) return null;
+
+    let entryScore = 0;
+    entryScore += (t.rsi >= 55 && t.rsi <= 61) ? 25 : 15;
+    entryScore += 20;
+    entryScore += Math.min((t.volRatio || 1) * 10, 20);
+    entryScore += (t.pos52 >= 45 && t.pos52 <= 68) ? 18 : 8;
+    entryScore += Math.min(sc.tScore || 0, 50) * 0.45;
+    reasons.push('風控通過','未追高','站上MA20');
+    return {...sc, entryScore, reasons, guard, chase};
+  }).filter(Boolean).sort((a,b)=>b.entryScore-a.entryScore).slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML='<div class="screener-panel" style="border:1px solid var(--accent2);color:var(--muted)">目前沒有通過新版追高風控的短線可進場名單。剛急漲或靠近壓力時，先等拉回確認。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent2);">
+      <div class="panel-title" style="margin-bottom:14px;color:var(--accent2)">短線動能 Top 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        新版會排除單日急漲、距 MA20 偏遠、接近高位且 RSI 偏熱的追高型股票。短線名單可能少於 5 檔。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>動能分</th><th>RSI14</th><th>量比</th><th>52W位置</th><th>理由</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const tags=sc.reasons.map(r=>`<span style="font-size:9px;background:rgba(59,130,246,0.15);color:var(--accent2);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank || i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent2);font-weight:700">${sc.entryScore.toFixed(1)}</td>
+            <td class="td-mono">${(sc.t?.rsi ?? 0).toFixed(1)}</td>
+            <td class="td-mono">${(sc.t?.volRatio ?? 0).toFixed(2)}x</td>
+            <td class="td-mono">${(sc.t?.pos52 ?? 0).toFixed(0)}%</td>
+            <td>${tags}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+};
+function getPracticalTradeDecision(sc, mode='long'){
+  const f = sc?.f || {};
+  const t = sc?.t || {};
+  const v = sc?.vDetail || {};
+  const chip = typeof getChipMood === 'function' ? getChipMood(sc) : {score:0, label:'缺資料', reasons:[]};
+  const ex = typeof getExDividendContext === 'function' ? getExDividendContext(sc) : {blocker:false, caution:false, label:'無除息風險', note:''};
+  const rel = typeof getDailyChangeContext === 'function' ? getDailyChangeContext(sc) : {blocker:false, caution:false, label:'缺資料', note:''};
+  const trend = typeof getTrendRiskContext === 'function' ? getTrendRiskContext(sc) : {blockers:[], cautions:[], label:'缺資料', note:''};
+  const chase = typeof getChaseRiskContext === 'function' ? getChaseRiskContext(sc) : {blocker:false, caution:false, label:'追高風險低', note:''};
+  const news = typeof getNewsMood === 'function' ? getNewsMood(sc) : {label:'待更新', note:''};
+
+  let opportunity = 0;
+  let risk = 0;
+  const reasons = [];
+  const risks = [];
+
+  if((sc.fScore || 0) >= 35){ opportunity += 2; reasons.push('基本面強'); }
+  else if((sc.fScore || 0) >= 28){ opportunity += 1; reasons.push('基本面尚可'); }
+  else { risk += 1; risks.push('基本面不足'); }
+
+  if((sc.vScore || 0) >= 10){ opportunity += 2; reasons.push('估值合理'); }
+  else if((sc.vScore || 0) >= 6){ opportunity += 1; reasons.push('估值可接受'); }
+  else { risk += 1; risks.push('估值吸引力低'); }
+
+  if((sc.tScore || 0) >= 42){ opportunity += 2; reasons.push('技術面強'); }
+  else if((sc.tScore || 0) >= 34){ opportunity += 1; reasons.push('技術面轉強'); }
+  else { risk += 1; risks.push('技術面不足'); }
+
+  if((t.macdHist || 0) > 0){ opportunity += 1; reasons.push('MACD轉正'); }
+  else { risk += mode === 'short' ? 2 : 1; risks.push('MACD偏弱'); }
+
+  if(t.ma20 && t.price >= t.ma20){ opportunity += 1; reasons.push('站上MA20'); }
+  else if(t.ma20){ risk += mode === 'short' ? 2 : 1; risks.push('跌破MA20'); }
+
+  if((t.rsi ?? 50) >= 50 && (t.rsi ?? 50) <= 65){ opportunity += 1; reasons.push('RSI健康'); }
+  else if((t.rsi ?? 50) > 72){ risk += 2; risks.push('RSI過熱'); }
+  else if((t.rsi ?? 50) < 45){ risk += 1; risks.push('RSI偏弱'); }
+
+  if((t.volRatio || 1) >= 1.05 && (t.volRatio || 1) <= 2.4){ opportunity += 1; reasons.push('量能支持'); }
+  else if((t.volRatio || 1) > 3){ risk += 1; risks.push('爆量需防震盪'); }
+
+  if(chip.score >= 3){ opportunity += 2; reasons.push('法人支持'); }
+  else if(chip.score >= 1){ opportunity += 1; reasons.push('籌碼偏多'); }
+  else if(chip.score <= -4){ risk += 2; risks.push('法人偏賣'); }
+  else if(chip.score < 0){ risk += 1; risks.push('籌碼偏弱'); }
+
+  if(String(news.label || '').includes('偏多')){ opportunity += 1; reasons.push('題材偏多'); }
+  if(String(news.label || '').includes('偏空')){ risk += 1; risks.push('新聞偏空'); }
+
+  if(chase.blocker){ risk += 2; risks.push(chase.note); }
+  else if(chase.caution){ risk += 1; risks.push(chase.note); }
+  if(ex.blocker){ risk += 2; risks.push(ex.note); }
+  else if(ex.caution){ risk += 1; risks.push(ex.note); }
+  if(rel.blocker){ risk += 2; risks.push(rel.note); }
+  else if(rel.caution){ risk += 1; risks.push(rel.note); }
+  if(trend.blockers?.length){ risk += mode === 'short' ? 2 : 1; risks.push(trend.blockers.join('、')); }
+
+  let action = '觀望';
+  let position = '0%';
+  if(mode === 'short'){
+    if(opportunity >= 9 && risk <= 2){ action = '積極買進'; position = '60-70%'; }
+    else if(opportunity >= 7 && risk <= 3){ action = '買進'; position = '40-50%'; }
+    else if(opportunity >= 6 && risk <= 5){ action = '小量試單'; position = '20-30%'; }
+    else if(opportunity <= 4 || risk >= 7){ action = '不買'; position = '0%'; }
+  }else{
+    if(opportunity >= 8 && risk <= 2){ action = '積極買進'; position = '60-70%'; }
+    else if(opportunity >= 6 && risk <= 4){ action = '買進'; position = '40-50%'; }
+    else if(opportunity >= 5 && risk <= 6){ action = '小量試單'; position = '20-30%'; }
+    else if(opportunity <= 4 || risk >= 8){ action = '不買'; position = '0%'; }
+  }
+
+  let buyType = '等待型';
+  if(action !== '觀望' && action !== '不買'){
+    if(ex.label?.includes('除息') && !ex.blocker) buyType = '填息型';
+    else if(t.ma20 && t.price >= t.ma20 && (t.macdHist || 0) > 0 && chase.caution) buyType = '突破小量型';
+    else if(t.ma20 && t.price >= t.ma20 && (t.rsi ?? 50) <= 62) buyType = '順勢型';
+    else if(t.ma20 && t.price < t.ma20 && chip.score >= 2) buyType = '低接型';
+    else buyType = '試單型';
+  }
+
+  return {
+    action, position, buyType, opportunity, risk,
+    reasons: reasons.slice(0,4),
+    risks: risks.slice(0,4),
+    summary: `機會${opportunity} / 風險${risk}，${action}，建議部位${position}`,
+    contexts:{chip, ex, rel, trend, chase, news}
+  };
+}
+
+const _getAIDecisionGuardBeforePractical = getAIDecisionGuard;
+getAIDecisionGuard = function(sc, mode){
+  const guard = _getAIDecisionGuardBeforePractical(sc, mode);
+  const decision = getPracticalTradeDecision(sc, mode);
+  guard.practical = decision;
+  guard.maxConclusion = decision.action;
+  guard.rules = [...(decision.risks || [])];
+  guard.text = decision.risks?.length ? decision.risks.join('；') : '風險可控，可依部位管理';
+  return guard;
+};
+
+const _buildAIDataTextV2BeforePractical = buildAIDataTextV2;
+buildAIDataTextV2 = function(id, sc, mode){
+  const base = _buildAIDataTextV2BeforePractical(id, sc, mode);
+  const d = getPracticalTradeDecision(sc, mode);
+  return `${base}
+實戰交易分級：${d.action}
+建議部位：${d.position}
+買點型態：${d.buyType}
+機會/風險：${d.opportunity}/${d.risk}
+支持理由：${d.reasons.join('、') || '無'}
+主要風險：${d.risks.join('、') || '風險可控'}
+`;
+};
+
+async function askAI(id, mode){
+  const apiKey = getApiKey();
+  if(!apiKey){showToast(`請先輸入 ${getAIProvider() === 'groq' ? 'Groq' : 'NVIDIA'} API Key`);return;}
+  const sc = allScores[id];
+  if(!sc){showToast('找不到這檔股票資料');return;}
+
+  const panel = document.getElementById('aiPanel');
+  const content = document.getElementById('aiContent');
+  const title = panel?.querySelector('.panel-title');
+  const badge = panel?.querySelector('.ai-badge');
+  const decision = getPracticalTradeDecision(sc, mode);
+  if(title) title.textContent = mode === 'short' ? 'AI 短線結論' : 'AI 中長期結論';
+  if(badge) badge.textContent = getAIName();
+  panel.style.display = 'block';
+  content.innerHTML = `<div class="ai-loading"><div class="spinner"></div> ${getAIName()} 依實戰分級分析中...</div>`;
+  panel.scrollIntoView({behavior:'smooth', block:'start'});
+
+  const data = buildAIDataTextV2(id, sc, mode);
+  const role = mode === 'short' ? '台股短線交易助理' : '台股中長期投資助理';
+  const prompt = `你是${role}。請只根據下列資料判斷，不要編造新聞、訂單、政策或內線消息。
+核心原則：不是問能不能買，而是判斷用多少部位買。市場冷熱都有風險，請用風險分級，不要過度保守。
+系統已先給出實戰交易分級：${decision.action}，建議部位：${decision.position}。除非資料中有重大矛盾，請不要比系統分級更保守或更激進。
+${data}
+請固定用下面格式，簡潔回答：
+結論：只能填「積極買進」「買進」「小量試單」「觀望」「不買」
+建議部位：填百分比，例如 20-30%
+目標賣出區：填價格區間
+停損價：填價格
+理由：最多3點，每點不超過18字
+提醒：一句話`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90000);
+  try{
+    const r = await fetch(getAIEndpoint(), {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      signal:controller.signal,
+      body:JSON.stringify({
+        api_key:apiKey,
+        body:{
+          model:getAIModel(),
+          messages:[{role:'user', content:prompt}],
+          temperature:0.08,
+          max_tokens:450
+        }
+      })
+    });
+    let d;
+    try{ d = await r.json(); }
+    catch(_){ d = {error:{message:await r.text()}}; }
+    if(!r.ok) throw new Error(d?.detail || d?.error?.message || `AI API 回傳 ${r.status}`);
+    const answer = d?.choices?.[0]?.message?.content;
+    if(!answer) throw new Error(d?.error?.message || 'AI 沒有回傳分析內容');
+    content.textContent = answer;
+    showToast(`${getAIName()} 實戰分級完成`);
+  }catch(e){
+    let msg = e.message || 'AI 分析失敗';
+    if(e.name === 'AbortError') msg = 'AI 回應逾時，請切 Groq 8B 或稍後再試。';
+    if(msg.includes('Failed to fetch')) msg = 'AI 連線失敗，可能是 Render 冷啟動或 API 暫時無回應。';
+    content.innerHTML = `<span style="color:var(--red)">錯誤：${msg}</span>`;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+function findBuyableTop5(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  const candidates = Object.values(allScores).map(sc => {
+    const d = getPracticalTradeDecision(sc, 'long');
+    if(!['積極買進','買進','小量試單'].includes(d.action)) return null;
+    const score = d.opportunity * 12 - d.risk * 6 + (sc.total || 0) * 0.25;
+    return {...sc, practical:d, buyScore:score};
+  }).filter(Boolean).sort((a,b)=>b.buyScore-a.buyScore).slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML='<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">目前沒有達到小量試單以上的標的。不是永遠不買，而是今天風險報酬不划算。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent);">
+      <div class="panel-title" style="margin-bottom:14px;color:var(--accent)">可買進 Top 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        新版用風險分級，不再一票否決。名單會包含「積極買進、買進、小量試單」，並標示建議部位。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>結論</th><th>部位</th><th>型態</th><th>機會/風險</th><th>理由</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const d=sc.practical;
+          const tags=d.reasons.map(r=>`<span style="font-size:9px;background:rgba(0,212,170,0.15);color:var(--accent);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank || i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent);font-weight:700">${d.action}</td>
+            <td class="td-mono">${d.position}</td>
+            <td>${d.buyType}</td>
+            <td class="td-mono">${d.opportunity}/${d.risk}</td>
+            <td>${tags}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function findMomentumTop5(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  const candidates = Object.values(allScores).map(sc => {
+    const d = getPracticalTradeDecision(sc, 'short');
+    if(!['積極買進','買進','小量試單'].includes(d.action)) return null;
+    const t = sc.t || {};
+    const score = d.opportunity * 14 - d.risk * 5 + Math.min(sc.tScore || 0, 50) * 0.35;
+    return {...sc, practical:d, entryScore:score};
+  }).filter(Boolean).sort((a,b)=>b.entryScore-a.entryScore).slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML='<div class="screener-panel" style="border:1px solid var(--accent2);color:var(--muted)">目前沒有達到短線小量試單以上的標的。今天可以等更好的風險報酬。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent2);">
+      <div class="panel-title" style="margin-bottom:14px;color:var(--accent2)">短線動能 Top 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        短線名單改為實戰分級：急漲不一定排除，但會降為小量試單；風險可控才給買進。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>結論</th><th>部位</th><th>RSI14</th><th>量比</th><th>理由/風險</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const d=sc.practical;
+          const tags=[...d.reasons.slice(0,3), ...d.risks.slice(0,2)].map(r=>`<span style="font-size:9px;background:rgba(59,130,246,0.15);color:var(--accent2);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank || i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent2);font-weight:700">${d.action}</td>
+            <td class="td-mono">${d.position}</td>
+            <td class="td-mono">${(sc.t?.rsi ?? 0).toFixed(1)}</td>
+            <td class="td-mono">${(sc.t?.volRatio ?? 0).toFixed(2)}x</td>
+            <td>${tags}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+runAI = async function(id){ return askAI(id, 'long'); };
+runAIShort = async function(id){ return askAI(id, 'short'); };
 </script>
 </body>
 </html>
