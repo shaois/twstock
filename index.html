@@ -1541,6 +1541,128 @@ getPracticalTradeDecision = function(sc, mode='long'){
   return d;
 };
 
+function buildLocalAIConclusion(sc, mode='long', errorNote=''){
+  const d = getPracticalTradeDecision(sc, mode);
+  const t = sc.t || {};
+  const price = Number(t.price || 0);
+  const ma20 = Number(t.ma20 || 0);
+  const high52 = Number(t.high52 || t.high_52w || 0);
+  const targetLow = price ? Math.round(price * (mode === 'short' ? 1.03 : 1.04) * 10) / 10 : 0;
+  const targetHighBase = high52 && high52 > price ? Math.min(high52, price * (mode === 'short' ? 1.08 : 1.12)) : price * (mode === 'short' ? 1.08 : 1.12);
+  const targetHigh = price ? Math.round(targetHighBase * 10) / 10 : 0;
+  const stopBase = ma20 ? Math.min(ma20 * 0.98, price * (mode === 'short' ? 0.96 : 0.94)) : price * (mode === 'short' ? 0.96 : 0.94);
+  const stop = price ? Math.round(stopBase * 10) / 10 : 0;
+  const reasons = (d.reasons || []).slice(0, 2).join('、') || '分數與趨勢尚可';
+  const risks = (d.risks || []).slice(0, 2).join('、') || '注意大盤與量能變化';
+  return [
+    errorNote ? `AI API 暫時不穩，先用系統規則產生備用結論。` : '',
+    `結論：${d.action}`,
+    `建議部位：${d.position}`,
+    `目標賣出區：${targetLow} ~ ${targetHigh} 元`,
+    `停損價：${stop} 元`,
+    `理由：${reasons}`,
+    `提醒：${risks}`
+  ].filter(Boolean).join('\n');
+}
+
+function buildCompactAIPrompt(id, sc, mode='long'){
+  const d = getPracticalTradeDecision(sc, mode);
+  const t = sc.t || {};
+  const f = sc.f || {};
+  const v = sc.v || {};
+  const chip = typeof getChipMood === 'function' ? getChipMood(sc) : {label:'未知', reasons:[]};
+  const news = typeof getNewsMood === 'function' ? getNewsMood(sc) : {label:'未知', note:''};
+  const local = buildLocalAIConclusion(sc, mode);
+  return `你是台股${mode === 'short' ? '短線' : '中長期'}交易助理。請只根據下列資料，輸出6行，必須簡潔。
+股票：${id} ${sc.name}
+現價：${t.price}，MA20/60/120：${t.ma20}/${t.ma60}/${t.ma120}
+RSI：${t.rsi}，MACD Hist：${t.macdHist}，量比：${t.volRatio}，6月漲跌：${t.return6m || t.change6m || 0}%
+EPS：${f.eps}，ROE：${f.roe}%，月營收YoY：${f.revenue_yoy || f.revenueYoY}%，PE：${v.pe}
+總分/基本/技術/估值：${sc.total}/${sc.fScore}/${sc.tScore}/${sc.vScore}
+籌碼：${chip.label} ${(chip.reasons || []).join('、')}
+題材新聞：${news.label} ${news.note || ''}
+系統先判斷：${local}
+
+輸出格式固定：
+結論：只能寫 積極買進 / 買進 / 小量試單 / 觀望 / 不買
+建議部位：百分比
+目標賣出區：價格區間
+停損價：價格
+理由：一句話
+提醒：一句話`;
+}
+
+async function fetchAIWithRetry(endpoint, apiKey, model, prompt){
+  const models = getAIProvider() === 'groq' && model !== 'llama-3.1-8b-instant'
+    ? [model, 'llama-3.1-8b-instant']
+    : [model, model];
+  let lastError = null;
+  for(let i=0;i<models.length;i++){
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 110000);
+    try{
+      const r = await fetch(endpoint, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        signal:controller.signal,
+        body:JSON.stringify({
+          api_key:apiKey,
+          body:{
+            model:models[i],
+            messages:[{role:'user', content:prompt}],
+            temperature:0.05,
+            max_tokens:260
+          }
+        })
+      });
+      let d;
+      try{ d = await r.json(); }
+      catch(_){ d = {error:{message:await r.text()}}; }
+      if(!r.ok) throw new Error(d?.detail || d?.error?.message || `AI API ${r.status}`);
+      const answer = d?.choices?.[0]?.message?.content;
+      if(!answer) throw new Error(d?.error?.message || 'AI 沒有回傳內容');
+      return answer;
+    }catch(e){
+      lastError = e;
+      await new Promise(resolve => setTimeout(resolve, 800));
+    }finally{
+      clearTimeout(timer);
+    }
+  }
+  throw lastError || new Error('AI 呼叫失敗');
+}
+
+askAI = async function(id, mode){
+  const sc = allScores[id];
+  const apiKey = document.getElementById('apiKeyInput')?.value?.trim();
+  if(!sc) return;
+  const panel = document.getElementById('aiPanel');
+  const content = document.getElementById('aiContent');
+  const title = panel?.querySelector('.panel-title');
+  const badge = panel?.querySelector('.ai-badge');
+  if(title) title.textContent = mode === 'short' ? 'AI 短線結論' : 'AI 中長期結論';
+  if(badge) badge.textContent = getAIName();
+  panel.style.display = 'block';
+  content.innerHTML = `<div class="ai-loading"><div class="spinner"></div> ${getAIName()} 分析中...</div>`;
+  panel.scrollIntoView({behavior:'smooth', block:'start'});
+
+  if(!apiKey){
+    content.textContent = buildLocalAIConclusion(sc, mode, '未輸入 API Key');
+    return;
+  }
+
+  try{
+    const prompt = buildCompactAIPrompt(id, sc, mode);
+    const answer = await fetchAIWithRetry(getAIEndpoint(), apiKey, getAIModel(), prompt);
+    content.textContent = answer;
+    showToast(`${getAIName()} 分析完成`);
+  }catch(e){
+    const note = e?.name === 'AbortError' ? 'AI 回應逾時' : (e?.message || 'AI 暫時失敗');
+    content.textContent = buildLocalAIConclusion(sc, mode, note);
+    showToast('AI API 暫時不穩，已改用系統備用結論');
+  }
+};
+
 runAI = async function(id){ return askAI(id, 'long'); };
 runAIShort = async function(id){ return askAI(id, 'short'); };
 

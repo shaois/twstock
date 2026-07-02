@@ -270,14 +270,23 @@ async def groq_proxy(request: dict):
     if not api_key:
         raise HTTPException(status_code=400, detail="需要 Groq API Key")
     body = request.get("body", {})
+    body.setdefault("temperature", 0.05)
+    body.setdefault("max_tokens", 320)
     try:
-        timeout = httpx.Timeout(90.0, connect=15.0)
+        timeout = httpx.Timeout(120.0, connect=20.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            r = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=body
-            )
+            last_response = None
+            for attempt in range(3):
+                r = await client.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json=body
+                )
+                last_response = r
+                if r.status_code not in (408, 409, 429, 500, 502, 503, 504):
+                    break
+                await asyncio.sleep(1.2 * (attempt + 1))
+            r = last_response
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Groq AI 回應逾時，請稍後再試")
     except httpx.HTTPError as e:
