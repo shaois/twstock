@@ -1953,6 +1953,130 @@ runScreener = function(){
     </div>`;
 };
 
+async function waitCacheFetch(ms){
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function fetchCacheJsonStrict(file, retries=3){
+  const localBase = new URL('cache/', window.location.href).toString();
+  const urls = [
+    `${localBase}${file}`,
+    `${GH_CACHE_BASE}/${file}`
+  ];
+  let lastError = null;
+  for(const url of urls){
+    for(let i=0;i<retries;i++){
+      try{
+        const r = await fetch(url, {cache:'default'});
+        if(!r.ok) throw new Error(`${file} HTTP ${r.status}`);
+        return await r.json();
+      }catch(e){
+        lastError = e;
+        await waitCacheFetch(700 * (i + 1));
+      }
+    }
+  }
+  throw lastError || new Error(`${file} 載入失敗`);
+}
+
+async function fetchOptionalCacheJson(file){
+  try{
+    await waitCacheFetch(120);
+    return await fetchCacheJsonStrict(file, 2);
+  }catch(_){
+    return {data:{}};
+  }
+}
+
+loadGitHubCache = async function(force=false){
+  if(ghCache.loaded && !force) return ghCache;
+  const scores = await fetchCacheJsonStrict('scores.json', 4);
+  const scoreData = scores?.data || {};
+  const expectedCount = Array.isArray(CANDIDATES) ? CANDIDATES.length : 200;
+  const missingScoreIds = (Array.isArray(CANDIDATES) ? CANDIDATES : []).filter(s => !scoreData[s.id]).map(s => s.id);
+  if(missingScoreIds.length > 0){
+    throw new Error(`scores.json 不完整，目前缺 ${missingScoreIds.length} 支，應有 ${expectedCount} 支；停止更新畫面`);
+  }
+
+  const files = ['fundamental.json','revenue.json','price.json','exdiv.json','balance.json','news.json','institutional.json'];
+  const loaded = {};
+  for(const file of files){
+    loaded[file] = await fetchOptionalCacheJson(file);
+  }
+
+  ghCache.fundamental = loaded['fundamental.json']?.data || {};
+  ghCache.revenue = loaded['revenue.json']?.data || {};
+  ghCache.price = loaded['price.json']?.data || {};
+  ghCache.exdiv = loaded['exdiv.json']?.data || {};
+  ghCache.balance = loaded['balance.json']?.data || {};
+  ghCache.scores = scoreData;
+  ghCache.news = loaded['news.json']?.data || {};
+  ghCache.institutional = loaded['institutional.json']?.data || {};
+  ghCache.savedAt = scores?._saved_at || loaded['price.json']?._saved_at || '';
+  ghCache.loaded = true;
+  console.log('[Cache] scores loaded:', Object.keys(scoreData).length, ghCache.savedAt);
+  return ghCache;
+};
+
+loadStocks = async function(){
+  const loadBtn = document.querySelector('.btn-primary');
+  if(loadBtn){
+    loadBtn.textContent = '載入快取中...';
+    loadBtn.style.opacity = '0.7';
+  }
+  const oldScores = {...allScores};
+  const oldStocks = [...allStocks];
+  try{
+    await loadGitHubCache(true);
+    allStocks = [];
+    allScores = {};
+    for(const s of CANDIDATES){
+      const cachedScore = ghCache.scores?.[s.id];
+      if(!cachedScore) continue;
+      allScores[s.id] = {
+        ...cachedScore,
+        id:s.id,
+        name:s.name,
+        sector:s.sector,
+        newsData:ghCache.news?.[s.id] || null,
+        instData:ghCache.institutional?.[s.id] || null,
+        _screeningInstData:ghCache.institutional?.[s.id] || null
+      };
+      const displayPrice = allScores[s.id]?.t?.price || 0;
+      allStocks.push({
+        ...s,
+        price:displayPrice,
+        marketCap:allScores[s.id]?.marketCap || displayPrice * (s.shares || 0) * 1000
+      });
+    }
+    const expectedCount = Array.isArray(CANDIDATES) ? CANDIDATES.length : 200;
+    if(Object.keys(allScores).length !== expectedCount){
+      throw new Error(`有效評分數量不完整，目前 ${Object.keys(allScores).length} 筆，應有 ${expectedCount} 筆`);
+    }
+    allStocks.sort((a,b) =>
+      (Number(b.marketCap || 0) - Number(a.marketCap || 0)) ||
+      String(a.id).localeCompare(String(b.id))
+    );
+    document.getElementById('stockCount').textContent = `(${allStocks.length})`;
+    renderStockList();
+    showToast(`快取載入完成：${allStocks.length} 支，資料時間 ${ghCache.savedAt || '未知'}`);
+  }catch(e){
+    allScores = oldScores;
+    allStocks = oldStocks;
+    showToast(`快取載入失敗，已保留原畫面：${e.message}`);
+    const container=document.getElementById('screenerResult');
+    if(container && Object.keys(oldScores).length===0){
+      container.style.display='block';
+      container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--red);color:var(--red)">快取載入失敗：${e.message}<br>請稍後重新整理，不會使用臨時計算分數。</div>`;
+    }
+  }finally{
+    if(loadBtn){
+      loadBtn.textContent = '載入最新快取';
+      loadBtn.style.opacity = '1';
+    }
+  }
+};
+
 runAI = async function(id){ return askAI(id, 'long'); };
 runAIShort = async function(id){ return askAI(id, 'short'); };
 
