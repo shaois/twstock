@@ -1797,6 +1797,162 @@ findMomentumTop5 = function(){
     </div>`;
 };
 
+async function fetchCacheJsonStrict(file, retries=3){
+  let lastError = null;
+  for(let i=0;i<retries;i++){
+    try{
+      const r = await fetch(`${GH_CACHE_BASE}/${file}?t=${Date.now()}_${i}`, {cache:'no-store'});
+      if(!r.ok) throw new Error(`${file} HTTP ${r.status}`);
+      return await r.json();
+    }catch(e){
+      lastError = e;
+      await new Promise(resolve => setTimeout(resolve, 500 * (i + 1)));
+    }
+  }
+  throw lastError || new Error(`${file} 載入失敗`);
+}
+
+loadGitHubCache = async function(force=false){
+  if(ghCache.loaded && !force) return ghCache;
+  const [scores, f, r, p, ex, b, news, institutional] = await Promise.all([
+    fetchCacheJsonStrict('scores.json'),
+    fetchCacheJsonStrict('fundamental.json').catch(()=>({data:{}})),
+    fetchCacheJsonStrict('revenue.json').catch(()=>({data:{}})),
+    fetchCacheJsonStrict('price.json').catch(()=>({data:{}})),
+    fetchCacheJsonStrict('exdiv.json').catch(()=>({data:{}})),
+    fetchCacheJsonStrict('balance.json').catch(()=>({data:{}})),
+    fetchCacheJsonStrict('news.json').catch(()=>({data:{}})),
+    fetchCacheJsonStrict('institutional.json').catch(()=>({data:{}}))
+  ]);
+  const scoreData = scores?.data || {};
+  const expectedCount = Array.isArray(CANDIDATES) ? CANDIDATES.length : 200;
+  const missingScoreIds = (Array.isArray(CANDIDATES) ? CANDIDATES : []).filter(s => !scoreData[s.id]).map(s => s.id);
+  const scoreCount = Object.keys(scoreData).length;
+  if(missingScoreIds.length > 0){
+    throw new Error(`scores.json 不完整，目前缺 ${missingScoreIds.length} 支，應有 ${expectedCount} 支；停止更新畫面`);
+  }
+  ghCache.fundamental = f?.data || {};
+  ghCache.revenue = r?.data || {};
+  ghCache.price = p?.data || {};
+  ghCache.exdiv = ex?.data || {};
+  ghCache.balance = b?.data || {};
+  ghCache.scores = scoreData;
+  ghCache.news = news?.data || {};
+  ghCache.institutional = institutional?.data || {};
+  ghCache.savedAt = scores?._saved_at || p?._saved_at || '';
+  ghCache.loaded = true;
+  console.log('[GH Cache] scores loaded:', scoreCount, ghCache.savedAt);
+  return ghCache;
+};
+
+loadStocks = async function(){
+  const loadBtn = document.querySelector('.btn-primary');
+  if(loadBtn){
+    loadBtn.textContent = '載入快取中...';
+    loadBtn.style.opacity = '0.7';
+  }
+  const oldScores = {...allScores};
+  const oldStocks = [...allStocks];
+  try{
+    await loadGitHubCache(true);
+    allStocks = [];
+    allScores = {};
+    for(const s of CANDIDATES){
+      const cachedScore = ghCache.scores?.[s.id];
+      if(!cachedScore) continue;
+      allScores[s.id] = {
+        ...cachedScore,
+        id:s.id,
+        name:s.name,
+        sector:s.sector,
+        newsData:ghCache.news?.[s.id] || null,
+        instData:ghCache.institutional?.[s.id] || null,
+        _screeningInstData:ghCache.institutional?.[s.id] || null
+      };
+      const displayPrice = allScores[s.id]?.t?.price || 0;
+      allStocks.push({
+        ...s,
+        price:displayPrice,
+        marketCap:allScores[s.id]?.marketCap || displayPrice * (s.shares || 0) * 1000
+      });
+    }
+    const expectedCount = Array.isArray(CANDIDATES) ? CANDIDATES.length : 200;
+    if(Object.keys(allScores).length !== expectedCount){
+      throw new Error(`有效評分數量不完整，目前 ${Object.keys(allScores).length} 筆，應有 ${expectedCount} 筆`);
+    }
+    allStocks.sort((a,b) =>
+      (Number(b.marketCap || 0) - Number(a.marketCap || 0)) ||
+      String(a.id).localeCompare(String(b.id))
+    );
+    document.getElementById('stockCount').textContent = `(${allStocks.length})`;
+    renderStockList();
+    showToast(`快取載入完成：${allStocks.length} 支，資料時間 ${ghCache.savedAt || '未知'}`);
+  }catch(e){
+    allScores = oldScores;
+    allStocks = oldStocks;
+    showToast(`快取載入失敗，已保留原畫面：${e.message}`);
+    const container=document.getElementById('screenerResult');
+    if(container && Object.keys(oldScores).length===0){
+      container.style.display='block';
+      container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--red);color:var(--red)">快取載入失敗：${e.message}<br>請稍後重新整理，不會使用臨時計算分數。</div>`;
+    }
+  }finally{
+    if(loadBtn){
+      loadBtn.textContent = '載入最新快取';
+      loadBtn.style.opacity = '1';
+    }
+  }
+};
+
+runScreener = function(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+  const results=Object.values(allScores)
+    .filter(sc=>Number(sc.total || 0)>=60)
+    .sort((a,b)=>
+      (Number(b.total || 0)-Number(a.total || 0)) ||
+      (Number(b.fScore || 0)-Number(a.fScore || 0)) ||
+      (Number(b.tScore || 0)-Number(a.tScore || 0)) ||
+      String(a.id || '').localeCompare(String(b.id || ''))
+    );
+  if(!results.length){
+    container.innerHTML='<div style="padding:20px;color:var(--muted)">目前沒有總分 60 以上的股票</div>';
+    return;
+  }
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="panel-title" style="margin:0">篩選結果 - 總分 >= 60（共 ${results.length} 支）</div>
+        <div style="font-size:11px;color:var(--muted)">資料時間：${ghCache.savedAt || '未知'}</div>
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>評級</th><th>總分</th><th>基本面(50)</th><th>技術面(50)</th><th>估值面(20)</th><th>RSI14</th><th>PE</th><th>建議</th></tr></thead>
+        <tbody>${results.map(sc=>{
+          const rsi=Number(sc.t?.rsi || 0);
+          const rsiColor=rsi>=80?'var(--red)':rsi>=70?'#f97316':rsi>=50?'var(--green)':rsi>=30?'var(--accent)':'#818cf8';
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const pe = sc.vDetail?.pe;
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--muted)">${sc.name}</span>${sc.vDetail?.is_moat?'<span style="font-size:9px;color:#f59e0b;margin-left:4px;padding:1px 4px;border:1px solid #f59e0b;border-radius:3px">護城河</span>':''}</td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:${gc[sc.grade]||'var(--text)'}">${sc.total}</td>
+            <td class="td-mono">${sc.fScore}</td>
+            <td class="td-mono">${sc.tScore}</td>
+            <td class="td-mono">${sc.vScore}</td>
+            <td class="td-mono"><span style="color:${rsiColor};font-weight:700">${rsi.toFixed(1)}</span></td>
+            <td class="td-mono">${pe ? Number(pe).toFixed(1)+'x' : 'N/A'}</td>
+            <td style="font-size:11px">${sc.suggestion || ''}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+};
+
 runAI = async function(id){ return askAI(id, 'long'); };
 runAIShort = async function(id){ return askAI(id, 'short'); };
 
