@@ -1663,6 +1663,140 @@ askAI = async function(id, mode){
   }
 };
 
+function getInstitutionalSnapshotForScreening(sc){
+  const id = sc?.id;
+  return (id && ghCache?.institutional?.[id]) || sc?._screeningInstData || null;
+}
+
+const _loadStocksBeforeSnapshotLock = loadStocks;
+loadStocks = async function(){
+  await _loadStocksBeforeSnapshotLock();
+  Object.values(allScores || {}).forEach(sc => {
+    sc._screeningInstData = getInstitutionalSnapshotForScreening(sc);
+  });
+};
+
+const _getChipMoodBeforeSnapshotLock = getChipMood;
+getChipMood = function(sc){
+  const inst = getInstitutionalSnapshotForScreening(sc);
+  if(!inst){
+    return {score:0, label:'待確認', reasons:['使用固定快取，籌碼待更新']};
+  }
+  const originalInst = sc.instData;
+  sc.instData = inst;
+  try{
+    return _getChipMoodBeforeSnapshotLock(sc);
+  }finally{
+    sc.instData = originalInst;
+  }
+};
+
+function isTradableDecision(d){
+  return d && !['不買','觀望'].includes(d.action) && d.position !== '0%';
+}
+
+function stableStockCompare(scoreKey){
+  return (a,b) =>
+    (Number(b[scoreKey] || 0) - Number(a[scoreKey] || 0)) ||
+    (Number(b.total || 0) - Number(a.total || 0)) ||
+    (Number(b.tScore || 0) - Number(a.tScore || 0)) ||
+    String(a.id || '').localeCompare(String(b.id || ''));
+}
+
+findBuyableTop5 = function(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  const candidates = Object.values(allScores).map(sc => {
+    const d = getPracticalTradeDecision(sc, 'long');
+    if(!isTradableDecision(d)) return null;
+    const buyScore = d.opportunity * 12 - d.risk * 6 + (sc.total || 0) * 0.25;
+    return {...sc, practical:d, buyScore};
+  }).filter(Boolean).sort(stableStockCompare('buyScore')).slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML='<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">目前沒有達到小量試單以上的標的。今天可以等更好的風險報酬。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent);">
+      <div class="panel-title" style="margin-bottom:14px;color:var(--accent)">可買進 Top 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        使用今日 cache 快照固定排序；即時補抓的個股籌碼只顯示在個股頁，不影響這份名單。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>結論</th><th>部位</th><th>型態</th><th>機會/風險</th><th>理由</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const d=sc.practical;
+          const tags=(d.reasons || []).slice(0,4).map(r=>`<span style="font-size:9px;background:rgba(0,212,170,0.15);color:var(--accent);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank || i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent);font-weight:700">${d.action}</td>
+            <td class="td-mono">${d.position}</td>
+            <td>${d.buyType}</td>
+            <td class="td-mono">${d.opportunity}/${d.risk}</td>
+            <td>${tags}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+};
+
+findMomentumTop5 = function(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  const candidates = Object.values(allScores).map(sc => {
+    const d = getPracticalTradeDecision(sc, 'short');
+    if(!isTradableDecision(d)) return null;
+    const entryScore = d.opportunity * 14 - d.risk * 5 + Math.min(sc.tScore || 0, 50) * 0.35;
+    return {...sc, practical:d, entryScore};
+  }).filter(Boolean).sort(stableStockCompare('entryScore')).slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML='<div class="screener-panel" style="border:1px solid var(--accent2);color:var(--muted)">目前沒有達到短線小量試單以上的標的。今天可以等更好的風險報酬。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent2);">
+      <div class="panel-title" style="margin-bottom:14px;color:var(--accent2)">短線動能 Top 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        使用今日 cache 快照固定排序；盤中即時補抓資料不會改變這份名單。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>結論</th><th>部位</th><th>RSI14</th><th>量比</th><th>理由/風險</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const d=sc.practical;
+          const tags=[...(d.reasons || []).slice(0,3), ...(d.risks || []).slice(0,2)].map(r=>`<span style="font-size:9px;background:rgba(59,130,246,0.15);color:var(--accent2);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank || i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent2);font-weight:700">${d.action}</td>
+            <td class="td-mono">${d.position}</td>
+            <td class="td-mono">${(sc.t?.rsi ?? 0).toFixed(1)}</td>
+            <td class="td-mono">${(sc.t?.volRatio ?? 0).toFixed(2)}x</td>
+            <td>${tags}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+};
+
 runAI = async function(id){ return askAI(id, 'long'); };
 runAIShort = async function(id){ return askAI(id, 'short'); };
 
