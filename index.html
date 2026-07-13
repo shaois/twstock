@@ -4451,6 +4451,142 @@ findMomentumTop5 = function(){
 
 runAI = async function(id){ return askAI(id, 'long'); };
 runAIShort = async function(id){ return askAI(id, 'short'); };
+
+function getLatestPriceDateForStock(sc){
+  const rows = ghCache?.price?.[sc?.id] || [];
+  const dates = rows.map(x => x?.date).filter(Boolean).sort();
+  return dates.length ? dates[dates.length - 1] : null;
+}
+
+function getDataFreshnessContext(sc){
+  const latest = getLatestPriceDateForStock(sc);
+  if(!latest) return {stale:true, label:'資料待確認', note:'缺少股價日期'};
+  const latestDate = new Date(`${latest}T00:00:00+08:00`);
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const ageDays = Math.round((today - latestDate) / 86400000);
+  const stale = ageDays > 3;
+  return {
+    stale,
+    latest,
+    ageDays,
+    label: stale ? '資料偏舊' : '資料正常',
+    note: stale ? `股價資料停在 ${latest}，距今 ${ageDays} 天，盤中變化可能尚未反映` : `股價資料日期 ${latest}`
+  };
+}
+
+function normalizeBuyActionText(action){
+  const text = String(action || '');
+  if(text.includes('不買') || text.includes('銝')) return '不買';
+  if(text.includes('觀望') || text.includes('閫')) return '觀望';
+  if(text.includes('積極') || text.includes('蝛')) return '積極買進';
+  if(text.includes('小量') || text.includes('撠')) return '小量試單';
+  if(text.includes('買進') || text.includes('鞎')) return '買進';
+  return text || '觀望';
+}
+
+var __getPracticalTradeDecisionFreshnessGuard = getPracticalTradeDecision;
+getPracticalTradeDecision = function(sc, mode='long'){
+  const decision = __getPracticalTradeDecisionFreshnessGuard(sc, mode);
+  const freshness = getDataFreshnessContext(sc);
+  const weak = typeof getShortWeaknessContext === 'function'
+    ? getShortWeaknessContext(sc)
+    : {blocker:false, caution:false, label:'短線未檢查', note:''};
+  decision.contexts = decision.contexts || {};
+  decision.contexts.freshness = freshness;
+
+  if(mode === 'long'){
+    const action = normalizeBuyActionText(decision.action);
+    if(weak.blocker){
+      decision.action = '觀望';
+      decision.position = '0%';
+      decision.buyType = '等轉強';
+      decision.risk = (decision.risk || 0) + 2;
+      decision.risks = [...(weak.blockers || ['短線轉弱']), ...(decision.risks || [])].slice(0,5);
+      decision.summary = `短線轉弱：${weak.note}，中長線先觀望`;
+      return decision;
+    }
+    if(freshness.stale && action === '積極買進'){
+      decision.action = '買進';
+      decision.position = '30-40%';
+      decision.buyType = '等盤中確認';
+      decision.risk = (decision.risk || 0) + 1;
+      decision.risks = [freshness.note, ...(decision.risks || [])].slice(0,5);
+      decision.summary = `資料偏舊，積極買進降級為買進：${freshness.note}`;
+      return decision;
+    }
+    if(weak.caution && action === '積極買進'){
+      decision.action = '買進';
+      decision.position = '30-40%';
+      decision.buyType = '等回穩';
+      decision.risk = (decision.risk || 0) + 1;
+      decision.risks = [...(weak.cautions || ['短線需確認']), ...(decision.risks || [])].slice(0,5);
+      decision.summary = `短線需確認，積極買進降級為買進：${weak.note}`;
+    }
+  }
+  return decision;
+};
+
+function isBuyableActionForTop5(action){
+  const clean = normalizeBuyActionText(action);
+  return clean === '積極買進' || clean === '買進' || clean === '小量試單';
+}
+
+findBuyableTop5 = function(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  const candidates = Object.values(allScores).map(sc => {
+    const d = getPracticalTradeDecision(sc, 'long');
+    if(!isBuyableActionForTop5(d.action)) return null;
+    const freshness = getDataFreshnessContext(sc);
+    const weak = typeof getShortWeaknessContext === 'function' ? getShortWeaknessContext(sc) : null;
+    const stalePenalty = freshness.stale ? 12 : 0;
+    const weakPenalty = weak?.caution ? 8 : 0;
+    const score = (d.opportunity || 0) * 12 - (d.risk || 0) * 6 + (sc.total || 0) * 0.25 - stalePenalty - weakPenalty;
+    return {...sc, practical:d, freshness, weak, buyScore:score};
+  }).filter(Boolean).sort((a,b)=>b.buyScore-a.buyScore).slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML='<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">目前沒有符合可買進條件的股票。短線轉弱或資料偏舊者已降級。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent);">
+      <div class="panel-title" style="margin-bottom:14px;color:var(--accent)">可買進 Top 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        新版會把資料日期與短線轉弱一起納入。若股價資料偏舊或短線需確認，積極買進會自動降級。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>結論</th><th>部位</th><th>型態</th><th>機會/風險</th><th>檢查</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const d=sc.practical;
+          const checks = [
+            ...(d.reasons || []).slice(0,2),
+            sc.freshness?.label,
+            sc.weak?.label
+          ].filter(Boolean);
+          const tags=checks.map(r=>`<span style="font-size:9px;background:rgba(0,212,170,0.15);color:var(--accent);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank || i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent);font-weight:700">${d.action}</td>
+            <td class="td-mono">${d.position}</td>
+            <td>${d.buyType}</td>
+            <td class="td-mono">${d.opportunity}/${d.risk}</td>
+            <td>${tags}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+};
 </script>
 </body>
 </html>
