@@ -4724,6 +4724,196 @@ findMomentumTop5 = function(){
       </table>
     </div>`;
 };
+function getShortWeaknessContextBalanced(sc){
+  const t = sc?.t || {};
+  const num = (v, fallback=0) => Number.isFinite(Number(v)) ? Number(v) : fallback;
+  const price = num(t.price);
+  const ma5 = num(t.ma5);
+  const ma20 = num(t.ma20);
+  const downStreak = num(t.downStreak ?? t.down_streak);
+  const last3Return = num(t.last3Return ?? t.last_3_return);
+  const ma5Gap = num(t.ma5Gap ?? t.ma5_gap, ma5 > 0 ? ((price - ma5) / ma5) * 100 : 0);
+  const macdHist = num(t.macdHist ?? t.macd_hist);
+  const macdHistDelta = num(t.macdHistDelta ?? t.macd_hist_delta);
+  const volRatio = num(t.volRatio ?? t.vol_ratio_5_20, 1);
+  const lastVolumeRatio20 = num(t.lastVolumeRatio20 ?? t.last_volume_ratio_20, volRatio);
+  const rsi = num(t.rsi ?? t.rsi14, 50);
+  const freshness = typeof getDataFreshnessContext === 'function'
+    ? getDataFreshnessContext(sc)
+    : {stale:false, label:'資料正常', note:''};
+  const blockers = [];
+  const cautions = [];
+
+  if(freshness.stale) cautions.push('資料偏舊');
+  if(downStreak >= 3) blockers.push('連跌3天');
+  else if(downStreak >= 2) cautions.push('連跌2天');
+  if(ma5 > 0 && price > 0 && price < ma5){
+    if(downStreak >= 2 || ma5Gap <= -1) blockers.push('跌破MA5');
+    else cautions.push('低於MA5');
+  }
+  if(ma20 > 0 && price > 0 && price < ma20 && downStreak >= 2) blockers.push('跌破MA20');
+  if(macdHist <= 0 && downStreak >= 2) blockers.push('MACD轉弱');
+  else if(macdHist > 0 && macdHistDelta < 0) cautions.push('MACD動能縮小');
+  if(last3Return <= -3) blockers.push('3日跌幅過大');
+  else if(last3Return < -1.5) cautions.push('3日轉弱');
+  if((volRatio < 0.8 || lastVolumeRatio20 < 0.75) && downStreak >= 2) blockers.push('量縮下跌');
+  else if(volRatio < 0.9 || lastVolumeRatio20 < 0.85) cautions.push('量能不足');
+  if(rsi >= 70 && macdHistDelta < 0) cautions.push('RSI偏熱且動能降溫');
+
+  return {
+    blocker: blockers.length > 0,
+    caution: cautions.length > 0,
+    blockers,
+    cautions,
+    freshness,
+    downStreak,
+    last3Return,
+    ma5Gap,
+    macdHistDelta,
+    volRatio,
+    lastVolumeRatio20,
+    label: blockers.length ? '短線排除' : (cautions.length ? '短線需確認' : '短線健康'),
+    note: [...blockers, ...cautions].join('、') || '未出現明顯轉弱訊號'
+  };
+}
+
+getShortWeaknessContext = getShortWeaknessContextBalanced;
+
+var __getPracticalTradeDecisionBalanced = getPracticalTradeDecision;
+getPracticalTradeDecision = function(sc, mode='long'){
+  const decision = __getPracticalTradeDecisionBalanced(sc, mode);
+  const weak = getShortWeaknessContext(sc);
+  decision.contexts = decision.contexts || {};
+  decision.contexts.shortWeakness = weak;
+  decision.contexts.freshness = weak.freshness;
+  decision.shortWeakness = weak;
+
+  if(weak.blocker){
+    decision.action = mode === 'short' ? '不買' : '觀望';
+    decision.position = '0%';
+    decision.buyType = mode === 'short' ? '短線排除' : '等轉強';
+    decision.risk = Math.max((decision.risk || 0) + 2, mode === 'short' ? 7 : 6);
+    decision.risks = [...weak.blockers, ...(decision.risks || [])].slice(0, 5);
+    decision.summary = `${mode === 'short' ? '短線排除' : '短線轉弱'}：${weak.note}`;
+    return decision;
+  }
+
+  if(weak.caution && normalizeBuyActionText(decision.action) === '積極買進'){
+    decision.action = mode === 'short' ? '小量試單' : '買進';
+    decision.position = mode === 'short' ? '20-30%' : '30-40%';
+    decision.buyType = weak.freshness?.stale ? '等盤中確認' : '等確認';
+    decision.risk = (decision.risk || 0) + 1;
+    decision.risks = [...weak.cautions, ...(decision.risks || [])].slice(0, 5);
+    decision.summary = `短線需確認：${weak.note}`;
+  }
+  return decision;
+};
+
+findBuyableTop5 = function(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  const candidates = Object.values(allScores).map(sc => {
+    const d = getPracticalTradeDecision(sc, 'long');
+    const clean = normalizeBuyActionText(d.action);
+    if(!['積極買進','買進','小量試單'].includes(clean)) return null;
+    const weak = getShortWeaknessContext(sc);
+    const stalePenalty = weak.freshness?.stale ? 6 : 0;
+    const cautionPenalty = weak.caution ? 4 : 0;
+    const score = (d.opportunity || 0) * 12 - (d.risk || 0) * 6 + (sc.total || 0) * 0.25 - stalePenalty - cautionPenalty;
+    return {...sc, practical:{...d, action:clean}, weak, buyScore:score};
+  }).filter(Boolean).sort((a,b)=>b.buyScore-a.buyScore).slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML='<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">目前沒有符合可買進條件的股票。短線明顯轉弱者已排除。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent);">
+      <div class="panel-title" style="margin-bottom:14px;color:var(--accent)">可買進 Top 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        使用原本分數排序，再用短線風控降級；資料偏舊只降級與扣分，不會整批排除。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>結論</th><th>部位</th><th>型態</th><th>機會/風險</th><th>檢查</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const d=sc.practical;
+          const checks=[...(d.reasons || []).slice(0,2), sc.weak?.freshness?.label, sc.weak?.label].filter(Boolean);
+          const tags=checks.map(r=>`<span style="font-size:9px;background:rgba(0,212,170,0.15);color:var(--accent);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank || i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent);font-weight:700">${d.action}</td>
+            <td class="td-mono">${d.position}</td>
+            <td>${d.buyType}</td>
+            <td class="td-mono">${d.opportunity}/${d.risk}</td>
+            <td>${tags}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+};
+
+findMomentumTop5 = function(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+
+  const candidates = Object.values(allScores).map(sc => {
+    const d = getPracticalTradeDecision(sc, 'short');
+    const weak = getShortWeaknessContext(sc);
+    if(weak.blocker) return null;
+    const clean = normalizeBuyActionText(d.action);
+    if(!['積極買進','買進','小量試單'].includes(clean)) return null;
+    const stalePenalty = weak.freshness?.stale ? 8 : 0;
+    const cautionPenalty = weak.caution ? 5 : 0;
+    const score = (d.opportunity || 0) * 14 - (d.risk || 0) * 7 + Math.min(sc.tScore || 0, 50) * 0.35 - stalePenalty - cautionPenalty;
+    return {...sc, practical:{...d, action:clean}, shortWeakness:weak, entryScore:score};
+  }).filter(Boolean).sort((a,b)=>b.entryScore-a.entryScore).slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML='<div class="screener-panel" style="border:1px solid var(--accent2);color:var(--muted)">目前沒有符合「短線動能 Top 5」的股票。連跌、跌破MA5、量縮或MACD轉弱的股票已排除。</div>';
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent2);">
+      <div class="panel-title" style="margin-bottom:14px;color:var(--accent2)">短線動能 Top 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        資料偏舊只降級與扣分；真正轉弱如連跌、跌破MA5、量縮下跌、MACD轉弱才排除。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>結論</th><th>部位</th><th>RSI14</th><th>量比</th><th>短線檢查</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const d=sc.practical;
+          const weak=sc.shortWeakness;
+          const checks=[d.buyType, weak.freshness?.label, weak.label].filter(Boolean);
+          const tags=checks.map(r=>`<span style="font-size:9px;background:rgba(59,130,246,0.15);color:var(--accent2);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank || i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent2);font-weight:700">${d.action}</td>
+            <td class="td-mono">${d.position}</td>
+            <td class="td-mono">${(sc.t?.rsi ?? 0).toFixed(1)}</td>
+            <td class="td-mono">${(sc.t?.volRatio ?? 0).toFixed(2)}x</td>
+            <td>${tags}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+};
 </script>
 </body>
 </html>
