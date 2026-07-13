@@ -273,7 +273,14 @@ def score_stock(stock_id, stock_info, data, exdiv_db):
     if not data["hasData"]: return None
     closes, volumes = data["closes"], data["volumes"]
     price = data["price"]
-    t = {"price": price, "high52": data["high52"], "low52": data["low52"], "ma5": 0, "ma20": 0, "ma60": 0, "ma120": 0, "rsi": 50, "macd": 0, "macdHist": 0, "volRatio": 1, "trend6m": 0, "pos52": 50}
+    t = {
+        "price": price, "high52": data["high52"], "low52": data["low52"],
+        "ma5": 0, "ma20": 0, "ma60": 0, "ma120": 0,
+        "rsi": 50, "macd": 0, "macdHist": 0, "macdHistDelta": 0,
+        "volRatio": 1, "lastVolumeRatio20": 1,
+        "trend6m": 0, "pos52": 50, "ma5Gap": 0,
+        "downStreak": 0, "upStreak": 0, "last3Return": 0,
+    }
     if len(closes) >= 5:
         t["ma5"] = avg(closes, 5)
         t["ma20"] = avg(closes, min(20, len(closes)))
@@ -283,10 +290,28 @@ def score_stock(stock_id, stock_info, data, exdiv_db):
         macd = calc_macd(closes)
         t["macd"] = macd["macd"]
         t["macdHist"] = macd["hist"]
+        if len(closes) >= 27:
+            prev_macd = calc_macd(closes[:-1])
+            t["macdHistDelta"] = t["macdHist"] - prev_macd["hist"]
         v5 = avg(volumes, min(5, len(volumes)))
         v20 = avg(volumes, min(20, len(volumes)))
         t["volRatio"] = v5 / v20 if v20 > 0 else 1
+        t["lastVolumeRatio20"] = volumes[-1] / v20 if v20 > 0 and volumes else 1
         t["pos52"] = (price - t["low52"]) / (t["high52"] - t["low52"]) * 100 if t["high52"] != t["low52"] else 50
+        t["ma5Gap"] = (price - t["ma5"]) / t["ma5"] * 100 if t["ma5"] > 0 else 0
+        if len(closes) >= 2:
+            for i in range(len(closes) - 1, 0, -1):
+                if closes[i] < closes[i - 1]:
+                    t["downStreak"] += 1
+                else:
+                    break
+            for i in range(len(closes) - 1, 0, -1):
+                if closes[i] > closes[i - 1]:
+                    t["upStreak"] += 1
+                else:
+                    break
+        if len(closes) >= 4 and closes[-4] > 0:
+            t["last3Return"] = (price - closes[-4]) / closes[-4] * 100
         if len(closes) >= 120:
             base = closes[-121]
             t["trend6m"] = (price - base) / base * 100 if base > 0 else 0
@@ -358,7 +383,11 @@ def score_stock(stock_id, stock_info, data, exdiv_db):
             "current_price": round(t["price"], 2), "ma5": round(t["ma5"], 2), "ma20": round(t["ma20"], 2),
             "ma60": round(t["ma60"], 2), "ma120": round(t["ma120"], 2), "rsi14": round(t["rsi"], 1),
             "macd": round(t["macd"], 3), "macd_hist": round(t["macdHist"], 3),
+            "macd_hist_delta": round(t["macdHistDelta"], 3),
             "vol_ratio_5_20": round(t["volRatio"], 2), "price_position_52w": round(t["pos52"], 1),
+            "last_volume_ratio_20": round(t["lastVolumeRatio20"], 2),
+            "ma5_gap": round(t["ma5Gap"], 2), "down_streak": t["downStreak"],
+            "up_streak": t["upStreak"], "last_3_return": round(t["last3Return"], 2),
             "high52": round(t["high52"], 2), "low52": round(t["low52"], 2), "trend_6m": round(t["trend6m"], 1),
         },
         "valuation": {"pe": round(pe, 2) if pe is not None else None, "div_yield": round(div_yield, 2), "pe_percentile": round(pe_percentile, 1) if pe_percentile is not None else None},
