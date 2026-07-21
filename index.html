@@ -4914,6 +4914,265 @@ findMomentumTop5 = function(){
       </table>
     </div>`;
 };
+
+// Market-regime and entry-timing overlay. Core stock scores remain unchanged.
+function getMarketRegimeContext(){
+  const rows = Object.values(allScores || {});
+  const valid = rows.filter(sc => {
+    const t = sc?.t || {};
+    return Number(t.price) > 0 && Number(t.ma20) > 0;
+  });
+  if(valid.length < 50){
+    return {
+      label:'資料不足', level:'unknown', score:0,
+      note:`只有 ${valid.length} 支具備完整技術資料，盤勢暫以中性處理`,
+      total:valid.length, aboveMa20Pct:0, macdPositivePct:0, downPct:0, hotPct:0
+    };
+  }
+
+  const ratio = predicate => valid.filter(predicate).length / valid.length;
+  const aboveMa20Pct = ratio(sc => Number(sc.t?.price) >= Number(sc.t?.ma20));
+  const macdPositivePct = ratio(sc => Number(sc.t?.macdHist ?? sc.t?.macd_hist) > 0);
+  const downPct = ratio(sc => Number(sc.t?.downStreak ?? sc.t?.down_streak ?? 0) >= 2);
+  const hotPct = ratio(sc => Number(sc.t?.rsi ?? sc.t?.rsi14 ?? 50) >= 70);
+  const healthyPct = ratio(sc => {
+    const t = sc.t || {};
+    const rsi = Number(t.rsi ?? t.rsi14 ?? 50);
+    return Number(t.price) >= Number(t.ma20) &&
+      Number(t.macdHist ?? t.macd_hist) > 0 && rsi >= 48 && rsi <= 68;
+  });
+
+  let label = '震盪';
+  let level = 'sideways';
+  let score = 0;
+  if(aboveMa20Pct >= 0.58 && macdPositivePct >= 0.52 && downPct < 0.25){
+    label = '偏多'; level = 'bullish'; score = 1;
+  }else if(aboveMa20Pct < 0.43 || macdPositivePct < 0.40 || downPct >= 0.35){
+    label = '偏弱'; level = 'weak'; score = -1;
+  }else if(hotPct >= 0.30 && healthyPct < 0.40){
+    label = '過熱震盪'; level = 'hot'; score = -1;
+  }
+
+  const pct = value => `${Math.round(value * 100)}%`;
+  return {
+    label, level, score, total:valid.length,
+    aboveMa20Pct, macdPositivePct, downPct, hotPct, healthyPct,
+    note:`站上MA20 ${pct(aboveMa20Pct)}、MACD正值 ${pct(macdPositivePct)}、連跌股 ${pct(downPct)}`
+  };
+}
+
+// Keep the existing mood panels and AI data source aligned with the same market regime.
+getMarketMood = function(){
+  const market = getMarketRegimeContext();
+  return {
+    ...market,
+    strong:Math.round((market.healthyPct || 0) * (market.total || 0)),
+    hot:Math.round((market.hotPct || 0) * (market.total || 0)),
+    weak:Math.round((market.downPct || 0) * (market.total || 0))
+  };
+};
+
+function getEntryTimingContext(sc){
+  const t = sc?.t || {};
+  const num = (value, fallback=0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+  const weak = getShortWeaknessContext(sc);
+  const freshness = weak.freshness || getDataFreshnessContext(sc);
+  const price = num(t.price);
+  const ma5 = num(t.ma5);
+  const ma20 = num(t.ma20);
+  const macdHist = num(t.macdHist ?? t.macd_hist);
+  const macdHistDelta = num(t.macdHistDelta ?? t.macd_hist_delta);
+  const downStreak = num(t.downStreak ?? t.down_streak);
+  const last3Return = num(t.last3Return ?? t.last_3_return);
+  const rsi = num(t.rsi ?? t.rsi14, 50);
+  const checks = [];
+
+  if(weak.blocker){
+    return {
+      level:'blocked', label:'短線排除', ready:false, blocker:true,
+      note:weak.blockers.join('、') || '短線結構轉弱', freshness, weak
+    };
+  }
+
+  if(!(ma5 > 0 && price >= ma5)) checks.push('尚未站穩MA5');
+  if(!(ma20 > 0 && price >= ma20)) checks.push('尚未站穩MA20');
+  if(macdHist <= 0) checks.push('MACD未轉正');
+  if(macdHistDelta < 0) checks.push('MACD動能縮小');
+  if(downStreak > 0) checks.push('最近仍有下跌');
+  if(last3Return <= 0) checks.push('近3日未轉強');
+  if(rsi < 48 || rsi > 68) checks.push('RSI不在健康區');
+  if(freshness?.stale) checks.push('資料偏舊');
+
+  const ready = checks.length === 0;
+  return {
+    level:ready ? 'ready' : 'confirm',
+    label:ready ? '條件完成' : '盤中確認',
+    ready,
+    blocker:false,
+    note:ready ? '日線條件完整；實際下單前仍確認盤中未轉弱' : checks.slice(0,3).join('、'),
+    freshness,
+    weak
+  };
+}
+
+function lowerTradeAction(action){
+  const clean = normalizeBuyActionText(action);
+  if(clean === '積極買進') return '買進';
+  if(clean === '買進') return '小量試單';
+  return clean;
+}
+
+var __getPracticalTradeDecisionBeforeMarketTiming = getPracticalTradeDecision;
+getPracticalTradeDecision = function(sc, mode='long'){
+  const decision = __getPracticalTradeDecisionBeforeMarketTiming(sc, mode);
+  const market = getMarketRegimeContext();
+  const timing = getEntryTimingContext(sc);
+  let action = normalizeBuyActionText(decision.action);
+
+  decision.contexts = decision.contexts || {};
+  decision.contexts.marketRegime = market;
+  decision.contexts.entryTiming = timing;
+  decision.marketRegime = market;
+  decision.entryTiming = timing;
+
+  if(timing.blocker){
+    decision.action = mode === 'short' ? '不買' : '觀望';
+    decision.position = '0%';
+    decision.buyType = '等轉強';
+    decision.risks = [timing.note, ...(decision.risks || [])].slice(0,5);
+    decision.summary = `${timing.label}：${timing.note}`;
+    return decision;
+  }
+
+  // A sideways market lowers only aggressive calls. A weak market lowers every buy call once.
+  if(market.level === 'weak') action = lowerTradeAction(action);
+  else if((market.level === 'sideways' || market.level === 'hot') && action === '積極買進') action = '買進';
+
+  // An incomplete daily setup needs one more confirmation, but remains a candidate.
+  if(!timing.ready && (action === '積極買進' || action === '買進')) action = lowerTradeAction(action);
+
+  decision.action = action;
+  if(action === '積極買進') decision.position = mode === 'short' ? '30-40%' : '40-50%';
+  else if(action === '買進') decision.position = '30-40%';
+  else if(action === '小量試單') decision.position = market.level === 'weak' ? '10-20%' : '20-30%';
+  else decision.position = '0%';
+
+  if(['積極買進','買進','小量試單'].includes(action)){
+    decision.buyType = timing.ready ? '盤中未轉弱可進場' : '等盤中確認';
+  }
+  const marketRisk = market.level === 'weak' || market.level === 'hot' ? `盤勢${market.label}：${market.note}` : '';
+  const timingRisk = timing.ready ? '' : timing.note;
+  decision.risks = [marketRisk, timingRisk, ...(decision.risks || [])].filter(Boolean).slice(0,5);
+  decision.risk = (decision.risk || 0) + (market.level === 'weak' || market.level === 'hot' ? 1 : 0) + (!timing.ready ? 1 : 0);
+  decision.summary = `${action}，${decision.position}；盤勢${market.label}，${timing.label}`;
+  return decision;
+};
+
+findBuyableTop5 = function(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+  const market = getMarketRegimeContext();
+
+  const candidates = Object.values(allScores).map(sc => {
+    const d = getPracticalTradeDecision(sc, 'long');
+    const clean = normalizeBuyActionText(d.action);
+    if(!['積極買進','買進','小量試單'].includes(clean)) return null;
+    const timing = d.entryTiming || getEntryTimingContext(sc);
+    const timingScore = timing.ready ? 8 : -4;
+    const score = (d.opportunity || 0) * 12 - (d.risk || 0) * 6 + (sc.total || 0) * 0.25 + timingScore;
+    return {...sc, practical:{...d, action:clean}, entryTiming:timing, buyScore:score};
+  }).filter(Boolean).sort((a,b)=>b.buyScore-a.buyScore).slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">目前沒有通過風控的可買進股票。盤勢：${market.label}（${market.note}）。</div>`;
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent);">
+      <div class="panel-title" style="margin-bottom:10px;color:var(--accent)">可買進 Top 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        原始評分未變。盤勢：<b style="color:var(--text)">${market.label}</b>（${market.note}）。名單只顯示仍可執行者，部位依盤勢與進場狀態調整。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>結論</th><th>部位</th><th>進場狀態</th><th>機會/風險</th><th>原因</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const d=sc.practical;
+          const timing=sc.entryTiming;
+          const checks=[d.buyType, timing.label, ...(d.reasons || []).slice(0,2)].filter(Boolean);
+          const tags=checks.map(r=>`<span style="font-size:9px;background:rgba(0,212,170,0.15);color:var(--accent);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank || i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent);font-weight:700">${d.action}</td>
+            <td class="td-mono">${d.position}</td>
+            <td title="${timing.note}">${timing.label}</td>
+            <td class="td-mono">${d.opportunity}/${d.risk}</td>
+            <td>${tags}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+};
+
+findMomentumTop5 = function(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+  const market = getMarketRegimeContext();
+
+  const candidates = Object.values(allScores).map(sc => {
+    const d = getPracticalTradeDecision(sc, 'short');
+    const timing = d.entryTiming || getEntryTimingContext(sc);
+    if(timing.blocker) return null;
+    const clean = normalizeBuyActionText(d.action);
+    if(!['積極買進','買進','小量試單'].includes(clean)) return null;
+    const score = (d.opportunity || 0) * 14 - (d.risk || 0) * 7 + Math.min(sc.tScore || 0, 50) * 0.35 + (timing.ready ? 10 : -5);
+    return {...sc, practical:{...d, action:clean}, entryTiming:timing, entryScore:score};
+  }).filter(Boolean).sort((a,b)=>b.entryScore-a.entryScore).slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--accent2);color:var(--muted)">目前沒有通過短線風控的股票。盤勢：${market.label}（${market.note}）。</div>`;
+    return;
+  }
+
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent2);">
+      <div class="panel-title" style="margin-bottom:10px;color:var(--accent2)">短線動能 Top 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+        原始技術分未變。盤勢：<b style="color:var(--text)">${market.label}</b>（${market.note}）。只保留短線未轉弱者，盤中未確認前不給高部位。
+      </div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>結論</th><th>部位</th><th>進場狀態</th><th>RSI14</th><th>短線檢查</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const rank=allStocks.findIndex(x=>x.id===sc.id)+1;
+          const d=sc.practical;
+          const timing=sc.entryTiming;
+          const checks=[d.buyType, timing.label, timing.weak?.label].filter(Boolean);
+          const tags=checks.map(r=>`<span style="font-size:9px;background:rgba(59,130,246,0.15);color:var(--accent2);padding:2px 6px;border-radius:3px;margin-right:4px">${r}</span>`).join('');
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${rank || i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> <span style="color:var(--text)">${sc.name}</span></td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td class="td-mono" style="color:var(--accent2);font-weight:700">${d.action}</td>
+            <td class="td-mono">${d.position}</td>
+            <td title="${timing.note}">${timing.label}</td>
+            <td class="td-mono">${Number(sc.t?.rsi ?? 0).toFixed(1)}</td>
+            <td>${tags}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+};
 </script>
 </body>
 </html>
