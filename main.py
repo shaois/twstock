@@ -13,6 +13,7 @@ import asyncio
 from datetime import datetime, timedelta
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 NVIDIA_API_KEY_ENV = os.environ.get("NVIDIA_API_KEY", "")
 GROQ_API_KEY_ENV = os.environ.get("GROQ_API_KEY", "")
@@ -38,6 +39,8 @@ cache = DataCache()
 CACHE_DIR = Path("/tmp/twstock_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 STATIC_CACHE_DIR = Path(__file__).parent / "cache"
+REALTIME_QUOTE_TTL_SECONDS = 45
+_realtime_quote_cache: dict[str, tuple[datetime, dict]] = {}
 
 def _cache_path(stock_id: str, dtype: str) -> Path:
     return CACHE_DIR / f"{dtype}_{stock_id}.json"
@@ -314,6 +317,94 @@ async def yahoo_proxy(stock_id: str, range: str = "1y"):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{stock_id}.TW?interval=1d&range={range}"
     async with httpx.AsyncClient() as client:
         return JSONResponse(content=(await client.get(url)).json())
+
+
+async def _fetch_realtime_yahoo_symbol(client: httpx.AsyncClient, symbol: str) -> dict | None:
+    cached = _realtime_quote_cache.get(symbol)
+    if cached and (datetime.now() - cached[0]).total_seconds() < REALTIME_QUOTE_TTL_SECONDS:
+        return cached[1]
+
+    encoded_symbol = quote(symbol, safe="")
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded_symbol}?interval=5m&range=5d"
+    try:
+        response = await client.get(url)
+        if response.status_code != 200:
+            return None
+        result = (response.json().get("chart", {}).get("result") or [None])[0]
+        if not result:
+            return None
+        meta = result.get("meta") or {}
+        quote_rows = ((result.get("indicators") or {}).get("quote") or [{}])[0]
+        opens = quote_rows.get("open") or []
+        highs = quote_rows.get("high") or []
+        lows = quote_rows.get("low") or []
+        closes = quote_rows.get("close") or []
+        volumes = quote_rows.get("volume") or []
+
+        def last_number(values):
+            return next((float(value) for value in reversed(values) if value is not None), None)
+
+        price = meta.get("regularMarketPrice") or last_number(closes)
+        previous_close = meta.get("chartPreviousClose") or meta.get("previousClose")
+        if not price or not previous_close:
+            return None
+        price = float(price)
+        previous_close = float(previous_close)
+        payload = {
+            "symbol": symbol,
+            "price": round(price, 2),
+            "previous_close": round(previous_close, 2),
+            "change": round(price - previous_close, 2),
+            "change_pct": round((price - previous_close) / previous_close * 100, 2),
+            "open": round(float(meta.get("regularMarketOpen") or last_number(opens) or price), 2),
+            "high": round(float(meta.get("regularMarketDayHigh") or last_number(highs) or price), 2),
+            "low": round(float(meta.get("regularMarketDayLow") or last_number(lows) or price), 2),
+            "volume": int(meta.get("regularMarketVolume") or last_number(volumes) or 0),
+            "market_time": meta.get("regularMarketTime"),
+            "source": "Yahoo Finance",
+        }
+        _realtime_quote_cache[symbol] = (datetime.now(), payload)
+        return payload
+    except (httpx.HTTPError, ValueError, TypeError):
+        return None
+
+
+async def _fetch_realtime_stock(client: httpx.AsyncClient, stock_id: str) -> dict | None:
+    for suffix in ("TW", "TWO"):
+        quote_data = await _fetch_realtime_yahoo_symbol(client, f"{stock_id}.{suffix}")
+        if quote_data:
+            quote_data["stock_id"] = stock_id
+            return quote_data
+    return None
+
+
+@app.post("/api/realtime-quotes")
+async def realtime_quotes(request: dict):
+    stock_ids = []
+    for value in request.get("stock_ids", []):
+        stock_id = str(value).strip()
+        if stock_id.isdigit() and 4 <= len(stock_id) <= 6 and stock_id not in stock_ids:
+            stock_ids.append(stock_id)
+    stock_ids = stock_ids[:25]
+    if not stock_ids:
+        raise HTTPException(status_code=400, detail="請提供股票代碼")
+
+    timeout = httpx.Timeout(12.0, connect=5.0)
+    headers = {"User-Agent": "Mozilla/5.0"}
+    async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+        market_task = _fetch_realtime_yahoo_symbol(client, "^TWII")
+        stock_tasks = [_fetch_realtime_stock(client, stock_id) for stock_id in stock_ids]
+        market, stocks = await asyncio.gather(market_task, asyncio.gather(*stock_tasks))
+
+    stock_data = {item["stock_id"]: item for item in stocks if item}
+    return {
+        "success": True,
+        "market": market,
+        "stocks": stock_data,
+        "requested": len(stock_ids),
+        "received": len(stock_data),
+        "updated_at": datetime.now().isoformat(),
+    }
 
 if __name__ == "__main__":
     import uvicorn

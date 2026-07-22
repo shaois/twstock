@@ -5173,6 +5173,303 @@ findMomentumTop5 = function(){
       </table>
     </div>`;
 };
+
+// Realtime execution overlay: cache selects candidates; intraday quotes decide entry timing.
+const liveQuoteState = {stocks:{}, market:null, updatedAt:'', loading:false, error:''};
+
+async function loadRealtimeQuotes(stockIds){
+  const ids = [...new Set((stockIds || []).map(String).filter(Boolean))].slice(0,25);
+  if(!ids.length) return liveQuoteState;
+  liveQuoteState.loading = true;
+  liveQuoteState.error = '';
+  try{
+    const response = await fetch(`${PROXY}/api/realtime-quotes`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({stock_ids:ids})
+    });
+    const data = await response.json().catch(()=>({}));
+    if(!response.ok || !data.success) throw new Error(data.detail || `HTTP ${response.status}`);
+    liveQuoteState.stocks = {...liveQuoteState.stocks, ...(data.stocks || {})};
+    liveQuoteState.market = data.market || liveQuoteState.market;
+    liveQuoteState.updatedAt = data.updated_at || new Date().toISOString();
+  }catch(error){
+    liveQuoteState.error = error?.message || '盤中報價載入失敗';
+  }finally{
+    liveQuoteState.loading = false;
+  }
+  return liveQuoteState;
+}
+
+function getCacheSelectionDecision(sc, mode='long'){
+  const source = typeof __getPracticalTradeDecisionBeforeMarketTiming === 'function'
+    ? __getPracticalTradeDecisionBeforeMarketTiming
+    : getPracticalTradeDecision;
+  return source(sc, mode);
+}
+
+function isExecutableAction(action){
+  return ['積極買進','買進','小量試單'].includes(normalizeBuyActionText(action));
+}
+
+function getRealtimeExecutionContext(sc){
+  const quote = liveQuoteState.stocks?.[sc?.id] || null;
+  const market = liveQuoteState.market || null;
+  if(!quote){
+    return {
+      available:false, label:'盤中資料待更新', note:liveQuoteState.error || '尚未取得這支股票的盤中報價',
+      quote:null, market, changePct:null, marketPct:null, relativePct:null, dayPosition:null
+    };
+  }
+  const changePct = Number(quote.change_pct);
+  const marketPct = Number(market?.change_pct);
+  const relativePct = Number.isFinite(changePct) && Number.isFinite(marketPct) ? changePct - marketPct : null;
+  const high = Number(quote.high);
+  const low = Number(quote.low);
+  const price = Number(quote.price);
+  const dayPosition = high > low ? (price - low) / (high - low) : 0.5;
+  return {
+    available:true, label:'盤中報價已更新', quote, market,
+    changePct, marketPct:Number.isFinite(marketPct) ? marketPct : null,
+    relativePct, dayPosition,
+    note:`個股 ${changePct.toFixed(2)}%，大盤 ${Number.isFinite(marketPct) ? marketPct.toFixed(2) : 'N/A'}%，相對 ${Number.isFinite(relativePct) ? relativePct.toFixed(2) : 'N/A'}%`
+  };
+}
+
+function applyRealtimeExecutionDecision(sc, mode, baseDecision){
+  const decision = {...baseDecision, contexts:{...(baseDecision.contexts || {})}};
+  const live = getRealtimeExecutionContext(sc);
+  decision.contexts.realtime = live;
+  decision.realtime = live;
+  let action = normalizeBuyActionText(decision.action);
+
+  if(!live.available){
+    if(action === '積極買進') action = '買進';
+    decision.action = action;
+    if(action === '買進') decision.position = '20-30%';
+    if(action === '小量試單') decision.position = '10-20%';
+    decision.buyType = '盤中資料待更新';
+    decision.risks = [live.note, ...(decision.risks || [])].slice(0,5);
+    decision.summary = `${action}；盤中行情尚未確認`;
+    return decision;
+  }
+
+  const change = live.changePct;
+  const relative = live.relativePct;
+  const dayPosition = live.dayPosition;
+  let liveLabel = '跟隨大盤';
+  let liveReason = live.note;
+
+  if(change >= 9 || (change >= 7.5 && dayPosition >= 0.90)){
+    action = '觀望';
+    liveLabel = '漲停或急漲不追價';
+    liveReason = `盤中已上漲 ${change.toFixed(2)}%，追價風險高`;
+  }else if(change >= 5 && dayPosition >= 0.85){
+    action = '觀望';
+    liveLabel = '等拉回';
+    liveReason = `漲幅 ${change.toFixed(2)}% 且接近日高，等拉回再判斷`;
+  }else if(change <= -2 || (Number.isFinite(relative) && relative <= -2)){
+    action = mode === 'short' ? '不買' : '觀望';
+    liveLabel = '明顯轉弱';
+    liveReason = change <= -2 ? `盤中下跌 ${Math.abs(change).toFixed(2)}%` : `落後大盤 ${Math.abs(relative).toFixed(2)} 個百分點`;
+  }else if(Number.isFinite(relative) && relative <= -0.8){
+    action = mode === 'short' ? '不買' : '觀望';
+    liveLabel = '弱於大盤';
+    liveReason = `落後大盤 ${Math.abs(relative).toFixed(2)} 個百分點`;
+  }else if(isExecutableAction(action)){
+    if(Number.isFinite(relative) && relative >= 1 && change >= 0.5){
+      action = '買進';
+      liveLabel = '相對強勢';
+      liveReason = `上漲 ${change.toFixed(2)}%，領先大盤 ${relative.toFixed(2)} 個百分點`;
+    }else if(change > 0 && (!Number.isFinite(relative) || relative >= 0)){
+      action = '小量試單';
+      liveLabel = '略強於大盤';
+      liveReason = Number.isFinite(relative) ? `領先大盤 ${relative.toFixed(2)} 個百分點` : `盤中上漲 ${change.toFixed(2)}%`;
+    }else{
+      action = '觀望';
+      liveLabel = '尚未轉強';
+      liveReason = Number.isFinite(relative) ? `目前落後大盤 ${Math.abs(relative).toFixed(2)} 個百分點` : '盤中漲勢尚未確認';
+    }
+  }
+
+  decision.action = action;
+  decision.position = action === '買進' ? '30-40%' : action === '小量試單' ? '10-20%' : '0%';
+  decision.buyType = liveLabel;
+  decision.risks = [liveReason, ...(decision.risks || [])].slice(0,5);
+  decision.summary = `${action}，${decision.position}；${liveLabel}：${liveReason}`;
+  decision.liveLabel = liveLabel;
+  decision.liveReason = liveReason;
+  return decision;
+}
+
+getPracticalTradeDecision = function(sc, mode='long'){
+  return applyRealtimeExecutionDecision(sc, mode, getCacheSelectionDecision(sc, mode));
+};
+
+function getRealtimeCandidatePool(mode){
+  return Object.values(allScores).map(sc => {
+    const base = getCacheSelectionDecision(sc, mode);
+    if(!isExecutableAction(base.action)) return null;
+    const quality = (base.opportunity || 0) * (mode === 'short' ? 14 : 12) -
+      (base.risk || 0) * 6 + (sc.total || 0) * 0.25 + (mode === 'short' ? Math.min(sc.tScore || 0,50) * 0.35 : 0);
+    return {...sc, cacheDecision:base, cacheQuality:quality};
+  }).filter(Boolean).sort((a,b)=>b.cacheQuality-a.cacheQuality).slice(0,20);
+}
+
+function realtimeRankScore(sc, decision, mode){
+  const live = decision.realtime || {};
+  const relative = Number.isFinite(live.relativePct) ? live.relativePct : -1;
+  const change = Number.isFinite(live.changePct) ? live.changePct : 0;
+  const strengthBonus = Math.max(-3, Math.min(relative, 3)) * 12 + Math.max(0, Math.min(change, 4)) * 2;
+  const confirmationBonus = decision.liveLabel === '相對強勢' ? 12 : decision.liveLabel === '略強於大盤' ? 5 : 0;
+  return sc.cacheQuality + strengthBonus + confirmationBonus + (mode === 'short' ? relative * 3 : 0);
+}
+
+function renderRealtimeStatus(market){
+  if(!market) return `<span style="color:var(--warn)">盤中報價未取得，請稍後再按一次</span>`;
+  return `大盤 <b style="color:${Number(market.change_pct)>=0?'var(--green)':'var(--red)'}">${Number(market.change_pct).toFixed(2)}%</b>，Yahoo 盤中報價可能略有延遲`;
+}
+
+findBuyableTop5 = async function(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+  container.innerHTML='<div class="screener-panel"><div class="ai-loading"><div class="spinner"></div>正在取得候選股與大盤盤中報價...</div></div>';
+
+  const pool = getRealtimeCandidatePool('long');
+  await loadRealtimeQuotes(pool.map(sc=>sc.id));
+  const evaluated = pool.map(sc => {
+    const decision = applyRealtimeExecutionDecision(sc, 'long', sc.cacheDecision);
+    return {...sc, practical:decision, liveScore:realtimeRankScore(sc, decision, 'long')};
+  });
+  const candidates = evaluated.filter(sc=>isExecutableAction(sc.practical.action))
+    .sort((a,b)=>b.liveScore-a.liveScore).slice(0,5);
+  const excluded = evaluated.filter(sc=>!isExecutableAction(sc.practical.action) && sc.practical.realtime?.available)
+    .slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">目前候選股都未通過盤中進場條件。${renderRealtimeStatus(liveQuoteState.market)}</div>`;
+    return;
+  }
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  const excludedText = excluded.length ? `<div style="font-size:10px;color:var(--muted);margin-top:12px">盤中排除：${excluded.map(sc=>`${sc.id} ${sc.name}（${sc.practical.buyType}）`).join('、')}</div>` : '';
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent);">
+      <div class="panel-title" style="margin-bottom:10px;color:var(--accent)">可買進 Top 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">Cache 負責選好股票；盤中相對大盤強弱負責決定現在是否進場。${renderRealtimeStatus(liveQuoteState.market)}</div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>結論</th><th>部位</th><th>盤中漲幅</th><th>相對大盤</th><th>判斷</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const d=sc.practical, live=d.realtime;
+          const relative=Number.isFinite(live.relativePct)?`${live.relativePct>=0?'+':''}${live.relativePct.toFixed(2)}%`:'N/A';
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> ${sc.name}</td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td style="color:var(--accent);font-weight:700">${d.action}</td><td>${d.position}</td>
+            <td class="td-mono">${live.changePct>=0?'+':''}${live.changePct.toFixed(2)}%</td>
+            <td class="td-mono" style="color:${live.relativePct>=0?'var(--green)':'var(--red)'}">${relative}</td>
+            <td title="${d.liveReason || ''}">${d.buyType}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>${excludedText}
+    </div>`;
+};
+
+findMomentumTop5 = async function(){
+  if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('stockDetail').style.display='none';
+  const container=document.getElementById('screenerResult');
+  container.style.display='block';
+  container.innerHTML='<div class="screener-panel"><div class="ai-loading"><div class="spinner"></div>正在比對短線候選股與大盤...</div></div>';
+
+  const pool = getRealtimeCandidatePool('short');
+  await loadRealtimeQuotes(pool.map(sc=>sc.id));
+  const evaluated = pool.map(sc => {
+    const decision = applyRealtimeExecutionDecision(sc, 'short', sc.cacheDecision);
+    return {...sc, practical:decision, liveScore:realtimeRankScore(sc, decision, 'short')};
+  });
+  const candidates = evaluated.filter(sc=>isExecutableAction(sc.practical.action))
+    .sort((a,b)=>b.liveScore-a.liveScore).slice(0,5);
+  const excluded = evaluated.filter(sc=>!isExecutableAction(sc.practical.action) && sc.practical.realtime?.available)
+    .slice(0,5);
+
+  if(!candidates.length){
+    container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--accent2);color:var(--muted)">目前沒有同時通過日線動能與盤中強弱的股票。${renderRealtimeStatus(liveQuoteState.market)}</div>`;
+    return;
+  }
+  const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
+  const excludedText = excluded.length ? `<div style="font-size:10px;color:var(--muted);margin-top:12px">盤中排除：${excluded.map(sc=>`${sc.id} ${sc.name}（${sc.practical.buyType}）`).join('、')}</div>` : '';
+  container.innerHTML=`
+    <div class="screener-panel" style="border:1px solid var(--accent2);">
+      <div class="panel-title" style="margin-bottom:10px;color:var(--accent2)">短線動能 Top 5</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">短線名單必須同時強於大盤；急漲接近日高或漲停者標記不追價。${renderRealtimeStatus(liveQuoteState.market)}</div>
+      <table>
+        <thead><tr><th>排名</th><th>股票</th><th>等級</th><th>結論</th><th>部位</th><th>盤中漲幅</th><th>相對大盤</th><th>判斷</th></tr></thead>
+        <tbody>${candidates.map((sc,i)=>{
+          const d=sc.practical, live=d.realtime;
+          const relative=Number.isFinite(live.relativePct)?`${live.relativePct>=0?'+':''}${live.relativePct.toFixed(2)}%`:'N/A';
+          return`<tr onclick="showDetail('${sc.id}')">
+            <td class="td-mono" style="color:var(--muted)">#${i+1}</td>
+            <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> ${sc.name}</td>
+            <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            <td style="color:var(--accent2);font-weight:700">${d.action}</td><td>${d.position}</td>
+            <td class="td-mono">${live.changePct>=0?'+':''}${live.changePct.toFixed(2)}%</td>
+            <td class="td-mono" style="color:${live.relativePct>=0?'var(--green)':'var(--red)'}">${relative}</td>
+            <td title="${d.liveReason || ''}">${d.buyType}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>${excludedText}
+    </div>`;
+};
+
+function addRealtimeExecutionNotice(id){
+  const detail=document.getElementById('stockDetail');
+  if(!detail) return;
+  detail.querySelectorAll('.realtime-execution-notice').forEach(el=>el.remove());
+  const sc=allScores[id];
+  if(!sc) return;
+  const d=getPracticalTradeDecision(sc,'short');
+  const live=d.realtime;
+  const scoreBox=detail.querySelector('.score-overview');
+  if(!scoreBox) return;
+  const notice=document.createElement('div');
+  notice.className='realtime-execution-notice';
+  notice.style.cssText='margin:-8px 0 14px;padding:10px 14px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.35);border-radius:8px;font-size:12px;color:var(--text)';
+  notice.innerHTML=live?.available
+    ? `<b style="color:var(--accent2)">盤中判斷：${d.action}</b>　個股 ${live.changePct>=0?'+':''}${live.changePct.toFixed(2)}%｜大盤 ${live.marketPct>=0?'+':''}${live.marketPct.toFixed(2)}%｜${d.buyType}<br><span style="color:var(--muted)">${d.liveReason}</span>`
+    : `<b style="color:var(--warn)">盤中判斷：資料待更新</b>　<span style="color:var(--muted)">${live?.note || '正在取得報價'}</span>`;
+  scoreBox.insertAdjacentElement('afterend',notice);
+}
+
+var __showDetailBeforeRealtimeExecution = showDetail;
+showDetail = function(id){
+  __showDetailBeforeRealtimeExecution(id);
+  addRealtimeExecutionNotice(id);
+  loadRealtimeQuotes([id]).then(()=>{
+    if(currentStock === id){
+      addRealtimeExecutionNotice(id);
+      if(typeof addAIGuardNotice === 'function') addAIGuardNotice(id);
+    }
+  });
+};
+
+var __buildAIDataTextBeforeRealtime = buildAIDataTextV2;
+buildAIDataTextV2 = function(id, sc, mode){
+  const base=__buildAIDataTextBeforeRealtime(id,sc,mode);
+  const d=getPracticalTradeDecision(sc,mode);
+  const live=d.realtime;
+  return `${base}\n盤中行情：${live?.available ? live.note : '未取得，不得假設盤中強弱'}\n盤中執行結論：${d.action}；${d.buyType}；${d.liveReason || live?.note || '待確認'}\n`;
+};
+
+var __askAIBeforeRealtimeExecution = askAI;
+askAI = async function(id, mode){
+  await loadRealtimeQuotes([id]);
+  return __askAIBeforeRealtimeExecution(id, mode);
+};
 </script>
 </body>
 </html>
