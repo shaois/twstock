@@ -8,6 +8,7 @@ import re
 import sys
 import urllib.parse
 import xml.etree.ElementTree as ET
+from predictor import build_predictions, update_prediction_log
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -550,7 +551,7 @@ async def update_cache():
             if stop_fetching: break
 
             # 4. 抓股價
-            url_p = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={sid}&start_date={(today - timedelta(days=270)).strftime('%Y-%m-%d')}&token={FINMIND_TOKEN}"
+            url_p = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={sid}&start_date={(today - timedelta(days=540)).strftime('%Y-%m-%d')}&token={FINMIND_TOKEN}"
             sc, data = await fetch_api(client, url_p)
             if sc == 402 or (data and data.get("status") == 402): stop_fetching = True
             elif data and data.get("status") == 200 and data.get("data"): price_db[sid] = data["data"]
@@ -581,6 +582,12 @@ async def update_cache():
     (CACHE_DIR / "institutional.json").write_text(json.dumps({"_saved_at": timestamp, "data": institutional_db}, ensure_ascii=False))
     scores_out = build_scores(fundamental_db, revenue_db, price_db, exdiv_db, balance_db)
     (CACHE_DIR / "scores.json").write_text(json.dumps(scores_out, ensure_ascii=False))
+    predictions_out = build_predictions(price_db, scores_out.get("data", {}))
+    (CACHE_DIR / "predictions.json").write_text(json.dumps(predictions_out, ensure_ascii=False))
+    prediction_log = update_prediction_log(load_old_cache("prediction_log.json"), predictions_out, price_db)
+    (CACHE_DIR / "prediction_log.json").write_text(json.dumps({"_saved_at": timestamp, "data": prediction_log}, ensure_ascii=False))
+    validation = predictions_out.get("model", {}).get("validation", {})
+    print(f"Prediction cache ready: {predictions_out.get('count', 0)} stocks; validation={validation}")
     
     if stop_fetching:
         print(f"⚠️ 遇到 API 額度限制 (402)！進度停留在第 {last_processed_index + 1} 支，已安穩存檔。下一批次會繼續接力。")
