@@ -5185,25 +5185,58 @@ async function loadRealtimeQuotes(stockIds){
   if(!ids.length) return liveQuoteState;
   liveQuoteState.loading = true;
   liveQuoteState.error = '';
+  const batches=[];
+  for(let index=0; index<ids.length; index+=6) batches.push(ids.slice(index,index+6));
+  const errors=[];
+  let received=0;
+
+  async function fetchBatch(batch){
+    let lastError=null;
+    for(let attempt=0; attempt<2; attempt++){
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),20000);
+      try{
+        const response=await fetch(`${PROXY}/api/realtime-quotes`,{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({stock_ids:batch}),
+          signal:controller.signal
+        });
+        const data=await response.json().catch(()=>({}));
+        if(!response.ok || !data.success) throw new Error(data.detail || `HTTP ${response.status}`);
+        return data;
+      }catch(error){
+        lastError=error;
+        if(attempt===0) await new Promise(resolve=>setTimeout(resolve,1000));
+      }finally{
+        clearTimeout(timer);
+      }
+    }
+    throw lastError || new Error('盤中報價載入失敗');
+  }
+
   try{
-    const response = await fetch(`${PROXY}/api/realtime-quotes`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({stock_ids:ids})
-    });
-    const data = await response.json().catch(()=>({}));
-    if(!response.ok || !data.success) throw new Error(data.detail || `HTTP ${response.status}`);
-    ids.forEach(id=>delete liveQuoteState.stocks[id]);
-    liveQuoteState.stocks = {...liveQuoteState.stocks, ...(data.stocks || {})};
-    liveQuoteState.market = data.market || null;
-    liveQuoteState.updatedAt = data.updated_at || new Date().toISOString();
-    liveQuoteState.source = data.source || '';
-  }catch(error){
-    liveQuoteState.error = error?.message || '盤中報價載入失敗';
-    ids.forEach(id=>delete liveQuoteState.stocks[id]);
-    liveQuoteState.market = null;
+    for(const batch of batches){
+      try{
+        const data=await fetchBatch(batch);
+        liveQuoteState.stocks={...liveQuoteState.stocks,...(data.stocks || {})};
+        if(data.market) liveQuoteState.market=data.market;
+        liveQuoteState.updatedAt=data.updated_at || new Date().toISOString();
+        liveQuoteState.source=data.source || liveQuoteState.source;
+        received+=Object.keys(data.stocks || {}).length;
+      }catch(error){
+        errors.push(error?.name==='AbortError' ? '連線逾時' : (error?.message || '連線失敗'));
+      }
+    }
+    if(!liveQuoteState.market){
+      liveQuoteState.error=errors[0] || '沒有收到大盤報價';
+    }else if(received===0){
+      liveQuoteState.error=errors[0] || '沒有收到個股報價';
+    }else if(errors.length){
+      liveQuoteState.error=`部分報價未取得（已取得 ${received} 支）`;
+    }
   }finally{
-    liveQuoteState.loading = false;
+    liveQuoteState.loading=false;
   }
   return liveQuoteState;
 }
@@ -5349,7 +5382,7 @@ function realtimeRankScore(sc, decision, mode){
 }
 
 function renderRealtimeStatus(market){
-  if(!market) return `<span style="color:var(--warn)">盤中報價未取得，請稍後再按一次</span>`;
+  if(!market) return `<span style="color:var(--warn)">盤中報價未取得：${liveQuoteState.error || '服務未回應'}</span>`;
   if(market.valid_for_trading !== true) return `<span style="color:var(--warn)">盤中資料未通過驗證：${market.stale_reason || '報價日期不符'}</span>`;
   return `大盤 <b style="color:${Number(market.change_pct)>=0?'var(--green)':'var(--red)'}">${Number(market.change_pct).toFixed(2)}%</b>，證交所 MIS ${market.quote_date} ${market.quote_time}`;
 }
