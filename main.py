@@ -13,7 +13,7 @@ import asyncio
 from datetime import datetime, timedelta
 import os
 from pathlib import Path
-from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 NVIDIA_API_KEY_ENV = os.environ.get("NVIDIA_API_KEY", "")
 GROQ_API_KEY_ENV = os.environ.get("GROQ_API_KEY", "")
@@ -39,8 +39,9 @@ cache = DataCache()
 CACHE_DIR = Path("/tmp/twstock_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 STATIC_CACHE_DIR = Path(__file__).parent / "cache"
-REALTIME_QUOTE_TTL_SECONDS = 45
+REALTIME_QUOTE_TTL_SECONDS = 15
 _realtime_quote_cache: dict[str, tuple[datetime, dict]] = {}
+TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 
 def _cache_path(stock_id: str, dtype: str) -> Path:
     return CACHE_DIR / f"{dtype}_{stock_id}.json"
@@ -319,63 +320,109 @@ async def yahoo_proxy(stock_id: str, range: str = "1y"):
         return JSONResponse(content=(await client.get(url)).json())
 
 
-async def _fetch_realtime_yahoo_symbol(client: httpx.AsyncClient, symbol: str) -> dict | None:
-    cached = _realtime_quote_cache.get(symbol)
-    if cached and (datetime.now() - cached[0]).total_seconds() < REALTIME_QUOTE_TTL_SECONDS:
-        return cached[1]
-
-    encoded_symbol = quote(symbol, safe="")
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded_symbol}?interval=5m&range=5d"
+def _mis_number(value) -> float | None:
     try:
-        response = await client.get(url)
-        if response.status_code != 200:
+        if value in (None, "", "-"):
             return None
-        result = (response.json().get("chart", {}).get("result") or [None])[0]
-        if not result:
-            return None
-        meta = result.get("meta") or {}
-        quote_rows = ((result.get("indicators") or {}).get("quote") or [{}])[0]
-        opens = quote_rows.get("open") or []
-        highs = quote_rows.get("high") or []
-        lows = quote_rows.get("low") or []
-        closes = quote_rows.get("close") or []
-        volumes = quote_rows.get("volume") or []
-
-        def last_number(values):
-            return next((float(value) for value in reversed(values) if value is not None), None)
-
-        price = meta.get("regularMarketPrice") or last_number(closes)
-        previous_close = meta.get("chartPreviousClose") or meta.get("previousClose")
-        if not price or not previous_close:
-            return None
-        price = float(price)
-        previous_close = float(previous_close)
-        payload = {
-            "symbol": symbol,
-            "price": round(price, 2),
-            "previous_close": round(previous_close, 2),
-            "change": round(price - previous_close, 2),
-            "change_pct": round((price - previous_close) / previous_close * 100, 2),
-            "open": round(float(meta.get("regularMarketOpen") or last_number(opens) or price), 2),
-            "high": round(float(meta.get("regularMarketDayHigh") or last_number(highs) or price), 2),
-            "low": round(float(meta.get("regularMarketDayLow") or last_number(lows) or price), 2),
-            "volume": int(meta.get("regularMarketVolume") or last_number(volumes) or 0),
-            "market_time": meta.get("regularMarketTime"),
-            "source": "Yahoo Finance",
-        }
-        _realtime_quote_cache[symbol] = (datetime.now(), payload)
-        return payload
-    except (httpx.HTTPError, ValueError, TypeError):
+        return float(value)
+    except (TypeError, ValueError):
         return None
 
 
-async def _fetch_realtime_stock(client: httpx.AsyncClient, stock_id: str) -> dict | None:
-    for suffix in ("TW", "TWO"):
-        quote_data = await _fetch_realtime_yahoo_symbol(client, f"{stock_id}.{suffix}")
-        if quote_data:
-            quote_data["stock_id"] = stock_id
-            return quote_data
+def _mis_book_price(value) -> float | None:
+    for part in str(value or "").split("_"):
+        number = _mis_number(part)
+        if number and number > 0:
+            return number
     return None
+
+
+def _parse_mis_quote(row: dict, stock_id: str, taipei_now: datetime) -> dict | None:
+    previous_close = _mis_number(row.get("y"))
+    traded_price = _mis_number(row.get("z"))
+    best_ask = _mis_book_price(row.get("a"))
+    best_bid = _mis_book_price(row.get("b"))
+    price_kind = "成交價"
+    price = traded_price
+    if price is None and best_bid is not None and best_ask is not None:
+        price = (best_bid + best_ask) / 2
+        price_kind = "買賣中間價估算"
+    elif price is None:
+        price = best_bid or best_ask
+        price_kind = "最佳買賣價估算"
+
+    if not price or not previous_close:
+        return None
+
+    quote_date_raw = str(row.get("d") or "")
+    quote_date = (
+        f"{quote_date_raw[:4]}-{quote_date_raw[4:6]}-{quote_date_raw[6:8]}"
+        if len(quote_date_raw) == 8 else ""
+    )
+    today = taipei_now.strftime("%Y-%m-%d")
+    valid_for_trading = quote_date == today
+    stale_reason = "" if valid_for_trading else f"報價日期 {quote_date or '未知'}，台灣日期 {today}"
+    change = price - previous_close
+
+    def rounded(field: str, fallback: float) -> float:
+        return round(_mis_number(row.get(field)) or fallback, 2)
+
+    return {
+        "stock_id": stock_id,
+        "name": row.get("n") or row.get("nf") or "",
+        "exchange": row.get("ex") or "",
+        "price": round(price, 2),
+        "price_kind": price_kind,
+        "previous_close": round(previous_close, 2),
+        "change": round(change, 2),
+        "change_pct": round(change / previous_close * 100, 2),
+        "open": rounded("o", price),
+        "high": rounded("h", price),
+        "low": rounded("l", price),
+        "volume": int(_mis_number(row.get("v")) or 0),
+        "quote_date": quote_date,
+        "quote_time": str(row.get("t") or ""),
+        "valid_for_trading": valid_for_trading,
+        "stale_reason": stale_reason,
+        "source": "TWSE MIS",
+    }
+
+
+async def _fetch_realtime_mis(client: httpx.AsyncClient, stock_ids: list[str]) -> tuple[dict | None, dict]:
+    cache_key = "mis:" + ",".join(sorted(stock_ids))
+    cached = _realtime_quote_cache.get(cache_key)
+    if cached and (datetime.now() - cached[0]).total_seconds() < REALTIME_QUOTE_TTL_SECONDS:
+        result = cached[1]
+        return result.get("market"), result.get("stocks", {})
+
+    channels = ["tse_t00.tw"]
+    for stock_id in stock_ids:
+        channels.extend((f"tse_{stock_id}.tw", f"otc_{stock_id}.tw"))
+    response = await client.get(
+        "https://mis.twse.com.tw/stock/api/getStockInfo.jsp",
+        params={"ex_ch": "|".join(channels), "json": "1", "delay": "0"},
+    )
+    response.raise_for_status()
+    body = response.json()
+    if body.get("rtcode") != "0000":
+        raise ValueError(body.get("rtmessage") or "TWSE MIS 回應異常")
+
+    taipei_now = datetime.now(TAIPEI_TZ)
+    market = None
+    stocks = {}
+    requested = set(stock_ids)
+    for row in body.get("msgArray") or []:
+        code = str(row.get("c") or "")
+        if code == "t00":
+            market = _parse_mis_quote(row, "TAIEX", taipei_now)
+        elif code in requested and code not in stocks:
+            parsed = _parse_mis_quote(row, code, taipei_now)
+            if parsed:
+                stocks[code] = parsed
+
+    result = {"market": market, "stocks": stocks}
+    _realtime_quote_cache[cache_key] = (datetime.now(), result)
+    return market, stocks
 
 
 @app.post("/api/realtime-quotes")
@@ -390,20 +437,31 @@ async def realtime_quotes(request: dict):
         raise HTTPException(status_code=400, detail="請提供股票代碼")
 
     timeout = httpx.Timeout(12.0, connect=5.0)
-    headers = {"User-Agent": "Mozilla/5.0"}
-    async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
-        market_task = _fetch_realtime_yahoo_symbol(client, "^TWII")
-        stock_tasks = [_fetch_realtime_stock(client, stock_id) for stock_id in stock_ids]
-        market, stocks = await asyncio.gather(market_task, asyncio.gather(*stock_tasks))
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://mis.twse.com.tw/",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+            market, stock_data = await _fetch_realtime_mis(client, stock_ids)
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail=f"證交所盤中報價暫時無法取得：{exc}")
 
-    stock_data = {item["stock_id"]: item for item in stocks if item}
+    if not market or not market.get("valid_for_trading"):
+        reason = (market or {}).get("stale_reason") or "未取得同日大盤資料"
+        for item in stock_data.values():
+            item["valid_for_trading"] = False
+            item["stale_reason"] = f"大盤資料無法驗證：{reason}"
+
     return {
         "success": True,
         "market": market,
         "stocks": stock_data,
         "requested": len(stock_ids),
         "received": len(stock_data),
-        "updated_at": datetime.now().isoformat(),
+        "source": "TWSE MIS",
+        "updated_at": datetime.now(TAIPEI_TZ).isoformat(),
     }
 
 if __name__ == "__main__":

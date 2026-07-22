@@ -5175,7 +5175,7 @@ findMomentumTop5 = function(){
 };
 
 // Realtime execution overlay: cache selects candidates; intraday quotes decide entry timing.
-const liveQuoteState = {stocks:{}, market:null, updatedAt:'', loading:false, error:''};
+const liveQuoteState = {stocks:{}, market:null, updatedAt:'', source:'', loading:false, error:''};
 
 async function loadRealtimeQuotes(stockIds){
   const ids = [...new Set((stockIds || []).map(String).filter(Boolean))].slice(0,25);
@@ -5190,11 +5190,15 @@ async function loadRealtimeQuotes(stockIds){
     });
     const data = await response.json().catch(()=>({}));
     if(!response.ok || !data.success) throw new Error(data.detail || `HTTP ${response.status}`);
+    ids.forEach(id=>delete liveQuoteState.stocks[id]);
     liveQuoteState.stocks = {...liveQuoteState.stocks, ...(data.stocks || {})};
-    liveQuoteState.market = data.market || liveQuoteState.market;
+    liveQuoteState.market = data.market || null;
     liveQuoteState.updatedAt = data.updated_at || new Date().toISOString();
+    liveQuoteState.source = data.source || '';
   }catch(error){
     liveQuoteState.error = error?.message || '盤中報價載入失敗';
+    ids.forEach(id=>delete liveQuoteState.stocks[id]);
+    liveQuoteState.market = null;
   }finally{
     liveQuoteState.loading = false;
   }
@@ -5215,14 +5219,31 @@ function isExecutableAction(action){
 function getRealtimeExecutionContext(sc){
   const quote = liveQuoteState.stocks?.[sc?.id] || null;
   const market = liveQuoteState.market || null;
-  if(!quote){
+  const invalidReason = !quote
+    ? (liveQuoteState.error || '尚未取得這支股票的盤中報價')
+    : !market
+      ? '尚未取得同一時間的大盤報價'
+      : quote.valid_for_trading !== true
+        ? (quote.stale_reason || '個股報價不是今天的資料')
+        : market.valid_for_trading !== true
+          ? (market.stale_reason || '大盤報價不是今天的資料')
+          : quote.quote_date !== market.quote_date
+            ? `個股日期 ${quote.quote_date || '未知'} 與大盤日期 ${market.quote_date || '未知'} 不一致`
+            : '';
+  if(invalidReason){
     return {
-      available:false, label:'盤中資料待更新', note:liveQuoteState.error || '尚未取得這支股票的盤中報價',
-      quote:null, market, changePct:null, marketPct:null, relativePct:null, dayPosition:null
+      available:false, label:'盤中資料未通過驗證', note:invalidReason,
+      quote, market, changePct:null, marketPct:null, relativePct:null, dayPosition:null
     };
   }
   const changePct = Number(quote.change_pct);
   const marketPct = Number(market?.change_pct);
+  if(!Number.isFinite(changePct) || !Number.isFinite(marketPct)){
+    return {
+      available:false, label:'盤中資料未通過驗證', note:'個股或大盤漲跌幅格式錯誤',
+      quote, market, changePct:null, marketPct:null, relativePct:null, dayPosition:null
+    };
+  }
   const relativePct = Number.isFinite(changePct) && Number.isFinite(marketPct) ? changePct - marketPct : null;
   const high = Number(quote.high);
   const low = Number(quote.low);
@@ -5232,7 +5253,7 @@ function getRealtimeExecutionContext(sc){
     available:true, label:'盤中報價已更新', quote, market,
     changePct, marketPct:Number.isFinite(marketPct) ? marketPct : null,
     relativePct, dayPosition,
-    note:`個股 ${changePct.toFixed(2)}%，大盤 ${Number.isFinite(marketPct) ? marketPct.toFixed(2) : 'N/A'}%，相對 ${Number.isFinite(relativePct) ? relativePct.toFixed(2) : 'N/A'}%`
+    note:`個股 ${changePct.toFixed(2)}%，大盤 ${marketPct.toFixed(2)}%，相對 ${relativePct.toFixed(2)}%（${quote.source || 'TWSE MIS'} ${quote.quote_date} ${quote.quote_time}${quote.price_kind && quote.price_kind !== '成交價' ? `，${quote.price_kind}` : ''}）`
   };
 }
 
@@ -5244,13 +5265,12 @@ function applyRealtimeExecutionDecision(sc, mode, baseDecision){
   let action = normalizeBuyActionText(decision.action);
 
   if(!live.available){
-    if(action === '積極買進') action = '買進';
+    action = '觀望';
     decision.action = action;
-    if(action === '買進') decision.position = '20-30%';
-    if(action === '小量試單') decision.position = '10-20%';
-    decision.buyType = '盤中資料待更新';
+    decision.position = '0%';
+    decision.buyType = '盤中資料未驗證';
     decision.risks = [live.note, ...(decision.risks || [])].slice(0,5);
-    decision.summary = `${action}；盤中行情尚未確認`;
+    decision.summary = `${action}；盤中行情未通過日期與來源驗證`;
     return decision;
   }
 
@@ -5327,7 +5347,8 @@ function realtimeRankScore(sc, decision, mode){
 
 function renderRealtimeStatus(market){
   if(!market) return `<span style="color:var(--warn)">盤中報價未取得，請稍後再按一次</span>`;
-  return `大盤 <b style="color:${Number(market.change_pct)>=0?'var(--green)':'var(--red)'}">${Number(market.change_pct).toFixed(2)}%</b>，Yahoo 盤中報價可能略有延遲`;
+  if(market.valid_for_trading !== true) return `<span style="color:var(--warn)">盤中資料未通過驗證：${market.stale_reason || '報價日期不符'}</span>`;
+  return `大盤 <b style="color:${Number(market.change_pct)>=0?'var(--green)':'var(--red)'}">${Number(market.change_pct).toFixed(2)}%</b>，證交所 MIS ${market.quote_date} ${market.quote_time}`;
 }
 
 findBuyableTop5 = async function(){
