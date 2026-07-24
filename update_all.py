@@ -8,7 +8,11 @@ import re
 import sys
 import urllib.parse
 import xml.etree.ElementTree as ET
-from predictor import build_predictions, update_prediction_log
+from predictor import (
+    apply_prediction_stability,
+    build_predictions,
+    update_prediction_log,
+)
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -580,14 +584,43 @@ async def update_cache():
     (CACHE_DIR / "balance.json").write_text(json.dumps({"_saved_at": timestamp, "data": balance_db}, ensure_ascii=False))
     (CACHE_DIR / "news.json").write_text(json.dumps({"_saved_at": timestamp, "data": news_db}, ensure_ascii=False))
     (CACHE_DIR / "institutional.json").write_text(json.dumps({"_saved_at": timestamp, "data": institutional_db}, ensure_ascii=False))
-    scores_out = build_scores(fundamental_db, revenue_db, price_db, exdiv_db, balance_db)
-    (CACHE_DIR / "scores.json").write_text(json.dumps(scores_out, ensure_ascii=False))
-    predictions_out = build_predictions(price_db, scores_out.get("data", {}))
-    (CACHE_DIR / "predictions.json").write_text(json.dumps(predictions_out, ensure_ascii=False))
-    prediction_log = update_prediction_log(load_old_cache("prediction_log.json"), predictions_out, price_db)
-    (CACHE_DIR / "prediction_log.json").write_text(json.dumps({"_saved_at": timestamp, "data": prediction_log}, ensure_ascii=False))
-    validation = predictions_out.get("model", {}).get("validation", {})
-    print(f"Prediction cache ready: {predictions_out.get('count', 0)} stocks; validation={validation}")
+    cycle_complete = not stop_fetching and end_index >= len(STOCK_LIST)
+    if cycle_complete:
+        # Publish rankings only after all 200 stocks finish. Publishing after
+        # each batch would compare fresh rows with stale rows and change Top 5.
+        scores_out = build_scores(
+            fundamental_db, revenue_db, price_db, exdiv_db, balance_db
+        )
+        (CACHE_DIR / "scores.json").write_text(
+            json.dumps(scores_out, ensure_ascii=False)
+        )
+        existing_prediction_log = load_old_cache("prediction_log.json")
+        predictions_out = build_predictions(price_db, scores_out.get("data", {}))
+        predictions_out = apply_prediction_stability(
+            predictions_out, existing_prediction_log, scores_out.get("data", {})
+        )
+        (CACHE_DIR / "predictions.json").write_text(
+            json.dumps(predictions_out, ensure_ascii=False)
+        )
+        prediction_log = update_prediction_log(
+            existing_prediction_log, predictions_out, price_db
+        )
+        (CACHE_DIR / "prediction_log.json").write_text(
+            json.dumps(
+                {"_saved_at": timestamp, "data": prediction_log},
+                ensure_ascii=False,
+            )
+        )
+        validation = predictions_out.get("model", {}).get("validation", {})
+        print(
+            f"Prediction cache ready: {predictions_out.get('count', 0)} "
+            f"stocks; validation={validation}"
+        )
+    else:
+        print(
+            "Batch data saved; scores and predictions remain on the previous "
+            "complete 200-stock snapshot."
+        )
     
     if stop_fetching:
         print(f"⚠️ 遇到 API 額度限制 (402)！進度停留在第 {last_processed_index + 1} 支，已安穩存檔。下一批次會繼續接力。")

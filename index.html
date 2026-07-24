@@ -5545,6 +5545,9 @@ function getForwardPrediction(sc, horizon){
     asOfDate:prediction.as_of_date,
     currentPrice:Number(prediction.current_price),
     rank:Number(prediction[`rank_${horizon}d`] || 0),
+    stability:horizon === 20
+      ? (prediction.stable_20d || ghCache?.predictionModel?.stable_20d_meta?.[sc?.id] || null)
+      : null,
     ...horizonData
   };
 }
@@ -5565,9 +5568,16 @@ function buildForecastExecutionDecision(sc, mode, forecast){
 
 function getForecastCandidatePool(mode){
   const horizon = mode === 'short' ? 5 : 20;
-  return Object.values(allScores).map(sc=>{
+  const stableIds=mode === 'long'
+    ? (ghCache?.predictionModel?.stable_20d || []).map(String)
+    : [];
+  const stableIdSet=new Set(stableIds);
+  const candidates=Object.values(allScores).map(sc=>{
     const forecast = getForwardPrediction(sc, horizon);
-    if(!forecast.available || forecast.signal !== '買進') return null;
+    if(!forecast.available) return null;
+    // A stable core member may be kept for one observation day even when its
+    // raw signal cools to "觀察". It remains visible, but execution stays blocked.
+    if(forecast.signal !== '買進' && !stableIdSet.has(String(sc.id))) return null;
     if(mode === 'long' && (Number(sc.fScore || 0) < 15 || Number(sc.total || 0) < 55)) return null;
     if(mode === 'short' && (Number(sc.tScore || 0) < 25 || Number(sc.total || 0) < 50)) return null;
     const qualityBonus = mode === 'short'
@@ -5579,6 +5589,26 @@ function getForecastCandidatePool(mode){
     Number(b.total || 0)-Number(a.total || 0) ||
     String(a.id).localeCompare(String(b.id))
   );
+  if(mode !== 'long') return candidates;
+  if(!stableIds.length) return candidates.slice(0,5);
+  const byId=new Map(candidates.map(sc=>[sc.id,sc]));
+  return stableIds.map((id,index)=>{
+    const sc=byId.get(String(id));
+    if(!sc) return null;
+    const stability=sc.forecast.stability || {};
+    return {
+      ...sc,
+      forecast:{
+        ...sc.forecast,
+        expected_return:Number(stability.smoothed_expected_return ?? sc.forecast.expected_return),
+        up_probability:Number(stability.smoothed_up_probability ?? sc.forecast.up_probability),
+        stableStatus:stability.status || '核心候選',
+        stableObservations:Number(stability.observations || 1),
+        stablePosition:Number(stability.current_position || 0)
+      },
+      stableOrder:index+1
+    };
+  }).filter(Boolean);
 }
 
 function forecastValidationText(horizon){
@@ -5609,7 +5639,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
     return;
   }
   container.innerHTML='<div class="screener-panel"><div class="ai-loading"><div class="spinner"></div>正在取得預測候選股的官方盤中報價...</div></div>';
-  const quotePool=pool.slice(0,20);
+  const quotePool=mode === 'long' ? pool.slice(0,5) : pool.slice(0,20);
   await loadRealtimeQuotes(quotePool.map(sc=>sc.id));
   const evaluated=quotePool.map(sc=>({
     ...sc,
@@ -5627,10 +5657,10 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
   container.innerHTML=`
     <div class="screener-panel" style="border:1px solid ${color}">
       <div class="panel-title" style="margin-bottom:8px;color:${color}">${title}</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '先依未來 20 日報酬選出候選，再排除目前不宜進場者；名單仍維持原預測先後順序。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。'}模型日期：${ghCache.predictionModel.latest_date || '未知'}。</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '只從未來 20 日核心候選判斷今天能否進場；不以較低排名股票補滿5支。' : (mode === 'long' ? '使用最近3次預測平均；核心候選連續轉弱2天才移除，降低單日大幅換股。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}。</div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:12px">${forecastValidationText(horizon)}。${renderRealtimeStatus(liveQuoteState.market)}</div>
       <table>
-        <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th><th>預期${horizon}日報酬</th><th>上漲機率</th><th>相對大盤</th><th>預估價格區間</th><th>信心</th><th>現在進場</th></tr></thead>
+        <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' ? '<th>名單狀態</th>' : ''}<th>預期${horizon}日報酬</th><th>上漲機率</th><th>相對大盤</th><th>預估價格區間</th><th>信心</th><th>現在進場</th></tr></thead>
         <tbody>${candidates.map((sc,index)=>{
           const f=sc.forecast, d=sc.execution;
           const returnColor=f.expected_return>=0?'var(--green)':'var(--red)';
@@ -5638,6 +5668,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
             <td class="td-mono" style="color:var(--muted)">#${index+1}</td>
             <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> ${sc.name}</td>
             <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
+            ${mode === 'long' ? `<td style="color:${f.stableStatus==='新進'?'var(--warn)':'var(--accent)'}">${f.stableStatus || '核心候選'}｜${f.stablePosition ? `原始#${f.stablePosition}` : '原始榜外'}｜${f.stableObservations || 1}次</td>` : ''}
             <td class="td-mono" style="color:${returnColor};font-weight:700">${f.expected_return>=0?'+':''}${f.expected_return}%</td>
             <td class="td-mono">${f.up_probability}%</td>
             <td class="td-mono" style="color:${f.expected_alpha>=0?'var(--green)':'var(--red)'}">${f.expected_alpha>=0?'+':''}${f.expected_alpha}%</td>

@@ -234,19 +234,35 @@ def _nearest_samples(features, training, centers, scales, k):
     return distances[:min(k, len(distances))]
 
 
-def _horizon_prediction(neighbors, horizon, current_price, validation_hit_rate=None):
+def _horizon_prediction(
+    neighbors,
+    horizon,
+    current_price,
+    validation_hit_rate=None,
+    calibration_factor=1.0,
+):
     return_key = f"return_{horizon}d"
     alpha_key = f"alpha_{horizon}d"
     returns = [sample[return_key] for _, sample in neighbors]
     alphas = [sample[alpha_key] for _, sample in neighbors]
     weights = [1 / (0.20 + math.sqrt(max(distance, 0.0))) for distance, _ in neighbors]
-    expected_return = _weighted_mean(returns, weights)
-    expected_alpha = _weighted_mean(alphas, weights)
-    up_probability = _weighted_mean([1.0 if value > 0 else 0.0 for value in returns], weights)
-    dispersion = _weighted_std(returns, weights, expected_return)
-    q10 = _quantile(returns, 0.10)
-    q25 = _quantile(returns, 0.25)
-    q75 = _quantile(returns, 0.75)
+    raw_expected_return = _weighted_mean(returns, weights)
+    raw_expected_alpha = _weighted_mean(alphas, weights)
+    raw_up_probability = _weighted_mean(
+        [1.0 if value > 0 else 0.0 for value in returns], weights
+    )
+    calibration_factor = max(0.45, min(1.0, calibration_factor))
+    expected_return = (
+        raw_expected_return * 0.65 + statistics.median(returns) * 0.35
+    ) * calibration_factor
+    expected_alpha = (
+        raw_expected_alpha * 0.65 + statistics.median(alphas) * 0.35
+    ) * calibration_factor
+    up_probability = 0.5 + (raw_up_probability - 0.5) * calibration_factor
+    dispersion = _weighted_std(returns, weights, raw_expected_return)
+    q10 = _quantile(returns, 0.10) * calibration_factor
+    q25 = _quantile(returns, 0.25) * calibration_factor
+    q75 = _quantile(returns, 0.75) * calibration_factor
     edge = abs(up_probability - 0.5)
     confidence = 35 + edge * 90 + min(len(neighbors), 120) / 12 - min(dispersion, 15) * 1.2
     if validation_hit_rate is not None:
@@ -293,7 +309,7 @@ def _walk_forward_validation(samples):
     for sample in samples:
         by_date[sample["base_date"]].append(sample)
     dates = sorted(date for date, rows in by_date.items() if len(rows) >= 40)
-    eligible = dates[-35:-5:6]
+    eligible = dates[-80:-20:6]
     metrics = {5: [], 20: []}
     for test_date in eligible:
         training = [sample for sample in samples if sample["label_end_date"] < test_date]
@@ -353,6 +369,11 @@ def build_predictions(price_db, scores=None):
     centers, scales = _fit_scaler(latest_training)
     hit_5d = (validation.get("5d", {}).get("hit_rate") or 50) / 100
     hit_20d = (validation.get("20d", {}).get("hit_rate") or 50) / 100
+    validation_periods = min(
+        validation.get("5d", {}).get("periods") or 0,
+        validation.get("20d", {}).get("periods") or 0,
+    )
+    calibration_factor = min(0.85, 0.50 + validation_periods * 0.03)
 
     latest_date = max((state["base_date"] for state in current.values()), default="")
     for stock_id in score_ids:
@@ -361,8 +382,12 @@ def build_predictions(price_db, scores=None):
             output[stock_id] = {"available": False, "reason": "至少需要 61 個交易日價量資料"}
             continue
         neighbors = _nearest_samples(state["features"], latest_training, centers, scales, 120)
-        prediction_5d = _horizon_prediction(neighbors, 5, state["price"], hit_5d)
-        prediction_20d = _horizon_prediction(neighbors, 20, state["price"], hit_20d)
+        prediction_5d = _horizon_prediction(
+            neighbors, 5, state["price"], hit_5d, calibration_factor
+        )
+        prediction_20d = _horizon_prediction(
+            neighbors, 20, state["price"], hit_20d, calibration_factor
+        )
         item = {
             "available": True,
             "as_of_date": state["base_date"],
@@ -384,6 +409,7 @@ def build_predictions(price_db, scores=None):
             "feature_names": list(FEATURE_NAMES),
             "training_samples": len(latest_training),
             "all_labelled_samples": len(samples),
+            "calibration_factor": round(calibration_factor, 2),
             "validation": validation,
             "warning": "預測為歷史統計估計，不保證未來報酬",
         },
@@ -392,13 +418,166 @@ def build_predictions(price_db, scores=None):
     }
 
 
+def apply_prediction_stability(predictions, existing_log, scores=None):
+    """Build a lower-turnover 20-day core list from current and recent forecasts."""
+    prediction_data = predictions.get("data", {})
+    current_calibration = _number(
+        predictions.get("model", {}).get("calibration_factor"), 1.0
+    )
+    current_rows = sorted(
+        (
+            (stock_id, item)
+            for stock_id, item in prediction_data.items()
+            if item.get("available")
+            and item.get("prediction_20d", {}).get("signal") == "買進"
+            and _number((scores or {}).get(stock_id, {}).get("fScore")) >= 15
+            and _number((scores or {}).get(stock_id, {}).get("total")) >= 55
+        ),
+        key=lambda pair: pair[1].get("rank_20d", -999),
+        reverse=True,
+    )
+    current_position = {
+        stock_id: index + 1 for index, (stock_id, _) in enumerate(current_rows)
+    }
+    current_top15 = [stock_id for stock_id, _ in current_rows[:15]]
+
+    history = dict(existing_log or {})
+    model_date = predictions.get("model", {}).get("latest_date") or ""
+    # A trading day can run several cache batches. Only older dates count as
+    # history, otherwise the same day would be mistaken for another signal.
+    recent_dates = [
+        date for date in sorted(history)
+        if not model_date or date < model_date
+    ][-2:]
+    recent_snapshots = [history[date] for date in recent_dates]
+    latest_snapshot = recent_snapshots[-1] if recent_snapshots else {}
+    previous_stable = latest_snapshot.get("stable_20d") or [
+        {"stock_id": row.get("stock_id"), "weak_days": 0}
+        for row in latest_snapshot.get("20d", [])[:5]
+    ]
+
+    stable_ids = []
+    stable_meta = {}
+    for previous in previous_stable:
+        stock_id = previous.get("stock_id")
+        item = prediction_data.get(stock_id, {})
+        score = (scores or {}).get(stock_id, {})
+        if (
+            not stock_id
+            or not item.get("available")
+            or _number(score.get("fScore")) < 15
+            or _number(score.get("total")) < 55
+        ):
+            continue
+        weak_days = (
+            0
+            if stock_id in current_top15
+            else int(previous.get("weak_days") or 0) + 1
+        )
+        signal = item.get("prediction_20d", {}).get("signal")
+        if weak_days >= 2 or signal == "不買":
+            continue
+        stable_ids.append(stock_id)
+        stable_meta[stock_id] = {
+            "status": "續留" if weak_days == 0 else "保留觀察",
+            "weak_days": weak_days,
+        }
+
+    def history_values(stock_id, field):
+        values = []
+        for snapshot in recent_snapshots:
+            row = next(
+                (
+                    item
+                    for item in snapshot.get("20d", [])
+                    if item.get("stock_id") == stock_id
+                ),
+                None,
+            )
+            if row and row.get(field) is not None:
+                value = _number(row.get(field))
+                # Logs created before the calibration release contain raw,
+                # over-optimistic estimates. Calibrate those once when read.
+                if snapshot.get("calibration_factor") is None:
+                    if field == "up_probability":
+                        value = 50 + (value - 50) * current_calibration
+                    else:
+                        value *= current_calibration
+                values.append(value)
+        return values
+
+    remaining = []
+    for stock_id in current_top15:
+        if stock_id in stable_ids:
+            continue
+        appearances = sum(
+            1
+            for snapshot in recent_snapshots
+            if any(
+                row.get("stock_id") == stock_id
+                for row in snapshot.get("20d", [])
+            )
+        )
+        position = current_position.get(stock_id, 99)
+        stability_score = 100 - position * 3 + appearances * 12
+        remaining.append((stability_score, stock_id, appearances))
+    remaining.sort(reverse=True)
+
+    for _, stock_id, appearances in remaining:
+        if len(stable_ids) >= 5:
+            break
+        stable_ids.append(stock_id)
+        stable_meta[stock_id] = {
+            "status": "再入選" if appearances else "新進",
+            "weak_days": 0,
+        }
+
+    stable_ids = stable_ids[:5]
+    for stock_id in stable_ids:
+        item = prediction_data[stock_id]
+        current = item["prediction_20d"]
+        return_values = history_values(stock_id, "expected_return") + [
+            _number(current.get("expected_return"))
+        ]
+        probability_values = history_values(stock_id, "up_probability") + [
+            _number(current.get("up_probability"))
+        ]
+        meta = stable_meta[stock_id]
+        meta.update({
+            "current_position": current_position.get(stock_id),
+            "observations": len(return_values),
+            "smoothed_expected_return": round(
+                sum(return_values) / len(return_values), 2
+            ),
+            "smoothed_up_probability": round(
+                sum(probability_values) / len(probability_values), 1
+            ),
+        })
+        item["stable_20d"] = meta
+
+    model = predictions.setdefault("model", {})
+    model["stable_20d"] = stable_ids
+    model["stable_20d_meta"] = stable_meta
+    model["stability_rule"] = (
+        "最近3次預測平均；核心候選連續轉弱2天才移除；新名單只從今日原始前15名遞補"
+    )
+    return predictions
+
+
 def update_prediction_log(existing_log, predictions, price_db):
     """Keep point-in-time recommendations and fill realised 5/20-day returns later."""
     log = dict(existing_log or {})
     model_date = predictions.get("model", {}).get("latest_date")
     prediction_data = predictions.get("data", {})
     if model_date:
-        snapshot = {"date": model_date, "5d": [], "20d": []}
+        snapshot = {
+            "date": model_date,
+            "calibration_factor": predictions.get("model", {}).get(
+                "calibration_factor"
+            ),
+            "5d": [],
+            "20d": [],
+        }
         for horizon in (5, 20):
             ranked = sorted(
                 (
@@ -421,6 +600,16 @@ def update_prediction_log(existing_log, predictions, price_db):
                 }
                 for stock_id, item in ranked
             ]
+        snapshot["stable_20d"] = [
+            {
+                "stock_id": stock_id,
+                "weak_days": predictions.get("model", {})
+                .get("stable_20d_meta", {})
+                .get(stock_id, {})
+                .get("weak_days", 0),
+            }
+            for stock_id in predictions.get("model", {}).get("stable_20d", [])
+        ]
         log[model_date] = snapshot
 
     normalized = {stock_id: _normalize_price_rows(rows) for stock_id, rows in (price_db or {}).items()}
