@@ -5608,7 +5608,37 @@ function buildForecastExecutionDecision(sc, mode, forecast){
     `預期領先大盤 ${forecast.expected_alpha >= 0 ? '+' : ''}${forecast.expected_alpha}%`,
     ...(base.reasons || [])
   ].slice(0,5);
-  return applyRealtimeExecutionDecision(sc, mode, base);
+  const decision=applyRealtimeExecutionDecision(sc, mode, base);
+  const livePrice=Number(decision.realtime?.quote?.price || 0);
+  const modelPrice=Number(forecast.currentPrice || 0);
+  const expectedTarget=modelPrice > 0
+    ? modelPrice * (1 + Number(forecast.expected_return || 0) / 100)
+    : 0;
+  decision.modelPrice=modelPrice;
+  decision.expectedTarget=expectedTarget;
+  decision.remainingExpectedReturn=livePrice > 0 && expectedTarget > 0
+    ? (expectedTarget / livePrice - 1) * 100
+    : null;
+  decision.remainingRangeLow=livePrice > 0
+    ? (Number(forecast.range_low_price || 0) / livePrice - 1) * 100
+    : null;
+  decision.remainingRangeHigh=livePrice > 0
+    ? (Number(forecast.range_high_price || 0) / livePrice - 1) * 100
+    : null;
+
+  if(
+    isExecutableAction(decision.action) &&
+    Number.isFinite(decision.remainingExpectedReturn) &&
+    decision.remainingExpectedReturn <= 1
+  ){
+    decision.action='觀望';
+    decision.position='0%';
+    decision.buyType='預期空間已消化';
+    decision.liveLabel='預期空間已消化';
+    decision.liveReason=`模型基準價 ${modelPrice.toFixed(2)} 元的預期報酬，依目前 ${livePrice.toFixed(2)} 元計算只剩 ${decision.remainingExpectedReturn.toFixed(2)}%`;
+    decision.summary=`觀望；${decision.liveReason}`;
+  }
+  return decision;
 }
 
 function getForecastCandidatePool(mode){
@@ -5695,7 +5725,29 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
     : evaluated
   ).slice(0,5);
   if(!candidates.length){
-    container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">未來 20 日候選股目前都沒有通過盤中進場條件。${renderRealtimeStatus(liveQuoteState.market)}</div>`;
+    const excludedRows=evaluated.slice(0,5).map(sc=>{
+      const f=sc.forecast, d=sc.execution, live=d.realtime || {};
+      const remaining=Number.isFinite(d.remainingExpectedReturn)
+        ? `${d.remainingExpectedReturn>=0?'+':''}${d.remainingExpectedReturn.toFixed(2)}%`
+        : 'N/A';
+      const change=Number.isFinite(live.changePct)
+        ? `${live.changePct>=0?'+':''}${live.changePct.toFixed(2)}%`
+        : 'N/A';
+      return `<tr onclick="showDetail('${sc.id}')">
+        <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> ${sc.name}</td>
+        <td class="td-mono">基準 ${f.currentPrice.toFixed(2)} 元｜${f.expected_return>=0?'+':''}${f.expected_return}%</td>
+        <td class="td-mono" style="color:${d.remainingExpectedReturn>=0?'var(--green)':'var(--red)'}">${remaining}</td>
+        <td class="td-mono">${change}</td>
+        <td style="color:var(--warn);font-weight:700">${d.action}｜${d.buyType}</td>
+        <td title="${d.liveReason || ''}">${d.liveReason || '盤中條件未通過'}</td>
+      </tr>`;
+    }).join('');
+    container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--warn)">
+      <div class="panel-title" style="color:var(--warn);margin-bottom:8px">目前可買進 0 檔</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">候選股仍有中期上漲預測，但目前價格或盤中型態不適合追價。原始預期是從模型基準價計算，不等於從現在買入仍有相同空間。${renderRealtimeStatus(liveQuoteState.market)}</div>
+      <table><thead><tr><th>核心候選</th><th>模型原始預期</th><th>盤中剩餘預期</th><th>盤中漲幅</th><th>目前結論</th><th>排除原因</th></tr></thead>
+      <tbody>${excludedRows}</tbody></table>
+    </div>`;
     return;
   }
   const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
@@ -5705,7 +5757,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
       <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '只從未來 20 日核心候選判斷進場；未過熱可提前小量卡位，溫和轉強才確認買進，開高走低或漲幅已大則等拉回。' : (mode === 'long' ? '使用最近3次預測平均；核心候選連續轉弱2天才移除，降低單日大幅換股。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}。</div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:12px">${forecastValidationText(horizon)}。${renderRealtimeStatus(liveQuoteState.market)}</div>
       <table>
-        <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' ? '<th>名單狀態</th>' : ''}<th>預期${horizon}日報酬</th><th>上漲機率</th><th>相對大盤</th><th>預估價格區間</th><th>信心</th><th>現在進場</th></tr></thead>
+        <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' ? '<th>名單狀態</th>' : ''}<th>模型預期${horizon}日</th><th>盤中剩餘預期</th><th>上漲機率</th><th>相對大盤</th><th>模型價格區間</th><th>信心</th><th>現在進場</th></tr></thead>
         <tbody>${candidates.map((sc,index)=>{
           const f=sc.forecast, d=sc.execution;
           const returnColor=f.expected_return>=0?'var(--green)':'var(--red)';
@@ -5715,6 +5767,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
             <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
             ${mode === 'long' ? `<td style="color:${f.stableStatus==='新進'?'var(--warn)':'var(--accent)'}">${f.stableStatus || '核心候選'}｜${f.stablePosition ? `原始#${f.stablePosition}` : '原始榜外'}｜${f.stableObservations || 1}次</td>` : ''}
             <td class="td-mono" style="color:${returnColor};font-weight:700">${f.expected_return>=0?'+':''}${f.expected_return}%</td>
+            <td class="td-mono" style="color:${d.remainingExpectedReturn>=0?'var(--green)':'var(--red)'}">${Number.isFinite(d.remainingExpectedReturn)?`${d.remainingExpectedReturn>=0?'+':''}${d.remainingExpectedReturn.toFixed(2)}%`:'N/A'}</td>
             <td class="td-mono">${f.up_probability}%</td>
             <td class="td-mono" style="color:${f.expected_alpha>=0?'var(--green)':'var(--red)'}">${f.expected_alpha>=0?'+':''}${f.expected_alpha}%</td>
             <td class="td-mono">${f.range_low_price}～${f.range_high_price} 元</td>
@@ -5750,10 +5803,10 @@ function addForwardPredictionNotice(id){
   if(!p5.available || !p20.available){
     notice.innerHTML=`<b style="color:var(--warn)">未來報酬預測：資料不足</b>　<span style="color:var(--muted)">${p5.reason || p20.reason}</span>`;
   }else{
-    notice.innerHTML=`<b style="color:var(--accent)">未來報酬預測（${p20.asOfDate}）</b><br>
+    notice.innerHTML=`<b style="color:var(--accent)">未來報酬預測（${p20.asOfDate}，模型基準價 ${p20.currentPrice.toFixed(2)} 元）</b><br>
       5日：${p5.signal}｜預期 ${p5.expected_return>=0?'+':''}${p5.expected_return}%｜上漲機率 ${p5.up_probability}%｜區間 ${p5.range_low_price}～${p5.range_high_price} 元｜下行情境 ${p5.downside_price} 元<br>
       20日：${p20.signal}｜預期 ${p20.expected_return>=0?'+':''}${p20.expected_return}%｜上漲機率 ${p20.up_probability}%｜區間 ${p20.range_low_price}～${p20.range_high_price} 元｜下行情境 ${p20.downside_price} 元<br>
-      <span style="color:var(--muted)">這是歷史統計估計，不是保證報酬。</span>`;
+      <span style="color:var(--muted)">以上報酬從模型基準價計算；盤中價格上漲後，剩餘預期空間會縮小。這是歷史統計估計，不是保證報酬。</span>`;
   }
   scoreBox.insertAdjacentElement('afterend',notice);
 }
