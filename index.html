@@ -5284,11 +5284,19 @@ function getRealtimeExecutionContext(sc){
   const high = Number(quote.high);
   const low = Number(quote.low);
   const price = Number(quote.price);
+  const open = Number(quote.open);
+  const previousClose = Number(quote.previous_close);
   const dayPosition = high > low ? (price - low) / (high - low) : 0.5;
+  const gapPct = open > 0 && previousClose > 0
+    ? (open / previousClose - 1) * 100
+    : null;
+  const fromOpenPct = open > 0
+    ? (price / open - 1) * 100
+    : null;
   return {
     available:true, label:'盤中報價已更新', quote, market,
     changePct, marketPct:Number.isFinite(marketPct) ? marketPct : null,
-    relativePct, dayPosition,
+    relativePct, dayPosition, gapPct, fromOpenPct,
     note:`個股 ${changePct.toFixed(2)}%，大盤 ${marketPct.toFixed(2)}%，相對 ${relativePct.toFixed(2)}%（${quote.source || 'TWSE MIS'} ${quote.quote_date} ${quote.quote_time}${quote.price_kind && quote.price_kind !== '成交價' ? `，${quote.price_kind}` : ''}）`
   };
 }
@@ -5313,6 +5321,13 @@ function applyRealtimeExecutionDecision(sc, mode, baseDecision){
   const change = live.changePct;
   const relative = live.relativePct;
   const dayPosition = live.dayPosition;
+  const gapPct = live.gapPct;
+  const fromOpenPct = live.fromOpenPct;
+  const quotePrice = Number(live.quote?.price || 0);
+  const ma20 = Number(sc?.t?.ma20 || 0);
+  const trendIntact = ma20 > 0 && quotePrice >= ma20 * 0.99;
+  const openingFade = Number.isFinite(gapPct) && Number.isFinite(fromOpenPct) &&
+    gapPct >= 3 && fromOpenPct <= -1.2 && dayPosition <= 0.35;
   let liveLabel = '跟隨大盤';
   let liveReason = live.note;
 
@@ -5324,16 +5339,46 @@ function applyRealtimeExecutionDecision(sc, mode, baseDecision){
     action = '觀望';
     liveLabel = '等拉回';
     liveReason = `漲幅 ${change.toFixed(2)}% 且接近日高，等拉回再判斷`;
+  }else if(openingFade){
+    action = '觀望';
+    liveLabel = '開高走低';
+    liveReason = `開盤跳空 ${gapPct.toFixed(2)}%，目前較開盤回落 ${Math.abs(fromOpenPct).toFixed(2)}% 且接近日低`;
   }else if(change <= -2 || (Number.isFinite(relative) && relative <= -2)){
     action = mode === 'short' ? '不買' : '觀望';
     liveLabel = '明顯轉弱';
     liveReason = change <= -2 ? `盤中下跌 ${Math.abs(change).toFixed(2)}%` : `落後大盤 ${Math.abs(relative).toFixed(2)} 個百分點`;
-  }else if(Number.isFinite(relative) && relative <= -0.8){
+  }else if(mode === 'short' && Number.isFinite(relative) && relative <= -0.8){
     action = mode === 'short' ? '不買' : '觀望';
     liveLabel = '弱於大盤';
     liveReason = `落後大盤 ${Math.abs(relative).toFixed(2)} 個百分點`;
   }else if(isExecutableAction(action)){
-    if(Number.isFinite(relative) && relative >= 1 && change >= 0.5){
+    if(mode === 'long'){
+      if(change >= 3.5){
+        action = '觀望';
+        liveLabel = '漲幅已大等拉回';
+        liveReason = `盤中已上漲 ${change.toFixed(2)}%，避免用追價確認取代良好買點`;
+      }else if(
+        trendIntact &&
+        change >= -1.2 &&
+        (!Number.isFinite(relative) || relative >= -1.5) &&
+        (!Number.isFinite(fromOpenPct) || fromOpenPct >= -0.8) &&
+        dayPosition >= 0.30
+      ){
+        const moderatelyStrong = Number.isFinite(relative) &&
+          relative >= 0.5 && change >= 0.2 && change <= 2.5;
+        action = moderatelyStrong ? '買進' : '小量試單';
+        liveLabel = moderatelyStrong ? '溫和轉強' : '提前卡位';
+        liveReason = moderatelyStrong
+          ? `漲幅 ${change.toFixed(2)}%、相對大盤 ${relative.toFixed(2)}%，尚未過熱`
+          : `趨勢仍在且尚未急漲；容許相對大盤小幅落後，先用小部位`;
+      }else{
+        action = '觀望';
+        liveLabel = trendIntact ? '等止穩' : '趨勢未守穩';
+        liveReason = trendIntact
+          ? `尚未符合提前卡位條件；${live.note}`
+          : `盤中價格尚未守住 MA20 附近`;
+      }
+    }else if(Number.isFinite(relative) && relative >= 1 && change >= 0.5){
       action = '買進';
       liveLabel = '相對強勢';
       liveReason = `上漲 ${change.toFixed(2)}%，領先大盤 ${relative.toFixed(2)} 個百分點`;
@@ -5657,7 +5702,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
   container.innerHTML=`
     <div class="screener-panel" style="border:1px solid ${color}">
       <div class="panel-title" style="margin-bottom:8px;color:${color}">${title}</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '只從未來 20 日核心候選判斷今天能否進場；不以較低排名股票補滿5支。' : (mode === 'long' ? '使用最近3次預測平均；核心候選連續轉弱2天才移除，降低單日大幅換股。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}。</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '只從未來 20 日核心候選判斷進場；未過熱可提前小量卡位，溫和轉強才確認買進，開高走低或漲幅已大則等拉回。' : (mode === 'long' ? '使用最近3次預測平均；核心候選連續轉弱2天才移除，降低單日大幅換股。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}。</div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:12px">${forecastValidationText(horizon)}。${renderRealtimeStatus(liveQuoteState.market)}</div>
       <table>
         <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' ? '<th>名單狀態</th>' : ''}<th>預期${horizon}日報酬</th><th>上漲機率</th><th>相對大盤</th><th>預估價格區間</th><th>信心</th><th>現在進場</th></tr></thead>
