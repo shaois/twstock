@@ -5638,6 +5638,41 @@ function buildForecastExecutionDecision(sc, mode, forecast){
     decision.liveReason=`模型基準價 ${modelPrice.toFixed(2)} 元的預期報酬，依目前 ${livePrice.toFixed(2)} 元計算只剩 ${decision.remainingExpectedReturn.toFixed(2)}%`;
     decision.summary=`觀望；${decision.liveReason}`;
   }
+
+  // A 20-day opportunity is not an immediate entry when the 5-day edge has
+  // already been consumed or has turned weak. Keep the long-term forecast,
+  // but make the actionable recommendation wait for a better entry.
+  if(mode === 'long' && isExecutableAction(decision.action)){
+    const shortForecast=getForwardPrediction(sc,5);
+    if(shortForecast.available){
+      const shortModelPrice=Number(shortForecast.currentPrice || 0);
+      const shortTarget=shortModelPrice > 0
+        ? shortModelPrice * (1 + Number(shortForecast.expected_return || 0) / 100)
+        : 0;
+      const shortRemaining=livePrice > 0 && shortTarget > 0
+        ? (shortTarget / livePrice - 1) * 100
+        : null;
+      decision.shortSignal=shortForecast.signal;
+      decision.shortRemainingExpectedReturn=shortRemaining;
+
+      let shortBlockReason='';
+      if(shortForecast.signal === '不買'){
+        shortBlockReason='5日預測已轉弱';
+      }else if(shortForecast.signal !== '買進'){
+        shortBlockReason='5日預測尚未確認';
+      }else if(Number.isFinite(shortRemaining) && shortRemaining <= 1){
+        shortBlockReason=`5日預期空間只剩 ${shortRemaining.toFixed(2)}%`;
+      }
+      if(shortBlockReason){
+        decision.action='觀望';
+        decision.position='0%';
+        decision.buyType='等待拉回';
+        decision.liveLabel='等待拉回';
+        decision.liveReason=`20日仍看好，但${shortBlockReason}，目前不追價`;
+        decision.summary=`觀望；${decision.liveReason}`;
+      }
+    }
+  }
   return decision;
 }
 
