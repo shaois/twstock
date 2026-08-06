@@ -167,7 +167,23 @@ def _feature_vector(rows, end, market_index):
     )
 
 
-def _prepare_samples(price_db):
+def _common_snapshot_date(series_by_stock, minimum_coverage=0.90):
+    """Return the newest date available for nearly the whole stock universe."""
+    if not series_by_stock:
+        return "", 0, 0
+    coverage = defaultdict(int)
+    for rows in series_by_stock.values():
+        for date in {row["date"] for row in rows}:
+            coverage[date] += 1
+    required = max(1, math.ceil(len(series_by_stock) * minimum_coverage))
+    eligible = [date for date, count in coverage.items() if count >= required]
+    if not eligible:
+        return "", 0, required
+    snapshot_date = max(eligible)
+    return snapshot_date, coverage[snapshot_date], required
+
+
+def _prepare_samples(price_db, snapshot_date=None):
     series_by_stock = {
         stock_id: _normalize_price_rows(rows)
         for stock_id, rows in (price_db or {}).items()
@@ -178,14 +194,18 @@ def _prepare_samples(price_db):
     for stock_id, rows in series_by_stock.items():
         if len(rows) < 66:
             continue
-        current_features = _feature_vector(rows, len(rows) - 1, market_index)
+        current_end = len(rows) - 1
+        if snapshot_date:
+            while current_end >= 0 and rows[current_end]["date"] > snapshot_date:
+                current_end -= 1
+        current_features = _feature_vector(rows, current_end, market_index)
         if current_features:
             current[stock_id] = {
                 "stock_id": stock_id,
-                "base_date": rows[-1]["date"],
-                "price": rows[-1]["close"],
+                "base_date": rows[current_end]["date"],
+                "price": rows[current_end]["close"],
                 "features": current_features,
-                "history_days": len(rows),
+                "history_days": current_end + 1,
             }
         closes = [row["close"] for row in rows]
         for index in range(60, len(rows) - 20):
@@ -351,7 +371,12 @@ def _walk_forward_validation(samples):
 
 
 def build_predictions(price_db, scores=None):
-    samples, current = _prepare_samples(price_db)
+    normalized = {
+        stock_id: _normalize_price_rows(rows)
+        for stock_id, rows in (price_db or {}).items()
+    }
+    latest_date, snapshot_count, snapshot_required = _common_snapshot_date(normalized)
+    samples, current = _prepare_samples(price_db, latest_date)
     output = {}
     score_ids = list((scores or {}).keys()) or list((price_db or {}).keys())
     if len(samples) < 1000:
@@ -365,7 +390,14 @@ def build_predictions(price_db, scores=None):
         }
 
     validation = _walk_forward_validation(samples)
-    latest_training = sorted(samples, key=lambda sample: (sample["base_date"], sample["stock_id"]))[-12000:]
+    point_in_time_samples = [
+        sample for sample in samples
+        if not latest_date or sample["label_end_date"] <= latest_date
+    ]
+    latest_training = sorted(
+        point_in_time_samples,
+        key=lambda sample: (sample["base_date"], sample["stock_id"]),
+    )[-12000:]
     centers, scales = _fit_scaler(latest_training)
     hit_5d = (validation.get("5d", {}).get("hit_rate") or 50) / 100
     hit_20d = (validation.get("20d", {}).get("hit_rate") or 50) / 100
@@ -375,7 +407,6 @@ def build_predictions(price_db, scores=None):
     )
     calibration_factor = min(0.85, 0.50 + validation_periods * 0.03)
 
-    latest_date = max((state["base_date"] for state in current.values()), default="")
     for stock_id in score_ids:
         state = current.get(stock_id)
         if not state:
@@ -406,6 +437,10 @@ def build_predictions(price_db, scores=None):
             "name": "historical_analogue_v1",
             "description": "僅使用當時可見價量與相對市場特徵，估計未來 5/20 個交易日報酬",
             "latest_date": latest_date,
+            "snapshot_stock_count": snapshot_count,
+            "snapshot_total_count": len(score_ids),
+            "snapshot_required_count": snapshot_required,
+            "snapshot_rule": "使用至少90%股票共同具備的最新交易日，避免分批更新造成名單偏差",
             "feature_names": list(FEATURE_NAMES),
             "training_samples": len(latest_training),
             "all_labelled_samples": len(samples),
@@ -429,6 +464,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             (stock_id, item)
             for stock_id, item in prediction_data.items()
             if item.get("available")
+            and item.get("as_of_date") == predictions.get("model", {}).get("latest_date")
             and item.get("prediction_20d", {}).get("signal") == "買進"
             and _number((scores or {}).get(stock_id, {}).get("fScore")) >= 15
             and _number((scores or {}).get(stock_id, {}).get("total")) >= 55
@@ -465,6 +501,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         if (
             not stock_id
             or not item.get("available")
+            or item.get("as_of_date") != model_date
             or _number(score.get("fScore")) < 15
             or _number(score.get("total")) < 55
         ):

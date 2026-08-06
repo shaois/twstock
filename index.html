@@ -5693,6 +5693,15 @@ function forecastValidationText(horizon){
   return `${prefix} ${validation.periods} 期／${validation.sample_picks} 筆：上漲命中 ${validation.hit_rate}%・平均報酬 ${validation.average_return >= 0 ? '+' : ''}${validation.average_return}%・相對大盤 ${validation.average_alpha >= 0 ? '+' : ''}${validation.average_alpha}%`;
 }
 
+function forecastSnapshotText(){
+  const model=ghCache?.predictionModel || {};
+  const count=Number(model.snapshot_stock_count || 0);
+  const total=Number(model.snapshot_total_count || Object.keys(ghCache?.predictions || {}).length || 0);
+  if(!count) return '';
+  const complete=total > 0 && count >= total;
+  return `；同日資料 <b style="color:${complete?'var(--green)':'var(--warn)'}">${count}/${total || 200} 支</b>`;
+}
+
 async function renderForecastTop5(mode='long', buyableOnly=false){
   if(Object.keys(allScores).length===0){showToast('請先載入資料');return;}
   document.getElementById('welcome').style.display='none';
@@ -5754,7 +5763,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
   container.innerHTML=`
     <div class="screener-panel" style="border:1px solid ${color}">
       <div class="panel-title" style="margin-bottom:8px;color:${color}">${title}</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '只從未來 20 日核心候選判斷進場；未過熱可提前小量卡位，溫和轉強才確認買進，開高走低或漲幅已大則等拉回。' : (mode === 'long' ? '使用最近3次預測平均；核心候選連續轉弱2天才移除，降低單日大幅換股。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}。</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '只從未來 20 日核心候選判斷進場；未過熱可提前小量卡位，溫和轉強才確認買進，開高走低或漲幅已大則等拉回。' : (mode === 'long' ? '使用最近3次預測平均；核心候選連續轉弱2天才移除，降低單日大幅換股。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:12px">${forecastValidationText(horizon)}。${renderRealtimeStatus(liveQuoteState.market)}</div>
       <table>
         <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' ? '<th>名單狀態</th>' : ''}<th>模型預期${horizon}日</th><th>盤中剩餘預期</th><th>上漲機率</th><th>相對大盤</th><th>模型價格區間</th><th>信心</th><th>現在進場</th></tr></thead>
