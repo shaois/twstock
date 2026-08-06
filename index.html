@@ -5777,8 +5777,8 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
       const change=Number.isFinite(live.changePct)
         ? `${live.changePct>=0?'+':''}${live.changePct.toFixed(2)}%`
         : 'N/A';
-      return `<tr onclick="showDetail('${sc.id}')">
-        <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> ${sc.name}</td>
+      return `<tr onclick="showDetail('${sc.id}')" style="opacity:.82">
+        <td><span style="color:var(--warn);font-weight:700;margin-right:6px">未通過</span><b class="td-mono" style="color:var(--text)">${sc.id}</b> ${sc.name}</td>
         <td class="td-mono">基準 ${f.currentPrice.toFixed(2)} 元｜${f.expected_return>=0?'+':''}${f.expected_return}%</td>
         <td class="td-mono" style="color:${d.remainingExpectedReturn>=0?'var(--green)':'var(--red)'}">${remaining}</td>
         <td class="td-mono">${change}</td>
@@ -5787,10 +5787,16 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
       </tr>`;
     }).join('');
     container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--warn)">
-      <div class="panel-title" style="color:var(--warn);margin-bottom:8px">目前可買進 0 檔</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">候選股仍有中期上漲預測，但目前價格或盤中型態不適合追價。原始預期是從模型基準價計算，不等於從現在買入仍有相同空間。${renderRealtimeStatus(liveQuoteState.market)}</div>
-      <table><thead><tr><th>核心候選</th><th>模型原始預期</th><th>盤中剩餘預期</th><th>盤中漲幅</th><th>目前結論</th><th>排除原因</th></tr></thead>
-      <tbody>${excludedRows}</tbody></table>
+      <div class="panel-title" style="color:var(--warn);margin-bottom:8px">目前可買進：0 支（沒有推薦）</div>
+      <div style="font-size:12px;color:var(--warn);font-weight:700;margin-bottom:6px">下方股票全部未通過進場條件，不是可買進名單。</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">候選股仍有中期上漲預測，但目前價格、5日預測或盤中型態不適合進場。${renderRealtimeStatus(liveQuoteState.market)}</div>
+      <details style="border-top:1px solid var(--border);padding-top:10px">
+        <summary style="cursor:pointer;color:var(--muted);font-weight:700">查看 ${evaluated.slice(0,5).length} 支未通過候選股與排除原因</summary>
+        <div style="margin-top:10px;overflow-x:auto">
+          <table><thead><tr><th>未通過候選（不是推薦）</th><th>模型原始預期</th><th>盤中剩餘預期</th><th>盤中漲幅</th><th>目前結論</th><th>排除原因</th></tr></thead>
+          <tbody>${excludedRows}</tbody></table>
+        </div>
+      </details>
     </div>`;
     return;
   }
