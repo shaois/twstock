@@ -329,7 +329,9 @@ def _walk_forward_validation(samples):
     for sample in samples:
         by_date[sample["base_date"]].append(sample)
     dates = sorted(date for date, rows in by_date.items() if len(rows) >= 40)
-    eligible = dates[-80:-20:6]
+    # Use more separated point-in-time tests so one short market regime does
+    # not dominate the reported hit rate.
+    eligible = dates[-140:-20:5]
     metrics = {5: [], 20: []}
     for test_date in eligible:
         training = [sample for sample in samples if sample["label_end_date"] < test_date]
@@ -401,11 +403,17 @@ def build_predictions(price_db, scores=None):
     centers, scales = _fit_scaler(latest_training)
     hit_5d = (validation.get("5d", {}).get("hit_rate") or 50) / 100
     hit_20d = (validation.get("20d", {}).get("hit_rate") or 50) / 100
-    validation_periods = min(
-        validation.get("5d", {}).get("periods") or 0,
-        validation.get("20d", {}).get("periods") or 0,
-    )
-    calibration_factor = min(0.85, 0.50 + validation_periods * 0.03)
+    def horizon_calibration(horizon, hit_rate):
+        periods = validation.get(f"{horizon}d", {}).get("periods") or 0
+        sample_factor = min(0.85, 0.50 + periods * 0.02)
+        # A model below a 55% directional hit rate must shrink toward a
+        # neutral forecast instead of retaining the same confidence as the
+        # better-performing horizon.
+        quality_factor = max(0.65, min(1.0, hit_rate / 0.55))
+        return max(0.45, min(0.85, sample_factor * quality_factor))
+
+    calibration_5d = horizon_calibration(5, hit_5d)
+    calibration_20d = horizon_calibration(20, hit_20d)
 
     for stock_id in score_ids:
         state = current.get(stock_id)
@@ -414,10 +422,10 @@ def build_predictions(price_db, scores=None):
             continue
         neighbors = _nearest_samples(state["features"], latest_training, centers, scales, 120)
         prediction_5d = _horizon_prediction(
-            neighbors, 5, state["price"], hit_5d, calibration_factor
+            neighbors, 5, state["price"], hit_5d, calibration_5d
         )
         prediction_20d = _horizon_prediction(
-            neighbors, 20, state["price"], hit_20d, calibration_factor
+            neighbors, 20, state["price"], hit_20d, calibration_20d
         )
         item = {
             "available": True,
@@ -444,7 +452,11 @@ def build_predictions(price_db, scores=None):
             "feature_names": list(FEATURE_NAMES),
             "training_samples": len(latest_training),
             "all_labelled_samples": len(samples),
-            "calibration_factor": round(calibration_factor, 2),
+            # Keep the legacy field as the 20-day value because stability
+            # history only smooths 20-day forecasts.
+            "calibration_factor": round(calibration_20d, 2),
+            "calibration_factor_5d": round(calibration_5d, 2),
+            "calibration_factor_20d": round(calibration_20d, 2),
             "validation": validation,
             "warning": "預測為歷史統計估計，不保證未來報酬",
         },
@@ -475,7 +487,9 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
     current_position = {
         stock_id: index + 1 for index, (stock_id, _) in enumerate(current_rows)
     }
-    current_top15 = [stock_id for stock_id, _ in current_rows[:15]]
+    # The stable list reduces one-day churn, but it must not preserve a stock
+    # that has already fallen well outside today's actionable forecast set.
+    current_top12 = [stock_id for stock_id, _ in current_rows[:12]]
 
     history = dict(existing_log or {})
     model_date = predictions.get("model", {}).get("latest_date") or ""
@@ -506,18 +520,13 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             or _number(score.get("total")) < 55
         ):
             continue
-        weak_days = (
-            0
-            if stock_id in current_top15
-            else int(previous.get("weak_days") or 0) + 1
-        )
         signal = item.get("prediction_20d", {}).get("signal")
-        if weak_days >= 2 or signal == "不買":
+        if signal != "買進" or stock_id not in current_top12:
             continue
         stable_ids.append(stock_id)
         stable_meta[stock_id] = {
-            "status": "續留" if weak_days == 0 else "保留觀察",
-            "weak_days": weak_days,
+            "status": "續留",
+            "weak_days": 0,
         }
 
     def history_values(stock_id, field):
@@ -544,7 +553,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         return values
 
     remaining = []
-    for stock_id in current_top15:
+    for stock_id in current_top12:
         if stock_id in stable_ids:
             continue
         appearances = sum(
@@ -596,7 +605,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
     model["stable_20d"] = stable_ids
     model["stable_20d_meta"] = stable_meta
     model["stability_rule"] = (
-        "最近3次預測平均；核心候選連續轉弱2天才移除；新名單只從今日原始前15名遞補"
+        "最近3次預測僅供顯示；核心候選必須維持買進訊號且仍在今日原始前12名"
     )
     return predictions
 

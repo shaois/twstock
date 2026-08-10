@@ -5639,9 +5639,9 @@ function buildForecastExecutionDecision(sc, mode, forecast){
     decision.summary=`觀望；${decision.liveReason}`;
   }
 
-  // A 20-day opportunity is not an immediate entry when the 5-day edge has
-  // already been consumed or has turned weak. Keep the long-term forecast,
-  // but make the actionable recommendation wait for a better entry.
+  // Five-day validation can be noisy. Use it as a hard veto only when the
+  // short forecast is actually negative; otherwise reduce position instead
+  // of discarding an otherwise valid 20-day opportunity.
   if(mode === 'long' && isExecutableAction(decision.action)){
     const shortForecast=getForwardPrediction(sc,5);
     if(shortForecast.available){
@@ -5654,13 +5654,15 @@ function buildForecastExecutionDecision(sc, mode, forecast){
         : null;
       decision.shortSignal=shortForecast.signal;
       decision.shortRemainingExpectedReturn=shortRemaining;
+      decision.shortValidationHitRate=Number(ghCache?.predictionModel?.validation?.['5d']?.hit_rate || 0);
 
       let shortBlockReason='';
-      if(shortForecast.signal === '不買'){
-        shortBlockReason='5日預測已轉弱';
-      }else if(shortForecast.signal !== '買進'){
-        shortBlockReason='5日預測尚未確認';
-      }else if(Number.isFinite(shortRemaining) && shortRemaining <= 1){
+      if(
+        Number(shortForecast.expected_return || 0) <= 0 ||
+        Number(shortForecast.expected_alpha || 0) <= -0.5
+      ){
+        shortBlockReason='5日預測已明確轉弱';
+      }else if(Number.isFinite(shortRemaining) && shortRemaining <= 0){
         shortBlockReason=`5日預期空間只剩 ${shortRemaining.toFixed(2)}%`;
       }
       if(shortBlockReason){
@@ -5670,13 +5672,20 @@ function buildForecastExecutionDecision(sc, mode, forecast){
         decision.liveLabel='等待拉回';
         decision.liveReason=`20日仍看好，但${shortBlockReason}，目前不追價`;
         decision.summary=`觀望；${decision.liveReason}`;
+      }else if(shortForecast.signal !== '買進'){
+        decision.action='小量試單';
+        decision.position='10-20%';
+        decision.buyType='20日看多、短線未確認';
+        decision.liveLabel='短線未確認';
+        decision.liveReason=`20日預測仍看好；5日模型僅為觀察且近期驗證命中 ${decision.shortValidationHitRate || '不足'}%，先用小部位`;
+        decision.summary=`小量試單；${decision.liveReason}`;
       }
     }
   }
   return decision;
 }
 
-function getForecastCandidatePool(mode){
+function getForecastCandidatePool(mode, useStableList=true){
   const horizon = mode === 'short' ? 5 : 20;
   const stableIds=mode === 'long'
     ? (ghCache?.predictionModel?.stable_20d || []).map(String)
@@ -5700,6 +5709,7 @@ function getForecastCandidatePool(mode){
     String(a.id).localeCompare(String(b.id))
   );
   if(mode !== 'long') return candidates;
+  if(!useStableList) return candidates.slice(0,25);
   if(!stableIds.length) return candidates.slice(0,5);
   const byId=new Map(candidates.map(sc=>[sc.id,sc]));
   return stableIds.map((id,index)=>{
@@ -5710,8 +5720,8 @@ function getForecastCandidatePool(mode){
       ...sc,
       forecast:{
         ...sc.forecast,
-        expected_return:Number(stability.smoothed_expected_return ?? sc.forecast.expected_return),
-        up_probability:Number(stability.smoothed_up_probability ?? sc.forecast.up_probability),
+        smoothedExpectedReturn:Number(stability.smoothed_expected_return ?? sc.forecast.expected_return),
+        smoothedUpProbability:Number(stability.smoothed_up_probability ?? sc.forecast.up_probability),
         stableStatus:stability.status || '核心候選',
         stableObservations:Number(stability.observations || 1),
         stablePosition:Number(stability.current_position || 0)
@@ -5725,7 +5735,8 @@ function forecastValidationText(horizon){
   const validation=ghCache?.predictionModel?.validation?.[`${horizon}d`] || {};
   if(!validation.periods) return '回測樣本尚未完成';
   const prefix=validation.periods < 10 ? '初步驗證' : '時間序列驗證';
-  return `${prefix} ${validation.periods} 期／${validation.sample_picks} 筆：上漲命中 ${validation.hit_rate}%・平均報酬 ${validation.average_return >= 0 ? '+' : ''}${validation.average_return}%・相對大盤 ${validation.average_alpha >= 0 ? '+' : ''}${validation.average_alpha}%`;
+  const reliability=Number(validation.hit_rate || 0) < 50 ? '；命中率偏低，僅供風險提示' : '';
+  return `${prefix} ${validation.periods} 期／${validation.sample_picks} 筆：上漲命中 ${validation.hit_rate}%・平均報酬 ${validation.average_return >= 0 ? '+' : ''}${validation.average_return}%・相對大盤 ${validation.average_alpha >= 0 ? '+' : ''}${validation.average_alpha}%${reliability}`;
 }
 
 function forecastSnapshotText(){
@@ -5748,7 +5759,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
     ? '目前可買進 Top 5'
     : (mode === 'short' ? '未來 5 日短線 Top 5' : '未來 20 日預測 Top 5');
   const color=mode === 'short' ? 'var(--accent2)' : 'var(--accent)';
-  const pool=getForecastCandidatePool(mode);
+  const pool=getForecastCandidatePool(mode, !buyableOnly);
   if(!ghCache?.predictionModel || !Object.keys(ghCache?.predictions || {}).length){
     container.innerHTML='<div class="screener-panel" style="border:1px solid var(--warn);color:var(--warn)">尚未產生 predictions.json。請先手動執行一次 Cache，之後每天會自動更新預測。</div>';
     return;
@@ -5758,14 +5769,19 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
     return;
   }
   container.innerHTML='<div class="screener-panel"><div class="ai-loading"><div class="spinner"></div>正在取得預測候選股的官方盤中報價...</div></div>';
-  const quotePool=mode === 'long' ? pool.slice(0,5) : pool.slice(0,20);
+  const quotePool=buyableOnly ? pool.slice(0,25) : (mode === 'long' ? pool.slice(0,5) : pool.slice(0,20));
   await loadRealtimeQuotes(quotePool.map(sc=>sc.id));
   const evaluated=quotePool.map(sc=>({
     ...sc,
     execution:buildForecastExecutionDecision(sc,mode,sc.forecast)
   }));
   const candidates=(buyableOnly
-    ? evaluated.filter(sc=>isExecutableAction(sc.execution.action))
+    ? evaluated.filter(sc=>isExecutableAction(sc.execution.action)).sort((a,b)=>{
+        const ar=Number(a.execution?.realtime?.relativePct || 0);
+        const br=Number(b.execution?.realtime?.relativePct || 0);
+        return (b.forecastRank + Math.max(-1,Math.min(br,2))*0.35) -
+          (a.forecastRank + Math.max(-1,Math.min(ar,2))*0.35);
+      })
     : evaluated
   ).slice(0,5);
   if(!candidates.length){
@@ -5804,10 +5820,10 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
   container.innerHTML=`
     <div class="screener-panel" style="border:1px solid ${color}">
       <div class="panel-title" style="margin-bottom:8px;color:${color}">${title}</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '只從未來 20 日核心候選判斷進場；未過熱可提前小量卡位，溫和轉強才確認買進，開高走低或漲幅已大則等拉回。' : (mode === 'long' ? '使用最近3次預測平均；核心候選連續轉弱2天才移除，降低單日大幅換股。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '從全部200支股票的20日原始預測前25名尋找當下買點，不再只檢查固定核心5支；5日預測僅在明確轉弱時否決。' : (mode === 'long' ? '核心候選必須維持買進訊號且仍在今日原始前12名；歷史平均僅供參考，不覆蓋今日預測。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:12px">${forecastValidationText(horizon)}。${renderRealtimeStatus(liveQuoteState.market)}</div>
       <table>
-        <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' ? '<th>名單狀態</th>' : ''}<th>模型預期${horizon}日</th><th>盤中剩餘預期</th><th>上漲機率</th><th>相對大盤</th><th>模型價格區間</th><th>信心</th><th>現在進場</th></tr></thead>
+        <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' && !buyableOnly ? '<th>名單狀態</th>' : ''}<th>模型預期${horizon}日</th><th>盤中剩餘預期</th><th>上漲機率</th><th>相對大盤</th><th>模型價格區間</th><th>信心</th><th>現在進場</th></tr></thead>
         <tbody>${candidates.map((sc,index)=>{
           const f=sc.forecast, d=sc.execution;
           const returnColor=f.expected_return>=0?'var(--green)':'var(--red)';
@@ -5815,7 +5831,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
             <td class="td-mono" style="color:var(--muted)">#${index+1}</td>
             <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> ${sc.name}</td>
             <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
-            ${mode === 'long' ? `<td style="color:${f.stableStatus==='新進'?'var(--warn)':'var(--accent)'}">${f.stableStatus || '核心候選'}｜${f.stablePosition ? `原始#${f.stablePosition}` : '原始榜外'}｜${f.stableObservations || 1}次</td>` : ''}
+            ${mode === 'long' && !buyableOnly ? `<td style="color:${f.stableStatus==='新進'?'var(--warn)':'var(--accent)'}">${f.stableStatus || '核心候選'}｜${f.stablePosition ? `原始#${f.stablePosition}` : '原始榜外'}｜${f.stableObservations || 1}次</td>` : ''}
             <td class="td-mono" style="color:${returnColor};font-weight:700">${f.expected_return>=0?'+':''}${f.expected_return}%</td>
             <td class="td-mono" style="color:${d.remainingExpectedReturn>=0?'var(--green)':'var(--red)'}">${Number.isFinite(d.remainingExpectedReturn)?`${d.remainingExpectedReturn>=0?'+':''}${d.remainingExpectedReturn.toFixed(2)}%`:'N/A'}</td>
             <td class="td-mono">${f.up_probability}%</td>
