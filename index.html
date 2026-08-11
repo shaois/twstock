@@ -5252,6 +5252,10 @@ function isExecutableAction(action){
   return ['積極買進','買進','小量試單'].includes(normalizeBuyActionText(action));
 }
 
+function isConfirmedBuyAction(action){
+  return ['積極買進','買進'].includes(normalizeBuyActionText(action));
+}
+
 function getRealtimeExecutionContext(sc){
   const quote = liveQuoteState.stocks?.[sc?.id] || null;
   const market = liveQuoteState.market || null;
@@ -5777,6 +5781,9 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
   }));
   const candidates=(buyableOnly
     ? evaluated.filter(sc=>isExecutableAction(sc.execution.action)).sort((a,b)=>{
+        const confirmedDiff=Number(isConfirmedBuyAction(b.execution.action)) -
+          Number(isConfirmedBuyAction(a.execution.action));
+        if(confirmedDiff) return confirmedDiff;
         const ar=Number(a.execution?.realtime?.relativePct || 0);
         const br=Number(b.execution?.realtime?.relativePct || 0);
         return (b.forecastRank + Math.max(-1,Math.min(br,2))*0.35) -
@@ -5784,6 +5791,17 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
       })
     : evaluated
   ).slice(0,5);
+  const confirmedBuyCount=buyableOnly
+    ? candidates.filter(sc=>isConfirmedBuyAction(sc.execution.action)).length
+    : 0;
+  const trialCount=buyableOnly
+    ? candidates.filter(sc=>normalizeBuyActionText(sc.execution.action)==='小量試單').length
+    : 0;
+  const buyableSummary=!buyableOnly
+    ? ''
+    : confirmedBuyCount
+      ? `<div style="font-size:12px;color:var(--green);font-weight:700;margin-bottom:8px">確認買進 ${confirmedBuyCount} 支｜小量試單 ${trialCount} 支。正式買進訊號已優先排列。</div>`
+      : `<div style="font-size:12px;color:var(--warn);font-weight:700;margin-bottom:8px">目前確認買進 0 支；以下 ${trialCount} 支僅為「小量試單」候選，不是正式買進推薦。</div>`;
   if(!candidates.length){
     const excludedRows=evaluated.slice(0,5).map(sc=>{
       const f=sc.forecast, d=sc.execution, live=d.realtime || {};
@@ -5819,8 +5837,9 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
   const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
   container.innerHTML=`
     <div class="screener-panel" style="border:1px solid ${color}">
-      <div class="panel-title" style="margin-bottom:8px;color:${color}">${title}</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '從全部200支股票的20日原始預測前25名尋找當下買點，不再只檢查固定核心5支；5日預測僅在明確轉弱時否決。' : (mode === 'long' ? '核心候選必須維持買進訊號且仍在今日原始前12名；歷史平均僅供參考，不覆蓋今日預測。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
+      <div class="panel-title" style="margin-bottom:8px;color:${color}">${buyableOnly ? '目前可進場候選 Top 5' : title}</div>
+      ${buyableSummary}
+      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '從全部200支股票的20日原始預測前25名尋找當下買點；正式買進訊號優先，小量試單只代表條件尚未完整確認。' : (mode === 'long' ? '核心候選必須維持買進訊號且仍在今日原始前12名；這是未來預測名單，不等於今天適合立即買進。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:12px">${forecastValidationText(horizon)}。${renderRealtimeStatus(liveQuoteState.market)}</div>
       <table>
         <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' && !buyableOnly ? '<th>名單狀態</th>' : ''}<th>模型預期${horizon}日</th><th>盤中剩餘預期</th><th>上漲機率</th><th>相對大盤</th><th>模型價格區間</th><th>信心</th><th>現在進場</th></tr></thead>
