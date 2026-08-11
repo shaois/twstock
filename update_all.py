@@ -82,6 +82,17 @@ def load_old_cache(filename):
         except: return {}
     return {}
 
+
+def merge_rows_by_date(existing_rows, new_rows, maximum_rows=1000):
+    """Keep older price history while replacing duplicate dates with fresh rows."""
+    merged = {}
+    for row in list(existing_rows or []) + list(new_rows or []):
+        date = str(row.get("date") or "")[:10]
+        if date:
+            merged[date] = row
+    dates = sorted(merged)[-maximum_rows:]
+    return [merged[date] for date in dates]
+
 def classify_news(items):
     if not items:
         return "待更新", "目前沒有抓到最近新聞"
@@ -558,9 +569,51 @@ async def update_cache():
             url_p = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={sid}&start_date={(today - timedelta(days=540)).strftime('%Y-%m-%d')}&token={FINMIND_TOKEN}"
             sc, data = await fetch_api(client, url_p)
             if sc == 402 or (data and data.get("status") == 402): stop_fetching = True
-            elif data and data.get("status") == 200 and data.get("data"): price_db[sid] = data["data"]
+            elif data and data.get("status") == 200 and data.get("data"):
+                # FinMind may return a rolling window. Replacing the list made
+                # the model permanently forget older regimes and left only
+                # about six months for validation.
+                price_db[sid] = merge_rows_by_date(
+                    price_db.get(sid, []), data["data"]
+                )
             await asyncio.sleep(1.2)
             if stop_fetching: break
+
+            # The free endpoint can return only a rolling slice even when a
+            # long start_date is requested. Fetch the immediately preceding
+            # window once per daily cycle until roughly 3.5 years of trading
+            # history is available. This provides enough independent 5/20-day
+            # cases to test a 70% hit-rate target without waiting for future
+            # market data.
+            price_dates = sorted({
+                str(row.get("date") or "")[:10]
+                for row in price_db.get(sid, [])
+                if row.get("date")
+            })
+            if 0 < len(price_dates) < 900:
+                earliest = datetime.strptime(price_dates[0], "%Y-%m-%d")
+                backfill_end = earliest - timedelta(days=1)
+                backfill_start = backfill_end - timedelta(days=540)
+                url_old = (
+                    "https://api.finmindtrade.com/api/v4/data?"
+                    f"dataset=TaiwanStockPrice&data_id={sid}"
+                    f"&start_date={backfill_start.strftime('%Y-%m-%d')}"
+                    f"&end_date={backfill_end.strftime('%Y-%m-%d')}"
+                    f"&token={FINMIND_TOKEN}"
+                )
+                sc, old_data = await fetch_api(client, url_old)
+                if sc == 402 or (old_data and old_data.get("status") == 402):
+                    stop_fetching = True
+                elif (
+                    old_data
+                    and old_data.get("status") == 200
+                    and old_data.get("data")
+                ):
+                    price_db[sid] = merge_rows_by_date(
+                        price_db.get(sid, []), old_data["data"]
+                    )
+                await asyncio.sleep(1.2)
+                if stop_fetching: break
 
             news_db[sid] = await fetch_news_for_stock(client, stock)
             await asyncio.sleep(0.6)
@@ -596,14 +649,21 @@ async def update_cache():
         )
         existing_prediction_log = load_old_cache("prediction_log.json")
         predictions_out = build_predictions(price_db, scores_out.get("data", {}))
+        # Mature old recommendations before evaluating the model safety gate.
+        # Otherwise a bad realised result is noticed one full cache cycle late.
+        evaluated_prediction_log = update_prediction_log(
+            existing_prediction_log, predictions_out, price_db
+        )
         predictions_out = apply_prediction_stability(
-            predictions_out, existing_prediction_log, scores_out.get("data", {})
+            predictions_out,
+            evaluated_prediction_log,
+            scores_out.get("data", {}),
         )
         (CACHE_DIR / "predictions.json").write_text(
             json.dumps(predictions_out, ensure_ascii=False)
         )
         prediction_log = update_prediction_log(
-            existing_prediction_log, predictions_out, price_db
+            evaluated_prediction_log, predictions_out, price_db
         )
         (CACHE_DIR / "prediction_log.json").write_text(
             json.dumps(

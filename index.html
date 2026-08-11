@@ -4115,7 +4115,11 @@ function getPracticalTradeDecision(sc, mode='long'){
 const _getAIDecisionGuardBeforePractical = getAIDecisionGuard;
 getAIDecisionGuard = function(sc, mode){
   const guard = _getAIDecisionGuardBeforePractical(sc, mode);
-  const decision = getPracticalTradeDecision(sc, mode);
+  const horizon=mode === 'short' ? 5 : 20;
+  const forecast=getForwardPrediction(sc,horizon);
+  const decision=forecast.available
+    ? buildForecastExecutionDecision(sc,mode,forecast)
+    : getPracticalTradeDecision(sc, mode);
   guard.practical = decision;
   guard.maxConclusion = decision.action;
   guard.rules = [...(decision.risks || [])];
@@ -4158,7 +4162,7 @@ async function askAI(id, mode){
   const role = mode === 'short' ? '台股短線交易助理' : '台股中長期投資助理';
   const prompt = `你是${role}。請只根據下列資料判斷，不要編造新聞、訂單、政策或內線消息。
 核心原則：不是問能不能買，而是判斷用多少部位買。市場冷熱都有風險，請用風險分級，不要過度保守。
-系統已先給出實戰交易分級：${decision.action}，建議部位：${decision.position}。除非資料中有重大矛盾，請不要比系統分級更保守或更激進。
+系統已先給出實戰交易分級：${decision.action}，建議部位：${decision.position}。這是風控上限，結論與部位必須完全照寫；你只能解釋理由，不得自行升級或降級。
 ${data}
 請固定用下面格式，簡潔回答：
 結論：只能填「積極買進」「買進」「小量試單」「觀望」「不買」
@@ -4191,7 +4195,34 @@ ${data}
     if(!r.ok) throw new Error(d?.detail || d?.error?.message || `AI API 回傳 ${r.status}`);
     const answer = d?.choices?.[0]?.message?.content;
     if(!answer) throw new Error(d?.error?.message || 'AI 沒有回傳分析內容');
-    content.textContent = answer;
+    // AI explains the evidence but is not allowed to overrule the
+    // deterministic model, validation gate or position limit.
+    let guardedAnswer=String(answer);
+    const conclusionLine=`結論：${decision.action}`;
+    const positionLine=`建議部位：${decision.position}`;
+    if(/(?:\*\*)?結論(?:\*\*)?\s*[：:][^\n]*/.test(guardedAnswer)){
+      guardedAnswer=guardedAnswer.replace(
+        /(?:\*\*)?結論(?:\*\*)?\s*[：:][^\n]*/,
+        conclusionLine
+      );
+    }else{
+      guardedAnswer=`${conclusionLine}\n${guardedAnswer}`;
+    }
+    if(/(?:\*\*)?建議部位(?:\*\*)?\s*[：:][^\n]*/.test(guardedAnswer)){
+      guardedAnswer=guardedAnswer.replace(
+        /(?:\*\*)?建議部位(?:\*\*)?\s*[：:][^\n]*/,
+        positionLine
+      );
+    }else{
+      guardedAnswer=`${conclusionLine}\n${positionLine}\n${guardedAnswer.replace(conclusionLine,'').trimStart()}`;
+    }
+    if(!isExecutableAction(decision.action)){
+      guardedAnswer=guardedAnswer.replace(
+        /(?:\*\*)?目標賣出區(?:\*\*)?\s*[：:][^\n]*/,
+        '目標賣出區：暫不適用，等待模型驗證與進場條件'
+      );
+    }
+    content.textContent = guardedAnswer;
     showToast(`${getAIName()} 實戰分級完成`);
   }catch(e){
     let msg = e.message || 'AI 分析失敗';
@@ -5607,6 +5638,21 @@ function formatEntryPrice(value){
   return n >= 1000 ? n.toFixed(0) : n >= 100 ? n.toFixed(1) : n.toFixed(2);
 }
 
+function tradingDayGap(fromDate, toDate){
+  if(!fromDate || !toDate || fromDate >= toDate) return 0;
+  const cursor=new Date(`${fromDate}T00:00:00Z`);
+  const end=new Date(`${toDate}T00:00:00Z`);
+  if(Number.isNaN(cursor.getTime()) || Number.isNaN(end.getTime())) return 0;
+  let gap=0;
+  cursor.setUTCDate(cursor.getUTCDate()+1);
+  while(cursor<=end){
+    const day=cursor.getUTCDay();
+    if(day!==0 && day!==6) gap++;
+    cursor.setUTCDate(cursor.getUTCDate()+1);
+  }
+  return gap;
+}
+
 // Keep the 20-day forecast ranking fixed. Realtime prices only decide whether
 // the stock is inside a support-based entry zone or should wait for a pullback.
 function apply20dValueEntryDecision(sc, decision, forecast){
@@ -5643,17 +5689,32 @@ function apply20dValueEntryDecision(sc, decision, forecast){
   const distanceToMa20=ma20 > 0 && livePrice > 0 ? (livePrice / ma20 - 1) * 100 : null;
   const openingFade=Number.isFinite(fromOpen) && fromOpen <= -1.5 &&
     Number.isFinite(dayPosition) && dayPosition <= 0.25;
+  const modelTradingDayGap=tradingDayGap(
+    forecast.asOfDate,
+    live.market?.quote_date || live.quote?.quote_date
+  );
+  decision.modelTradingDayGap=modelTradingDayGap;
   const breakdown=(ma20 > 0 && livePrice < ma20 * 0.97) ||
     (Number.isFinite(change) && change <= -3) || openingFade;
   const chased=entryHigh > 0 && livePrice > entryHigh ||
     (Number.isFinite(change) && change >= 3) ||
     (Number.isFinite(distanceToMa20) && distanceToMa20 >= 7);
 
-  if(!forecastQualified){
+  if(forecast.safety_block){
+    decision.action='觀望';
+    decision.position='0%';
+    decision.buyType='模型驗證未通過';
+    decision.liveReason=forecast.safety_block;
+  }else if(!forecastQualified){
     decision.action='觀望';
     decision.position='0%';
     decision.buyType='20日獲利條件不足';
     decision.liveReason=`預期報酬 ${expectedReturn.toFixed(2)}%、上漲機率 ${upProbability.toFixed(1)}%、相對大盤 ${expectedAlpha.toFixed(2)}%`;
+  }else if(modelTradingDayGap > 1){
+    decision.action='觀望';
+    decision.position='0%';
+    decision.buyType='模型資料過期';
+    decision.liveReason=`模型停在 ${forecast.asOfDate}，已落後盤中日期 ${modelTradingDayGap} 個交易日；不得沿用舊預測進場`;
   }else if(!live.available || livePrice <= 0){
     decision.action='觀望';
     decision.position='0%';
@@ -5706,6 +5767,12 @@ function buildForecastExecutionDecision(sc, mode, forecast){
     `預期領先大盤 ${forecast.expected_alpha >= 0 ? '+' : ''}${forecast.expected_alpha}%`,
     ...(base.reasons || [])
   ].slice(0,5);
+  if(forecast.safety_block){
+    base.action='觀望';
+    base.position='0%';
+    base.buyType='模型驗證未通過';
+    base.reasons=[forecast.safety_block, ...base.reasons].slice(0,5);
+  }
   const decision=applyRealtimeExecutionDecision(sc, mode, base);
   const livePrice=Number(decision.realtime?.quote?.price || 0);
   const modelPrice=Number(forecast.currentPrice || 0);
@@ -5737,49 +5804,6 @@ function buildForecastExecutionDecision(sc, mode, forecast){
     decision.summary=`觀望；${decision.liveReason}`;
   }
 
-  // Five-day validation can be noisy. Use it as a hard veto only when the
-  // short forecast is actually negative; otherwise reduce position instead
-  // of discarding an otherwise valid 20-day opportunity.
-  if(mode === 'long' && isExecutableAction(decision.action)){
-    const shortForecast=getForwardPrediction(sc,5);
-    if(shortForecast.available){
-      const shortModelPrice=Number(shortForecast.currentPrice || 0);
-      const shortTarget=shortModelPrice > 0
-        ? shortModelPrice * (1 + Number(shortForecast.expected_return || 0) / 100)
-        : 0;
-      const shortRemaining=livePrice > 0 && shortTarget > 0
-        ? (shortTarget / livePrice - 1) * 100
-        : null;
-      decision.shortSignal=shortForecast.signal;
-      decision.shortRemainingExpectedReturn=shortRemaining;
-      decision.shortValidationHitRate=Number(ghCache?.predictionModel?.validation?.['5d']?.hit_rate || 0);
-
-      let shortBlockReason='';
-      if(
-        Number(shortForecast.expected_return || 0) <= 0 ||
-        Number(shortForecast.expected_alpha || 0) <= -0.5
-      ){
-        shortBlockReason='5日預測已明確轉弱';
-      }else if(Number.isFinite(shortRemaining) && shortRemaining <= 0){
-        shortBlockReason=`5日預期空間只剩 ${shortRemaining.toFixed(2)}%`;
-      }
-      if(shortBlockReason){
-        decision.action='觀望';
-        decision.position='0%';
-        decision.buyType='等待拉回';
-        decision.liveLabel='等待拉回';
-        decision.liveReason=`20日仍看好，但${shortBlockReason}，目前不追價`;
-        decision.summary=`觀望；${decision.liveReason}`;
-      }else if(shortForecast.signal !== '買進'){
-        decision.action='小量試單';
-        decision.position='10-20%';
-        decision.buyType='20日看多、短線未確認';
-        decision.liveLabel='短線未確認';
-        decision.liveReason=`20日預測仍看好；5日模型僅為觀察且近期驗證命中 ${decision.shortValidationHitRate || '不足'}%，先用小部位`;
-        decision.summary=`小量試單；${decision.liveReason}`;
-      }
-    }
-  }
   return mode === 'long'
     ? apply20dValueEntryDecision(sc, decision, forecast)
     : decision;
@@ -5796,7 +5820,8 @@ function getForecastCandidatePool(mode, useStableList=true){
     if(!forecast.available) return null;
     // A stable core member may be kept for one observation day even when its
     // raw signal cools to "觀察". It remains visible, but execution stays blocked.
-    if(forecast.signal !== '買進' && !stableIdSet.has(String(sc.id))) return null;
+    const researchSignal=forecast.raw_signal || forecast.signal;
+    if(researchSignal !== '買進' && !stableIdSet.has(String(sc.id))) return null;
     if(mode === 'long' && (Number(sc.fScore || 0) < 15 || Number(sc.total || 0) < 55)) return null;
     if(mode === 'short' && (Number(sc.tScore || 0) < 25 || Number(sc.total || 0) < 50)) return null;
     const qualityBonus = mode === 'short'
@@ -5836,7 +5861,18 @@ function forecastValidationText(horizon){
   if(!validation.periods) return '回測樣本尚未完成';
   const prefix=validation.periods < 10 ? '初步驗證' : '時間序列驗證';
   const reliability=Number(validation.hit_rate || 0) < 50 ? '；命中率偏低，僅供風險提示' : '';
-  return `${prefix} ${validation.periods} 期／${validation.sample_picks} 筆：上漲命中 ${validation.hit_rate}%・平均報酬 ${validation.average_return >= 0 ? '+' : ''}${validation.average_return}%・相對大盤 ${validation.average_alpha >= 0 ? '+' : ''}${validation.average_alpha}%${reliability}`;
+  const tracking=ghCache?.predictionModel?.live_tracking?.[`${horizon}d`] || {};
+  const gate=ghCache?.predictionModel?.reliability?.[`${horizon}d`] || {};
+  const gateText=gate.status
+    ? `；正式買進：${gate.status}${(gate.reasons || []).length ? `（${gate.reasons.join('；')}）` : ''}`
+    : '';
+  const liveText=Number(tracking.count || 0) > 0
+    ? `；實際追蹤 ${tracking.count} 筆：命中 ${tracking.hit_rate}%・平均 ${tracking.average_return>=0?'+':''}${tracking.average_return}%`
+    : '；實際追蹤尚未有到期樣本';
+  const riskText=validation.worst_period_return !== undefined && validation.worst_period_return !== null
+    ? `・最差一期 ${validation.worst_period_return >= 0 ? '+' : ''}${validation.worst_period_return}%`
+    : '';
+  return `${prefix} ${validation.periods} 期／${validation.sample_picks} 筆：上漲命中 ${validation.hit_rate}%・平均報酬 ${validation.average_return >= 0 ? '+' : ''}${validation.average_return}%・相對大盤 ${validation.average_alpha >= 0 ? '+' : ''}${validation.average_alpha}%${riskText}${reliability}${liveText}${gateText}`;
 }
 
 function forecastSnapshotText(){
@@ -5857,7 +5893,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
   const horizon=mode === 'short' ? 5 : 20;
   const title=buyableOnly
     ? '目前可買進 Top 5'
-    : (mode === 'short' ? '未來 5 日短線 Top 5' : '20 日獲利與逢低布局 Top 5');
+    : '20 日獲利候選與逢低布局 Top 5';
   const color=mode === 'short' ? 'var(--accent2)' : 'var(--accent)';
   const pool=getForecastCandidatePool(mode, !buyableOnly);
   if(!ghCache?.predictionModel || !Object.keys(ghCache?.predictions || {}).length){
@@ -5875,6 +5911,13 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
     ...sc,
     execution:buildForecastExecutionDecision(sc,mode,sc.forecast)
   }));
+  const modelTradingDayGap=tradingDayGap(
+    ghCache?.predictionModel?.latest_date,
+    liveQuoteState?.market?.quote_date
+  );
+  const modelFreshnessWarning=modelTradingDayGap > 1
+    ? `<div style="font-size:12px;color:var(--red);font-weight:700;margin-bottom:8px">資料警告：模型日期 ${ghCache.predictionModel.latest_date} 已落後盤中 ${modelTradingDayGap} 個交易日；本頁只保留候選觀察，全部禁止進場，請先完成最新 Cache。</div>`
+    : '';
   const candidates=(buyableOnly
     ? evaluated.filter(sc=>isExecutableAction(sc.execution.action)).sort((a,b)=>{
         const confirmedDiff=Number(isConfirmedBuyAction(b.execution.action)) -
@@ -5943,12 +5986,13 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
   container.innerHTML=`
     <div class="screener-panel" style="border:1px solid ${color}">
       <div class="panel-title" style="margin-bottom:8px;color:${color}">${buyableOnly ? '目前可進場候選 Top 5' : title}</div>
+      ${modelFreshnessWarning}
       ${buyableSummary}
       ${integrated20dSummary}
       <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '從全部200支股票的20日原始預測前25名尋找當下買點；正式買進訊號優先，小量試單只代表條件尚未完整確認。' : (mode === 'long' ? '名次只依20日預期獲利、上漲機率與穩定度決定；盤中價格只判斷是否進入支撐布局區。輕微落後大盤不淘汰，已漲離布局區則等待回檔，不追高。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:12px">${forecastValidationText(horizon)}。${renderRealtimeStatus(liveQuoteState.market)}</div>
       <table>
-        <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' && !buyableOnly ? '<th>名單狀態</th>' : ''}<th>模型預期${horizon}日</th><th>盤中剩餘預期</th><th>上漲機率</th><th>相對大盤</th><th>模型價格區間</th>${mode === 'long' ? '<th>逢低布局區</th>' : ''}<th>信心</th><th>現在進場</th></tr></thead>
+        <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' && !buyableOnly ? '<th>名單狀態</th>' : ''}<th>模型預期${horizon}日</th><th>盤中剩餘預期</th><th>盤中漲跌</th><th>上漲機率</th><th>相對大盤</th><th>模型價格區間</th>${mode === 'long' ? '<th>逢低布局區</th>' : ''}<th>信心</th><th>現在進場</th></tr></thead>
         <tbody>${candidates.map((sc,index)=>{
           const f=sc.forecast, d=sc.execution;
           const returnColor=f.expected_return>=0?'var(--green)':'var(--red)';
@@ -5959,6 +6003,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
             ${mode === 'long' && !buyableOnly ? `<td style="color:${f.stableStatus==='新進'?'var(--warn)':'var(--accent)'}">${f.stableStatus || '核心候選'}｜${f.stablePosition ? `原始#${f.stablePosition}` : '原始榜外'}｜${f.stableObservations || 1}次</td>` : ''}
             <td class="td-mono" style="color:${returnColor};font-weight:700">${f.expected_return>=0?'+':''}${f.expected_return}%</td>
             <td class="td-mono" style="color:${d.remainingExpectedReturn>=0?'var(--green)':'var(--red)'}">${Number.isFinite(d.remainingExpectedReturn)?`${d.remainingExpectedReturn>=0?'+':''}${d.remainingExpectedReturn.toFixed(2)}%`:'N/A'}</td>
+            <td class="td-mono" style="color:${Number(d.realtime?.changePct)>=0?'var(--green)':'var(--red)'}">${Number.isFinite(d.realtime?.changePct)?`${d.realtime.changePct>=0?'+':''}${d.realtime.changePct.toFixed(2)}%`:'N/A'}</td>
             <td class="td-mono">${f.up_probability}%</td>
             <td class="td-mono" style="color:${f.expected_alpha>=0?'var(--green)':'var(--red)'}">${f.expected_alpha>=0?'+':''}${f.expected_alpha}%</td>
             <td class="td-mono">${f.range_low_price}～${f.range_high_price} 元</td>
@@ -5972,15 +6017,16 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
     </div>`;
 }
 
+const technicalMomentumTop5 = findMomentumTop5;
 findTop5Buys = function(){ return renderForecastTop5('long'); };
 findBuyableTop5 = function(){ return renderForecastTop5('long'); };
-findMomentumTop5 = function(){ return renderForecastTop5('short'); };
+findMomentumTop5 = technicalMomentumTop5;
 
 const forecastTopButton=document.querySelector('button[onclick="findTop5Buys()"]');
-if(forecastTopButton) forecastTopButton.textContent='20日獲利與布局 Top 5';
+if(forecastTopButton) forecastTopButton.textContent='20日獲利候選 Top 5';
 document.querySelectorAll('button[data-buyable-top5="1"]').forEach(btn=>btn.remove());
 const forecastShortButton=document.querySelector('button[onclick="findMomentumTop5()"]');
-if(forecastShortButton) forecastShortButton.textContent='未來5日 Top 5';
+if(forecastShortButton) forecastShortButton.textContent='短線動能 Top 5';
 
 function addForwardPredictionNotice(id){
   const detail=document.getElementById('stockDetail');
@@ -5988,16 +6034,14 @@ function addForwardPredictionNotice(id){
   if(!detail || !scoreBox) return;
   detail.querySelectorAll('.forward-prediction-notice').forEach(el=>el.remove());
   const sc=allScores[id];
-  const p5=getForwardPrediction(sc,5);
   const p20=getForwardPrediction(sc,20);
   const notice=document.createElement('div');
   notice.className='forward-prediction-notice';
   notice.style.cssText='margin:-8px 0 14px;padding:10px 14px;background:rgba(0,212,170,.06);border:1px solid rgba(0,212,170,.35);border-radius:8px;font-size:12px;color:var(--text);line-height:1.7';
-  if(!p5.available || !p20.available){
-    notice.innerHTML=`<b style="color:var(--warn)">未來報酬預測：資料不足</b>　<span style="color:var(--muted)">${p5.reason || p20.reason}</span>`;
+  if(!p20.available){
+    notice.innerHTML=`<b style="color:var(--warn)">20 日報酬預測：資料不足</b>　<span style="color:var(--muted)">${p20.reason}</span>`;
   }else{
-    notice.innerHTML=`<b style="color:var(--accent)">未來報酬預測（${p20.asOfDate}，模型基準價 ${p20.currentPrice.toFixed(2)} 元）</b><br>
-      5日：${p5.signal}｜預期 ${p5.expected_return>=0?'+':''}${p5.expected_return}%｜上漲機率 ${p5.up_probability}%｜區間 ${p5.range_low_price}～${p5.range_high_price} 元｜下行情境 ${p5.downside_price} 元<br>
+    notice.innerHTML=`<b style="color:var(--accent)">20 日報酬預測（${p20.asOfDate}，模型基準價 ${p20.currentPrice.toFixed(2)} 元）</b><br>
       20日：${p20.signal}｜預期 ${p20.expected_return>=0?'+':''}${p20.expected_return}%｜上漲機率 ${p20.up_probability}%｜區間 ${p20.range_low_price}～${p20.range_high_price} 元｜下行情境 ${p20.downside_price} 元<br>
       <span style="color:var(--muted)">以上報酬從模型基準價計算；盤中價格上漲後，剩餘預期空間會縮小。這是歷史統計估計，不是保證報酬。</span>`;
   }
@@ -6013,10 +6057,10 @@ showDetail=function(id){
 var __buildAIDataTextBeforeForwardPrediction=buildAIDataTextV2;
 buildAIDataTextV2=function(id,sc,mode){
   const base=__buildAIDataTextBeforeForwardPrediction(id,sc,mode);
-  const horizon=mode==='short'?5:20;
-  const prediction=getForwardPrediction(sc,horizon);
+  if(mode==='short') return `${base}\n短線分析僅使用技術面、量價與籌碼，不使用已下架的 5 日預測模型。\n`;
+  const prediction=getForwardPrediction(sc,20);
   if(!prediction.available) return `${base}\n未來報酬模型：資料不足，不得自行猜測未來漲幅。\n`;
-  return `${base}\n未來${horizon}日統計預測：${prediction.signal}；預期報酬 ${prediction.expected_return}%；上漲機率 ${prediction.up_probability}%；相對大盤 ${prediction.expected_alpha}%；價格區間 ${prediction.range_low_price}～${prediction.range_high_price} 元；下行情境 ${prediction.downside_price} 元；信心 ${prediction.confidence}/100。\n請以此預測為主要結論，盤中行情只用來判斷進場時機，不得因單日上漲就提高未來預測。\n`;
+  return `${base}\n未來20日統計預測：${prediction.signal}；預期報酬 ${prediction.expected_return}%；上漲機率 ${prediction.up_probability}%；相對大盤 ${prediction.expected_alpha}%；價格區間 ${prediction.range_low_price}～${prediction.range_high_price} 元；下行情境 ${prediction.downside_price} 元；信心 ${prediction.confidence}/100。\n請以此預測為主要結論，盤中行情只用來判斷進場時機，不得因單日上漲就提高未來預測。\n`;
 };
 </script>
 </body>
