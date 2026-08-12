@@ -106,7 +106,6 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
     <button class="btn btn-primary" onclick="loadStocks()">載入當前資料庫</button>
     <button class="btn btn-secondary" onclick="runScreener()">篩選優質股</button>
     <button class="btn btn-gold" onclick="findTop5Buys()">🏆 嚴選 Top 5</button>
-    <button class="btn btn-secondary" onclick="findMomentumTop5()">短線動能 Top 5</button>
   </div>
 </header>
 
@@ -5856,6 +5855,33 @@ function getForecastCandidatePool(mode, useStableList=true){
   }).filter(Boolean);
 }
 
+// The 20-day page is a model ranking, not a buy-gate result. Keep the five
+// highest-ranked forecasts visible even when none is currently executable.
+function get20dModelRankingPool(){
+  return Object.values(allScores).map(sc=>{
+    const forecast=getForwardPrediction(sc,20);
+    if(!forecast.available) return null;
+    const stability=forecast.stability || {};
+    const qualityBonus=Number(sc.fScore || 0)*0.03 + Number(sc.vScore || 0)*0.02;
+    return {
+      ...sc,
+      forecast:{
+        ...forecast,
+        smoothedExpectedReturn:Number(stability.smoothed_expected_return ?? forecast.expected_return),
+        smoothedUpProbability:Number(stability.smoothed_up_probability ?? forecast.up_probability),
+        stableStatus:stability.status || '模型候選',
+        stableObservations:Number(stability.observations || 1),
+        stablePosition:Number(stability.current_position || forecast.rank || 0)
+      },
+      forecastRank:Number(forecast.rank || 0)+qualityBonus
+    };
+  }).filter(Boolean).sort((a,b)=>
+    b.forecastRank-a.forecastRank ||
+    Number(b.total || 0)-Number(a.total || 0) ||
+    String(a.id).localeCompare(String(b.id))
+  );
+}
+
 function forecastValidationText(horizon){
   const validation=ghCache?.predictionModel?.validation?.[`${horizon}d`] || {};
   if(!validation.periods) return '回測樣本尚未完成';
@@ -5893,15 +5919,17 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
   const horizon=mode === 'short' ? 5 : 20;
   const title=buyableOnly
     ? '目前可買進 Top 5'
-    : '20 日獲利候選與逢低布局 Top 5';
+    : '20 日模型候選與逢低布局 Top 5';
   const color=mode === 'short' ? 'var(--accent2)' : 'var(--accent)';
-  const pool=getForecastCandidatePool(mode, !buyableOnly);
+  const pool=mode === 'long' && !buyableOnly
+    ? get20dModelRankingPool()
+    : getForecastCandidatePool(mode, !buyableOnly);
   if(!ghCache?.predictionModel || !Object.keys(ghCache?.predictions || {}).length){
     container.innerHTML='<div class="screener-panel" style="border:1px solid var(--warn);color:var(--warn)">尚未產生 predictions.json。請先手動執行一次 Cache，之後每天會自動更新預測。</div>';
     return;
   }
   if(!pool.length){
-    container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">目前沒有預期報酬、上漲機率及基本品質同時通過的股票。模型日期：${ghCache.predictionModel.latest_date || '未知'}。</div>`;
+    container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">20 日預測資料無法建立排行。這不是「沒有股票可買」，而是 predictions.json 缺少同日有效預測；模型日期：${ghCache.predictionModel.latest_date || '未知'}。</div>`;
     return;
   }
   container.innerHTML='<div class="screener-panel"><div class="ai-loading"><div class="spinner"></div>正在取得預測候選股的官方盤中報價...</div></div>';
@@ -5989,7 +6017,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
       ${modelFreshnessWarning}
       ${buyableSummary}
       ${integrated20dSummary}
-      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '從全部200支股票的20日原始預測前25名尋找當下買點；正式買進訊號優先，小量試單只代表條件尚未完整確認。' : (mode === 'long' ? '名次只依20日預期獲利、上漲機率與穩定度決定；盤中價格只判斷是否進入支撐布局區。輕微落後大盤不淘汰，已漲離布局區則等待回檔，不追高。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '從全部200支股票的20日原始預測前25名尋找當下買點；正式買進訊號優先，小量試單只代表條件尚未完整確認。' : (mode === 'long' ? '本表固定顯示20日模型前五名；排行不等於買進。名次依20日預期獲利、上漲機率、穩定度與基本品質排序，盤中價格只判斷買進、小量試單或觀望，不會讓整張排行消失。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:12px">${forecastValidationText(horizon)}。${renderRealtimeStatus(liveQuoteState.market)}</div>
       <table>
         <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' && !buyableOnly ? '<th>名單狀態</th>' : ''}<th>模型預期${horizon}日</th><th>盤中剩餘預期</th><th>盤中漲跌</th><th>上漲機率</th><th>相對大盤</th><th>模型價格區間</th>${mode === 'long' ? '<th>逢低布局區</th>' : ''}<th>信心</th><th>現在進場</th></tr></thead>
@@ -6017,16 +6045,15 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
     </div>`;
 }
 
-const technicalMomentumTop5 = findMomentumTop5;
 findTop5Buys = function(){ return renderForecastTop5('long'); };
 findBuyableTop5 = function(){ return renderForecastTop5('long'); };
-findMomentumTop5 = technicalMomentumTop5;
+findMomentumTop5 = function(){ return renderForecastTop5('long'); };
 
 const forecastTopButton=document.querySelector('button[onclick="findTop5Buys()"]');
-if(forecastTopButton) forecastTopButton.textContent='20日獲利候選 Top 5';
+if(forecastTopButton) forecastTopButton.textContent='20日模型候選 Top 5';
 document.querySelectorAll('button[data-buyable-top5="1"]').forEach(btn=>btn.remove());
 const forecastShortButton=document.querySelector('button[onclick="findMomentumTop5()"]');
-if(forecastShortButton) forecastShortButton.textContent='短線動能 Top 5';
+if(forecastShortButton) forecastShortButton.remove();
 
 function addForwardPredictionNotice(id){
   const detail=document.getElementById('stockDetail');
