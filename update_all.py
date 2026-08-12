@@ -517,6 +517,7 @@ async def update_cache():
     balance_db     = load_old_cache("balance.json")
     news_db        = load_old_cache("news.json")
     institutional_db = load_old_cache("institutional.json")
+    benchmark_db = load_old_cache("benchmark.json")
     
     progress_file = CACHE_DIR / "progress.json"
     start_index = 0
@@ -664,6 +665,32 @@ async def update_cache():
     (CACHE_DIR / "institutional.json").write_text(json.dumps({"_saved_at": timestamp, "data": institutional_db}, ensure_ascii=False))
     cycle_complete = not stop_fetching and end_index >= len(STOCK_LIST)
     if cycle_complete:
+        # Fetch the real 0050 history once per complete 200-stock cycle. The
+        # forecasting model must beat an investable benchmark, not a synthetic
+        # median assembled from the screened stocks themselves.
+        benchmark_url = (
+            "https://api.finmindtrade.com/api/v4/data?"
+            "dataset=TaiwanStockPrice&data_id=0050"
+            f"&start_date={(today - timedelta(days=1825)).strftime('%Y-%m-%d')}"
+            f"&token={FINMIND_TOKEN}"
+        )
+        async with httpx.AsyncClient() as benchmark_client:
+            sc, benchmark_data = await fetch_api(benchmark_client, benchmark_url)
+        if (
+            sc != 402
+            and benchmark_data
+            and benchmark_data.get("status") == 200
+            and benchmark_data.get("data")
+        ):
+            benchmark_db["0050"] = merge_rows_by_date(
+                benchmark_db.get("0050", []), benchmark_data["data"]
+            )
+        (CACHE_DIR / "benchmark.json").write_text(
+            json.dumps(
+                {"_saved_at": timestamp, "data": benchmark_db},
+                ensure_ascii=False,
+            )
+        )
         # Publish rankings only after all 200 stocks finish. Publishing after
         # each batch would compare fresh rows with stale rows and change Top 5.
         scores_out = build_scores(
@@ -673,7 +700,11 @@ async def update_cache():
             json.dumps(scores_out, ensure_ascii=False)
         )
         existing_prediction_log = load_old_cache("prediction_log.json")
-        predictions_out = build_predictions(price_db, scores_out.get("data", {}))
+        predictions_out = build_predictions(
+            price_db,
+            scores_out.get("data", {}),
+            benchmark_rows=benchmark_db.get("0050", []),
+        )
         # Mature old recommendations before evaluating the model safety gate.
         # Otherwise a bad realised result is noticed one full cache cycle late.
         evaluated_prediction_log = update_prediction_log(

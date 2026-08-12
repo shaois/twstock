@@ -28,11 +28,21 @@ FEATURE_NAMES = (
 )
 
 FEATURE_WEIGHTS = (1.1, 1.2, 0.7, 1.4, 1.0, 0.8, 0.9, 0.8, 0.8, 0.6, 0.8)
-MIN_VALIDATION_PERIODS = 6
+MIN_VALIDATION_PERIODS = 12
 MIN_LIVE_TRACKING_SAMPLES = 30
-MIN_VALIDATION_HIT_RATE = 70
-MIN_VALIDATION_PICKS = {20: 80}
+MIN_VALIDATION_HIT_RATE = 55
+MIN_BENCHMARK_WIN_RATE = 55
+MIN_VALIDATION_PICKS = {20: 30}
+MIN_HOLDOUT_PERIODS = 4
+MIN_HOLDOUT_PICKS = 8
 VALIDATION_LOOKBACK_DAYS = 500
+MODEL_SELECTION_SIZE = 3
+MODEL_CANDIDATE_FLOOR = {
+    "return": 1.0,
+    "alpha": 1.0,
+    "up_probability": 52.0,
+    "downside": -12.0,
+}
 SIGNAL_THRESHOLDS = {
     20: {
         "return": 4.0,
@@ -218,12 +228,17 @@ def _common_snapshot_date(series_by_stock, minimum_coverage=0.90):
     return snapshot_date, coverage[snapshot_date], required
 
 
-def _prepare_samples(price_db, snapshot_date=None):
+def _prepare_samples(price_db, snapshot_date=None, benchmark_rows=None):
     series_by_stock = {
         stock_id: _normalize_price_rows(rows)
         for stock_id, rows in (price_db or {}).items()
     }
-    market_index = _build_market_index(series_by_stock)
+    benchmark_series = _normalize_price_rows(benchmark_rows or [])
+    market_index = (
+        {row["date"]: row["close"] for row in benchmark_series}
+        if benchmark_series
+        else _build_market_index(series_by_stock)
+    )
     samples = []
     current = {}
     for stock_id, rows in series_by_stock.items():
@@ -413,6 +428,57 @@ def _rank_value(prediction, horizon):
         - _number(data.get("range_low_return")),
     )
     return (
+        _number(data.get("expected_alpha")) * 1.15
+        + _number(data.get("expected_return")) * 0.85
+        + (_number(data.get("up_probability")) - 50) * 0.14
+        + _number(data.get("confidence")) * 0.025
+        - downside_risk * 0.30
+        - interval_width * 0.08
+    )
+
+
+def _passes_candidate_floor(forecast):
+    return (
+        _number(forecast.get("expected_return"))
+        >= MODEL_CANDIDATE_FLOOR["return"]
+        and _number(forecast.get("expected_alpha"))
+        >= MODEL_CANDIDATE_FLOOR["alpha"]
+        and _number(forecast.get("up_probability"))
+        >= MODEL_CANDIDATE_FLOOR["up_probability"]
+        and _number(forecast.get("downside_return"))
+        >= MODEL_CANDIDATE_FLOOR["downside"]
+    )
+
+
+def _summarize_validation_rows(rows):
+    count = sum(row["count"] for row in rows)
+    return {
+        "periods": len(rows),
+        "sample_picks": count,
+        "average_return": round(
+            sum(row["return"] for row in rows) / len(rows), 2
+        ) if rows else None,
+        "average_alpha": round(
+            sum(row["alpha"] for row in rows) / len(rows), 2
+        ) if rows else None,
+        "hit_rate": round(
+            sum(row["hits"] for row in rows) / count * 100, 1
+        ) if count else None,
+        "benchmark_win_rate": round(
+            sum(row.get("alpha_hits", 0) for row in rows) / count * 100, 1
+        ) if count else None,
+        "median_period_return": round(
+            statistics.median(row["return"] for row in rows), 2
+        ) if rows else None,
+        "worst_period_return": round(
+            min(row["return"] for row in rows), 2
+        ) if rows else None,
+        "positive_period_rate": round(
+            sum(row["return"] > 0 for row in rows) / len(rows) * 100, 1
+        ) if rows else None,
+        "round_trip_cost_pct": ROUND_TRIP_COST_PCT,
+    }
+    return (
         data["expected_alpha"] * 1.15
         + data["expected_return"] * 0.85
         + (data["up_probability"] - 50) * 0.14
@@ -460,10 +526,12 @@ def _walk_forward_validation(samples):
                 if len(neighbors) < 40:
                     continue
                 pred = _horizon_prediction(neighbors, horizon, 1.0)
-                # Validate the same actionable signal used in production.
-                # Ranking every stock and then reporting the best five made
-                # the test look good even when none qualified as a buy.
-                if pred.get("raw_signal") != "買進":
+                # The production objective is relative selection: choose only
+                # a few stocks expected to beat 0050 over the next 20 sessions.
+                # A light floor avoids forcing trades when every forecast is
+                # weak, while ranking supplies enough observations to measure
+                # whether the model adds value over the benchmark.
+                if not _passes_candidate_floor(pred):
                     continue
                 score = (
                     pred["expected_alpha"] * 1.15
@@ -477,7 +545,7 @@ def _walk_forward_validation(samples):
                 candidate
                 for _, candidate in sorted(
                     ranked, key=lambda item: item[0], reverse=True
-                )[:5]
+                )[:MODEL_SELECTION_SIZE]
             ]
             if top:
                 metrics[horizon].append({
@@ -495,34 +563,27 @@ def _walk_forward_validation(samples):
                         1 for item in top
                         if item[f"actual_return_{horizon}d"] > ROUND_TRIP_COST_PCT
                     ),
+                    "alpha_hits": sum(
+                        1 for item in top
+                        if item[f"actual_alpha_{horizon}d"]
+                        > ROUND_TRIP_COST_PCT
+                    ),
                     "count": len(top),
                 })
 
     result = {}
     for horizon in (20,):
         rows = metrics[horizon]
-        count = sum(row["count"] for row in rows)
-        result[f"{horizon}d"] = {
-            "periods": len(rows),
-            "sample_picks": count,
-            "average_return": round(sum(row["return"] for row in rows) / len(rows), 2) if rows else None,
-            "average_alpha": round(sum(row["alpha"] for row in rows) / len(rows), 2) if rows else None,
-            "hit_rate": round(sum(row["hits"] for row in rows) / count * 100, 1) if count else None,
-            "median_period_return": round(
-                statistics.median(row["return"] for row in rows), 2
-            ) if rows else None,
-            "worst_period_return": round(
-                min(row["return"] for row in rows), 2
-            ) if rows else None,
-            "positive_period_rate": round(
-                sum(row["return"] > 0 for row in rows) / len(rows) * 100, 1
-            ) if rows else None,
-            "round_trip_cost_pct": ROUND_TRIP_COST_PCT,
-        }
+        holdout_size = min(6, max(0, len(rows) // 3))
+        holdout_rows = rows[-holdout_size:] if holdout_size else []
+        result[f"{horizon}d"] = _summarize_validation_rows(rows)
+        result[f"{horizon}d"]["sealed_holdout"] = (
+            _summarize_validation_rows(holdout_rows)
+        )
     return result
 
 
-def build_predictions(price_db, scores=None):
+def build_predictions(price_db, scores=None, benchmark_rows=None):
     score_ids = list((scores or {}).keys()) or list((price_db or {}).keys())
     allowed_ids = set(score_ids)
     model_price_db = {
@@ -535,7 +596,10 @@ def build_predictions(price_db, scores=None):
         for stock_id, rows in model_price_db.items()
     }
     latest_date, snapshot_count, snapshot_required = _common_snapshot_date(normalized)
-    samples, current = _prepare_samples(model_price_db, latest_date)
+    benchmark_ready = len(_normalize_price_rows(benchmark_rows or [])) >= 300
+    samples, current = _prepare_samples(
+        model_price_db, latest_date, benchmark_rows=benchmark_rows
+    )
     output = {}
     if len(samples) < 1000:
         for stock_id in score_ids:
@@ -599,11 +663,41 @@ def build_predictions(price_db, scores=None):
         item["rank_20d"] = round(_rank_value(item, 20), 3)
         output[stock_id] = item
 
+    # Production must use the exact same relative-selection rule as the
+    # walk-forward test. A forecast can be positive without being one of the
+    # few stocks the model would actually select.
+    selected_rows = sorted(
+        (
+            (stock_id, item)
+            for stock_id, item in output.items()
+            if item.get("available")
+            and item.get("as_of_date") == latest_date
+            and _passes_candidate_floor(item.get("prediction_20d", {}))
+        ),
+        key=lambda pair: pair[1].get("rank_20d", -999),
+        reverse=True,
+    )[:MODEL_SELECTION_SIZE]
+    selected_ids = [stock_id for stock_id, _ in selected_rows]
+    for stock_id, item in output.items():
+        if not item.get("available"):
+            continue
+        forecast = item["prediction_20d"]
+        item["model_selected_20d"] = stock_id in selected_ids
+        if stock_id in selected_ids:
+            forecast["raw_signal"] = "買進"
+            forecast["signal"] = "買進" if validation_ready[20] else "觀察"
+        elif forecast.get("raw_signal") == "買進":
+            forecast["raw_signal"] = "觀察"
+            forecast["signal"] = "觀察"
+
     return {
         "_saved_at": datetime.now().isoformat(),
         "model": {
             "name": "historical_analogue_v3_sealed_holdout",
-            "description": "僅使用當時可見價量與相對市場特徵，並分散相似樣本、懲罰下行風險，估計未來 20 個交易日報酬",
+            "description": "僅使用當時可見價量與相對0050特徵，分散相似樣本並懲罰下行風險，挑選未來20個交易日預期超越0050的股票",
+            "benchmark": "0050",
+            "benchmark_source": "FinMind TaiwanStockPrice",
+            "benchmark_ready": benchmark_ready,
             "latest_date": latest_date,
             "snapshot_stock_count": snapshot_count,
             "snapshot_total_count": len(score_ids),
@@ -624,6 +718,12 @@ def build_predictions(price_db, scores=None):
             "minimum_validation_picks": dict(MIN_VALIDATION_PICKS),
             "validation_lookback_days": VALIDATION_LOOKBACK_DAYS,
             "minimum_validation_hit_rate": MIN_VALIDATION_HIT_RATE,
+            "minimum_benchmark_win_rate": MIN_BENCHMARK_WIN_RATE,
+            "minimum_holdout_periods": MIN_HOLDOUT_PERIODS,
+            "minimum_holdout_picks": MIN_HOLDOUT_PICKS,
+            "selection_size": MODEL_SELECTION_SIZE,
+            "candidate_floor": dict(MODEL_CANDIDATE_FLOOR),
+            "selected_20d": selected_ids,
             "signal_thresholds": dict(SIGNAL_THRESHOLDS),
             "validation_ready": {"20d": validation_ready[20]},
             "warning": "預測為歷史統計估計，不保證未來報酬",
@@ -660,8 +760,11 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         )
         periods = int(validation.get(f"{horizon}d", {}).get("periods") or 0)
         validation_row = validation.get(f"{horizon}d", {})
+        holdout_row = validation_row.get("sealed_holdout") or {}
         validation_picks = int(validation_row.get("sample_picks") or 0)
         reasons = []
+        if not model.get("benchmark_ready"):
+            reasons.append("0050歷史資料尚未完成，不能宣稱模型優於0050")
         if periods < MIN_VALIDATION_PERIODS:
             reasons.append(
                 f"不重疊驗證僅{periods}期，至少需要{MIN_VALIDATION_PERIODS}期"
@@ -674,10 +777,22 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             _number(validation_row.get("average_return")) <= 0
             or _number(validation_row.get("average_alpha")) <= 0
             or _number(validation_row.get("hit_rate")) < MIN_VALIDATION_HIT_RATE
+            or _number(validation_row.get("benchmark_win_rate"))
+            < MIN_BENCHMARK_WIN_RATE
             or _number(validation_row.get("positive_period_rate")) < 50
         ):
             reasons.append(
-                f"歷史驗證未同時通過淨報酬、領先大盤、命中率{MIN_VALIDATION_HIT_RATE}%與半數期間獲利"
+                f"歷史驗證未同時通過淨報酬、領先0050、上漲命中率{MIN_VALIDATION_HIT_RATE}%、勝過0050比例{MIN_BENCHMARK_WIN_RATE}%與半數期間獲利"
+            )
+        if (
+            int(holdout_row.get("periods") or 0) < MIN_HOLDOUT_PERIODS
+            or int(holdout_row.get("sample_picks") or 0) < MIN_HOLDOUT_PICKS
+            or _number(holdout_row.get("average_return")) <= 0
+            or _number(holdout_row.get("average_alpha")) <= 0
+            or _number(holdout_row.get("benchmark_win_rate")) < 50
+        ):
+            reasons.append(
+                "最近封存驗證未通過：至少需4期、8筆，且扣成本後報酬與相對0050皆為正"
             )
         if len(realised) >= MIN_LIVE_TRACKING_SAMPLES and (
             average_return is None
@@ -721,7 +836,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             for stock_id, item in prediction_data.items()
             if item.get("available")
             and item.get("as_of_date") == predictions.get("model", {}).get("latest_date")
-            and item.get("prediction_20d", {}).get("raw_signal") == "買進"
+            and item.get("model_selected_20d") is True
             and _number((scores or {}).get(stock_id, {}).get("fScore")) >= 15
             and _number((scores or {}).get(stock_id, {}).get("total")) >= 55
         ),
@@ -763,8 +878,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             or _number(score.get("total")) < 55
         ):
             continue
-        signal = item.get("prediction_20d", {}).get("raw_signal")
-        if signal != "買進" or stock_id not in current_top12:
+        if not item.get("model_selected_20d") or stock_id not in current_top12:
             continue
         stable_ids.append(stock_id)
         stable_meta[stock_id] = {

@@ -5624,6 +5624,7 @@ function getForwardPrediction(sc, horizon){
     asOfDate:prediction.as_of_date,
     currentPrice:Number(prediction.current_price),
     rank:Number(prediction[`rank_${horizon}d`] || 0),
+    modelSelected:horizon === 20 ? prediction.model_selected_20d === true : false,
     stability:horizon === 20
       ? (prediction.stable_20d || ghCache?.predictionModel?.stable_20d_meta?.[sc?.id] || null)
       : null,
@@ -5819,8 +5820,7 @@ function getForecastCandidatePool(mode, useStableList=true){
     if(!forecast.available) return null;
     // A stable core member may be kept for one observation day even when its
     // raw signal cools to "觀察". It remains visible, but execution stays blocked.
-    const researchSignal=forecast.raw_signal || forecast.signal;
-    if(researchSignal !== '買進' && !stableIdSet.has(String(sc.id))) return null;
+    if(mode === 'long' && !forecast.modelSelected && !stableIdSet.has(String(sc.id))) return null;
     if(mode === 'long' && (Number(sc.fScore || 0) < 15 || Number(sc.total || 0) < 55)) return null;
     if(mode === 'short' && (Number(sc.tScore || 0) < 25 || Number(sc.total || 0) < 50)) return null;
     const qualityBonus = mode === 'short'
@@ -5863,7 +5863,7 @@ function get20dModelRankingPool(){
     if(!forecast.available) return null;
     // A positive ranking score is not an actionable model signal. Keep the
     // leaderboard aligned with the backend thresholds (including confidence).
-    if((forecast.raw_signal || forecast.signal) !== '買進') return null;
+    if(!forecast.modelSelected) return null;
     const stability=forecast.stability || {};
     const qualityBonus=Number(sc.fScore || 0)*0.03 + Number(sc.vScore || 0)*0.02;
     return {
@@ -5920,7 +5920,14 @@ function forecastValidationText(horizon){
   const riskText=validation.worst_period_return !== undefined && validation.worst_period_return !== null
     ? `・最差一期 ${validation.worst_period_return >= 0 ? '+' : ''}${validation.worst_period_return}%`
     : '';
-  return `${prefix} ${validation.periods} 期／${validation.sample_picks} 筆：上漲命中 ${validation.hit_rate}%・平均報酬 ${validation.average_return >= 0 ? '+' : ''}${validation.average_return}%・相對大盤 ${validation.average_alpha >= 0 ? '+' : ''}${validation.average_alpha}%${riskText}${reliability}${liveText}${gateText}`;
+  const benchmarkWin=validation.benchmark_win_rate !== undefined
+    ? `・勝過0050 ${validation.benchmark_win_rate}%`
+    : '';
+  const holdout=validation.sealed_holdout || {};
+  const holdoutText=holdout.periods
+    ? `；近期保留驗證 ${holdout.periods} 期／${holdout.sample_picks} 筆：平均 ${holdout.average_return>=0?'+':''}${holdout.average_return}%・領先0050 ${holdout.average_alpha>=0?'+':''}${holdout.average_alpha}%`
+    : '';
+  return `${prefix} ${validation.periods} 期／${validation.sample_picks} 筆：上漲命中 ${validation.hit_rate}%・扣成本平均 ${validation.average_return >= 0 ? '+' : ''}${validation.average_return}%・領先0050 ${validation.average_alpha >= 0 ? '+' : ''}${validation.average_alpha}%${benchmarkWin}${riskText}${holdoutText}${reliability}${liveText}${gateText}`;
 }
 
 function forecastSnapshotText(){
@@ -5940,8 +5947,8 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
   container.style.display='block';
   const horizon=mode === 'short' ? 5 : 20;
   const title=buyableOnly
-    ? '目前可買進 Top 5'
-    : '20 日模型候選與逢低布局 Top 5';
+    ? '目前可買進候選'
+    : '20 日勝過0050候選（最多3支）';
   const color=mode === 'short' ? 'var(--accent2)' : 'var(--accent)';
   const pool=mode === 'long' && !buyableOnly
     ? get20dModelRankingPool()
@@ -5958,9 +5965,9 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
       ? operational.reasons.join('；')
       : '歷史驗證尚未通過正式啟用標準';
     container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--warn)">
-      <div class="panel-title" style="color:var(--warn);margin-bottom:8px">20 日模型目前停用（沒有買進推薦）</div>
+      <div class="panel-title" style="color:var(--warn);margin-bottom:8px">20 日模型目前停用</div>
       <div style="font-size:12px;color:var(--warn);font-weight:700;margin-bottom:6px">${reasonText}</div>
-      <div style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:12px">目前驗證 ${validation.periods || 0} 期／${validation.sample_picks || 0} 筆，上漲命中 ${validation.hit_rate ?? 'N/A'}%，扣成本平均報酬 ${validation.average_return ?? 'N/A'}%。下表只是研究排名，不是 Top 5 推薦，禁止依此買進。</div>
+      <div style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:12px">目前驗證 ${validation.periods || 0} 期／${validation.sample_picks || 0} 筆，上漲命中 ${validation.hit_rate ?? 'N/A'}%，扣成本平均報酬 ${validation.average_return ?? 'N/A'}%，平均領先0050 ${validation.average_alpha ?? 'N/A'}%。下表只是研究排名，不是買進推薦。</div>
       ${research.length ? `<details><summary style="cursor:pointer;color:var(--muted);font-weight:700">查看研究排名（非推薦）</summary><div style="margin-top:10px;overflow-x:auto"><table><thead><tr><th>研究排名</th><th>股票</th><th>預期20日</th><th>上漲機率</th><th>信心</th><th>狀態</th></tr></thead><tbody>${research.map((sc,index)=>`<tr onclick="showDetail('${sc.id}')"><td>#${index+1}</td><td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> ${sc.name}</td><td>${sc.forecast.expected_return>=0?'+':''}${sc.forecast.expected_return}%</td><td>${sc.forecast.up_probability}%</td><td>${sc.forecast.confidence}/100</td><td style="color:var(--warn);font-weight:700">研究觀察｜未通過模型門檻</td></tr>`).join('')}</tbody></table></div></details>` : ''}
     </div>`;
     return;
@@ -6087,7 +6094,7 @@ findBuyableTop5 = function(){ return renderForecastTop5('long'); };
 findMomentumTop5 = function(){ return renderForecastTop5('long'); };
 
 const forecastTopButton=document.querySelector('button[onclick="findTop5Buys()"]');
-if(forecastTopButton) forecastTopButton.textContent='20日模型候選 Top 5';
+if(forecastTopButton) forecastTopButton.textContent='20日勝過0050候選';
 document.querySelectorAll('button[data-buyable-top5="1"]').forEach(btn=>btn.remove());
 const forecastShortButton=document.querySelector('button[onclick="findMomentumTop5()"]');
 if(forecastShortButton) forecastShortButton.remove();
