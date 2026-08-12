@@ -848,6 +848,17 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
     model["stable_20d_meta"] = stable_meta
     model["live_tracking"] = live_tracking
     model["reliability"] = reliability
+    model["operational_status"] = {
+        "20d": {
+            "enabled": reliability["20d"]["confirmed_buy_enabled"],
+            "label": (
+                "正式啟用"
+                if reliability["20d"]["confirmed_buy_enabled"]
+                else "模型停用，僅供研究"
+            ),
+            "reasons": list(reliability["20d"]["reasons"]),
+        }
+    }
     model["stability_rule"] = (
         "最近3次預測僅供顯示；核心候選必須維持買進訊號且仍在今日原始前12名"
     )

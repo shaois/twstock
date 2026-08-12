@@ -5861,6 +5861,9 @@ function get20dModelRankingPool(){
   return Object.values(allScores).map(sc=>{
     const forecast=getForwardPrediction(sc,20);
     if(!forecast.available) return null;
+    // A positive ranking score is not an actionable model signal. Keep the
+    // leaderboard aligned with the backend thresholds (including confidence).
+    if((forecast.raw_signal || forecast.signal) !== '買進') return null;
     const stability=forecast.stability || {};
     const qualityBonus=Number(sc.fScore || 0)*0.03 + Number(sc.vScore || 0)*0.02;
     return {
@@ -5880,6 +5883,25 @@ function get20dModelRankingPool(){
     Number(b.total || 0)-Number(a.total || 0) ||
     String(a.id).localeCompare(String(b.id))
   );
+}
+
+function get20dResearchRankingPool(){
+  return Object.values(allScores).map(sc=>{
+    const forecast=getForwardPrediction(sc,20);
+    if(!forecast.available) return null;
+    return {...sc, forecast, forecastRank:Number(forecast.rank || 0)};
+  }).filter(Boolean).sort((a,b)=>
+    b.forecastRank-a.forecastRank || String(a.id).localeCompare(String(b.id))
+  );
+}
+
+function model20dOperationalState(){
+  const explicit=ghCache?.predictionModel?.operational_status?.['20d'];
+  const gate=ghCache?.predictionModel?.reliability?.['20d'] || {};
+  return {
+    enabled: explicit ? Boolean(explicit.enabled) : Boolean(gate.confirmed_buy_enabled),
+    reasons: explicit?.reasons || gate.reasons || []
+  };
 }
 
 function forecastValidationText(horizon){
@@ -5928,8 +5950,23 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
     container.innerHTML='<div class="screener-panel" style="border:1px solid var(--warn);color:var(--warn)">尚未產生 predictions.json。請先手動執行一次 Cache，之後每天會自動更新預測。</div>';
     return;
   }
+  const operational=model20dOperationalState();
+  if(mode === 'long' && !operational.enabled){
+    const validation=ghCache?.predictionModel?.validation?.['20d'] || {};
+    const research=get20dResearchRankingPool().slice(0,5);
+    const reasonText=operational.reasons.length
+      ? operational.reasons.join('；')
+      : '歷史驗證尚未通過正式啟用標準';
+    container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--warn)">
+      <div class="panel-title" style="color:var(--warn);margin-bottom:8px">20 日模型目前停用（沒有買進推薦）</div>
+      <div style="font-size:12px;color:var(--warn);font-weight:700;margin-bottom:6px">${reasonText}</div>
+      <div style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:12px">目前驗證 ${validation.periods || 0} 期／${validation.sample_picks || 0} 筆，上漲命中 ${validation.hit_rate ?? 'N/A'}%，扣成本平均報酬 ${validation.average_return ?? 'N/A'}%。下表只是研究排名，不是 Top 5 推薦，禁止依此買進。</div>
+      ${research.length ? `<details><summary style="cursor:pointer;color:var(--muted);font-weight:700">查看研究排名（非推薦）</summary><div style="margin-top:10px;overflow-x:auto"><table><thead><tr><th>研究排名</th><th>股票</th><th>預期20日</th><th>上漲機率</th><th>信心</th><th>狀態</th></tr></thead><tbody>${research.map((sc,index)=>`<tr onclick="showDetail('${sc.id}')"><td>#${index+1}</td><td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> ${sc.name}</td><td>${sc.forecast.expected_return>=0?'+':''}${sc.forecast.expected_return}%</td><td>${sc.forecast.up_probability}%</td><td>${sc.forecast.confidence}/100</td><td style="color:var(--warn);font-weight:700">研究觀察｜未通過模型門檻</td></tr>`).join('')}</tbody></table></div></details>` : ''}
+    </div>`;
+    return;
+  }
   if(!pool.length){
-    container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">20 日預測資料無法建立排行。這不是「沒有股票可買」，而是 predictions.json 缺少同日有效預測；模型日期：${ghCache.predictionModel.latest_date || '未知'}。</div>`;
+    container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">模型雖已通過整體驗證，但今天沒有股票通過完整的20日買進門檻（含預期報酬、相對大盤、上漲機率、信心與下行風險）。模型日期：${ghCache.predictionModel.latest_date || '未知'}。</div>`;
     return;
   }
   container.innerHTML='<div class="screener-panel"><div class="ai-loading"><div class="spinner"></div>正在取得預測候選股的官方盤中報價...</div></div>';
