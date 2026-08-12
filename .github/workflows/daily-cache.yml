@@ -14,6 +14,12 @@ on:
 permissions:
   contents: write
 
+# GitHub scheduled jobs can start late. Queue every batch so each checkout
+# sees the progress committed by the preceding batch.
+concurrency:
+  group: daily-finmind-cache
+  cancel-in-progress: false
+
 jobs:
   refresh-cache:
     runs-on: ubuntu-latest
