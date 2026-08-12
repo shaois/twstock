@@ -15,6 +15,25 @@ from predictor import (
 )
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+
+TAIPEI_TZ = ZoneInfo("Asia/Taipei")
+
+
+def taipei_now():
+    return datetime.now(TAIPEI_TZ)
+
+
+def resolve_start_index(progress, today_str, stock_count):
+    """Continue only a batch created on the same Taiwan calendar day."""
+    if not isinstance(progress, dict) or progress.get("date") != today_str:
+        return 0
+    try:
+        saved_index = int(progress.get("index", 0))
+    except (TypeError, ValueError):
+        return 0
+    return saved_index if 0 < saved_index < stock_count else 0
 
 # 🔥 這次絕對是精準的 200 支強勢與權值股名單，一字不漏！
 STOCK_LIST = [
@@ -486,7 +505,7 @@ def summarize_institutional(rows):
 async def update_cache():
     import httpx
 
-    today = datetime.today()
+    today = taipei_now()
     today_str = today.strftime('%Y-%m-%d')
     # 週末強制全面重抓財報營收
     is_weekend = today.weekday() >= 5 
@@ -505,12 +524,18 @@ async def update_cache():
     if progress_file.exists():
         try:
             prog = json.loads(progress_file.read_text(encoding="utf-8"))
-            if "index" in prog:
-                saved_index = prog.get("index", 0)
-                if 0 < saved_index < len(STOCK_LIST):
-                    start_index = saved_index
-                    print(f"🔄 偵測到今日未完成的接力紀錄，從第 {start_index + 1} 支開始衝刺！")
-        except: pass
+            start_index = resolve_start_index(
+                prog, today_str, len(STOCK_LIST)
+            )
+            if start_index:
+                print(f"🔄 偵測到今日未完成的接力紀錄，從第 {start_index + 1} 支開始衝刺！")
+            elif prog.get("date") != today_str:
+                print(
+                    f"🆕 台灣日期已切換為 {today_str}，忽略前一日進度 "
+                    f"{prog.get('date')} / {prog.get('index', 0)}，從第 1 支開始。"
+                )
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"⚠️ progress.json 無法讀取，從第 1 支開始：{exc}")
 
     stop_fetching = False
     last_processed_index = start_index
