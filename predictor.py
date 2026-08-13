@@ -763,14 +763,22 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         holdout_row = validation_row.get("sealed_holdout") or {}
         validation_picks = int(validation_row.get("sample_picks") or 0)
         reasons = []
+        controlled_reasons = []
         if not model.get("benchmark_ready"):
             reasons.append("0050歷史資料尚未完成，不能宣稱模型優於0050")
+            controlled_reasons.append("0050歷史資料尚未完成")
         if periods < MIN_VALIDATION_PERIODS:
             reasons.append(
                 f"不重疊驗證僅{periods}期，至少需要{MIN_VALIDATION_PERIODS}期"
             )
+            controlled_reasons.append(
+                f"不重疊驗證僅{periods}期，至少需要{MIN_VALIDATION_PERIODS}期"
+            )
         if validation_picks < MIN_VALIDATION_PICKS[horizon]:
             reasons.append(
+                f"歷史買進案例僅{validation_picks}筆，至少需要{MIN_VALIDATION_PICKS[horizon]}筆"
+            )
+            controlled_reasons.append(
                 f"歷史買進案例僅{validation_picks}筆，至少需要{MIN_VALIDATION_PICKS[horizon]}筆"
             )
         elif (
@@ -784,6 +792,14 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             reasons.append(
                 f"歷史驗證未同時通過淨報酬、領先0050、上漲命中率{MIN_VALIDATION_HIT_RATE}%、勝過0050比例{MIN_BENCHMARK_WIN_RATE}%與半數期間獲利"
             )
+        if validation_picks >= MIN_VALIDATION_PICKS[horizon] and (
+            _number(validation_row.get("average_return")) <= 0
+            or _number(validation_row.get("average_alpha")) <= 0
+            or _number(validation_row.get("positive_period_rate")) < 50
+        ):
+            controlled_reasons.append(
+                "整體歷史驗證未同時達到扣成本報酬為正、平均領先0050與半數期間獲利"
+            )
         if (
             int(holdout_row.get("periods") or 0) < MIN_HOLDOUT_PERIODS
             or int(holdout_row.get("sample_picks") or 0) < MIN_HOLDOUT_PICKS
@@ -794,6 +810,16 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             reasons.append(
                 "最近封存驗證未通過：至少需4期、8筆，且扣成本後報酬與相對0050皆為正"
             )
+        if (
+            int(holdout_row.get("periods") or 0) < MIN_HOLDOUT_PERIODS
+            or int(holdout_row.get("sample_picks") or 0) < MIN_HOLDOUT_PICKS
+            or _number(holdout_row.get("average_return")) <= 0
+            or _number(holdout_row.get("average_alpha")) <= 0
+            or _number(holdout_row.get("positive_period_rate")) < 50
+        ):
+            controlled_reasons.append(
+                "最近封存驗證未通過：至少需4期、8筆，且報酬、相對0050與期間獲利為正"
+            )
         if len(realised) >= MIN_LIVE_TRACKING_SAMPLES and (
             average_return is None
             or average_return <= 0
@@ -803,7 +829,17 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             reasons.append(
                 f"實際{horizon}日追蹤{len(realised)}筆未通過（平均{average_return}%、命中{hit_rate}%）"
             )
+        if len(realised) >= MIN_LIVE_TRACKING_SAMPLES and (
+            average_return is None
+            or average_return <= 0
+            or hit_rate is None
+            or hit_rate < 45
+        ):
+            controlled_reasons.append(
+                f"實際{horizon}日追蹤{len(realised)}筆不足以受控進場（平均{average_return}%、命中{hit_rate}%）"
+            )
         enabled = not reasons
+        controlled_enabled = enabled or not controlled_reasons
         live_tracking[f"{horizon}d"] = {
             "count": len(realised),
             "average_return": average_return,
@@ -812,8 +848,19 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         }
         reliability[f"{horizon}d"] = {
             "confirmed_buy_enabled": enabled,
-            "status": "通過" if enabled else "暫停正式買進",
+            "controlled_buy_enabled": controlled_enabled,
+            "operational_enabled": controlled_enabled,
+            "tier": "confirmed" if enabled else "controlled" if controlled_enabled else "research",
+            "max_position": "20-30%" if enabled else "10-20%" if controlled_enabled else "0%",
+            "status": (
+                "正式通過"
+                if enabled
+                else "驗證中，可受控買進"
+                if controlled_enabled
+                else "暫停買進"
+            ),
             "reasons": reasons,
+            "controlled_reasons": controlled_reasons,
             "validation_periods": periods,
             "validation_picks": validation_picks,
             "live_samples": len(realised),
@@ -826,9 +873,14 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             forecast = item.get(f"prediction_{horizon}d", {})
             forecast.setdefault("raw_signal", forecast.get("signal"))
             gate = reliability[f"{horizon}d"]
-            if forecast.get("raw_signal") == "買進" and not gate["confirmed_buy_enabled"]:
+            forecast["recommendation_tier"] = gate["tier"]
+            forecast["max_position"] = gate["max_position"]
+            if forecast.get("raw_signal") == "買進" and not gate["operational_enabled"]:
                 forecast["signal"] = "觀察"
-                forecast["safety_block"] = "；".join(gate["reasons"])
+                forecast["safety_block"] = "；".join(gate["controlled_reasons"])
+            elif forecast.get("raw_signal") == "買進":
+                forecast["signal"] = "買進"
+                forecast["safety_block"] = ""
 
     current_rows = sorted(
         (
@@ -964,13 +1016,21 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
     model["reliability"] = reliability
     model["operational_status"] = {
         "20d": {
-            "enabled": reliability["20d"]["confirmed_buy_enabled"],
+            "enabled": reliability["20d"]["operational_enabled"],
+            "tier": reliability["20d"]["tier"],
+            "max_position": reliability["20d"]["max_position"],
             "label": (
                 "正式啟用"
                 if reliability["20d"]["confirmed_buy_enabled"]
+                else "驗證中，啟用受控買進"
+                if reliability["20d"]["controlled_buy_enabled"]
                 else "模型停用，僅供研究"
             ),
-            "reasons": list(reliability["20d"]["reasons"]),
+            "reasons": list(
+                reliability["20d"]["reasons"]
+                if reliability["20d"]["operational_enabled"]
+                else reliability["20d"]["controlled_reasons"]
+            ),
         }
     }
     model["stability_rule"] = (

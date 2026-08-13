@@ -92,7 +92,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#00d4aa" stroke-width="1.5" fill="rgba(0,212,170,.08)"/>
       <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    台股選股儀表板 <span class="version-badge">v70</span>
+    台股選股儀表板 <span class="version-badge">v71</span>
   </div>
   <div class="header-right">
     <select class="api-select" id="aiProvider">
@@ -5679,6 +5679,14 @@ function apply20dValueEntryDecision(sc, decision, forecast){
     ? `${formatEntryPrice(entryLow)}～${formatEntryPrice(entryHigh)} 元`
     : '資料不足';
   decision.expectedTarget=expectedTarget;
+  const targetLow=expectedTarget > 0
+    ? Math.max(modelPrice * 1.03, expectedTarget * 0.97)
+    : 0;
+  const stopLoss=support > 0 ? support * 0.965 : Number(forecast.downside_price || 0);
+  decision.targetZoneText=targetLow > 0 && expectedTarget > 0
+    ? `${formatEntryPrice(targetLow)}～${formatEntryPrice(expectedTarget)} 元`
+    : '資料不足';
+  decision.stopLossText=stopLoss > 0 ? `${formatEntryPrice(stopLoss)} 元` : '資料不足';
   decision.remainingExpectedReturn=livePrice > 0 && expectedTarget > 0
     ? (expectedTarget / livePrice - 1) * 100
     : null;
@@ -5760,6 +5768,10 @@ function apply20dValueEntryDecision(sc, decision, forecast){
 }
 
 function buildForecastExecutionDecision(sc, mode, forecast){
+  const operational=mode === 'long' ? model20dOperationalState() : {enabled:true,tier:'confirmed'};
+  if(mode === 'long' && operational.enabled && forecast.raw_signal === '買進'){
+    forecast={...forecast,signal:'買進',safety_block:''};
+  }
   const base = {...getCacheSelectionDecision(sc, mode)};
   base.action = forecast.signal === '買進' ? '買進' : '觀望';
   base.position = forecast.confidence >= 60 ? '20-30%' : '10-20%';
@@ -5807,9 +5819,17 @@ function buildForecastExecutionDecision(sc, mode, forecast){
     decision.summary=`觀望；${decision.liveReason}`;
   }
 
-  return mode === 'long'
+  const finalDecision=mode === 'long'
     ? apply20dValueEntryDecision(sc, decision, forecast)
     : decision;
+  if(mode === 'long' && operational.tier === 'controlled' && isExecutableAction(finalDecision.action)){
+    finalDecision.action='小量試單';
+    finalDecision.position='10-20%';
+    finalDecision.buyType=`驗證中受控買進｜${finalDecision.buyType}`;
+    finalDecision.liveLabel=finalDecision.buyType;
+    finalDecision.summary=`小量試單，10-20%；${finalDecision.liveReason}`;
+  }
+  return finalDecision;
 }
 
 function getForecastCandidatePool(mode, useStableList=true){
@@ -5901,8 +5921,25 @@ function get20dResearchRankingPool(){
 function model20dOperationalState(){
   const explicit=ghCache?.predictionModel?.operational_status?.['20d'];
   const gate=ghCache?.predictionModel?.reliability?.['20d'] || {};
+  const validation=ghCache?.predictionModel?.validation?.['20d'] || {};
+  const holdout=validation.sealed_holdout || {};
+  const controlledFallback=Boolean(ghCache?.predictionModel?.benchmark_ready) &&
+    Number(validation.periods || 0) >= 12 &&
+    Number(validation.sample_picks || 0) >= 30 &&
+    Number(validation.average_return || 0) > 0 &&
+    Number(validation.average_alpha || 0) > 0 &&
+    Number(validation.positive_period_rate || 0) >= 50 &&
+    Number(holdout.periods || 0) >= 4 &&
+    Number(holdout.sample_picks || 0) >= 8 &&
+    Number(holdout.average_return || 0) > 0 &&
+    Number(holdout.average_alpha || 0) > 0 &&
+    Number(holdout.positive_period_rate || 0) >= 50;
+  const confirmed=Boolean(gate.confirmed_buy_enabled);
+  const controlled=Boolean(gate.controlled_buy_enabled) || controlledFallback;
   return {
-    enabled: explicit ? Boolean(explicit.enabled) : Boolean(gate.confirmed_buy_enabled),
+    enabled: confirmed || controlled || Boolean(explicit?.enabled),
+    tier: confirmed ? 'confirmed' : controlled ? 'controlled' : (explicit?.tier || 'research'),
+    maxPosition: confirmed ? '20-30%' : controlled ? '10-20%' : '0%',
     reasons: explicit?.reasons || gate.reasons || []
   };
 }
@@ -6025,6 +6062,9 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
         return `<div style="font-size:12px;color:${summaryColor};font-weight:700;margin-bottom:8px">今日布局：買進 ${buyCount} 支｜小量試單 ${smallCount} 支｜等待回檔或止跌 ${waitCount} 支。20日排名不因盤中漲跌更換。</div>`;
       })()
     : '';
+  const controlledModelNotice=mode === 'long' && operational.tier === 'controlled'
+    ? `<div style="font-size:12px;color:var(--warn);font-weight:700;margin-bottom:8px">模型目前屬於驗證中受控層：符合進場條件時會提供「小量試單」，單檔上限 10–20%；完整列出布局區、目標區與停損。</div>`
+    : '';
   if(!candidates.length){
     const excludedRows=evaluated.slice(0,5).map(sc=>{
       const f=sc.forecast, d=sc.execution, live=d.realtime || {};
@@ -6064,10 +6104,11 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
       ${modelFreshnessWarning}
       ${buyableSummary}
       ${integrated20dSummary}
+      ${controlledModelNotice}
       <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '從全部200支股票的20日原始預測前25名尋找當下買點；正式買進訊號優先，小量試單只代表條件尚未完整確認。' : (mode === 'long' ? '本表固定顯示20日模型前五名；排行不等於買進。名次依20日預期獲利、上漲機率、穩定度與基本品質排序，盤中價格只判斷買進、小量試單或觀望，不會讓整張排行消失。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:12px">${forecastValidationText(horizon)}。${renderRealtimeStatus(liveQuoteState.market)}</div>
       <table>
-        <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' && !buyableOnly ? '<th>名單狀態</th>' : ''}<th>模型預期${horizon}日</th><th>盤中剩餘預期</th><th>盤中漲跌</th><th>上漲機率</th><th>相對大盤</th><th>模型價格區間</th>${mode === 'long' ? '<th>逢低布局區</th>' : ''}<th>信心</th><th>現在進場</th></tr></thead>
+        <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' && !buyableOnly ? '<th>名單狀態</th>' : ''}<th>模型預期${horizon}日</th><th>盤中剩餘預期</th><th>盤中漲跌</th><th>上漲機率</th><th>相對大盤</th><th>模型價格區間</th>${mode === 'long' ? '<th>逢低布局區</th><th>目標區</th><th>停損</th>' : ''}<th>信心</th><th>現在進場</th></tr></thead>
         <tbody>${candidates.map((sc,index)=>{
           const f=sc.forecast, d=sc.execution;
           const returnColor=f.expected_return>=0?'var(--green)':'var(--red)';
@@ -6082,13 +6123,13 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
             <td class="td-mono">${f.up_probability}%</td>
             <td class="td-mono" style="color:${f.expected_alpha>=0?'var(--green)':'var(--red)'}">${f.expected_alpha>=0?'+':''}${f.expected_alpha}%</td>
             <td class="td-mono">${f.range_low_price}～${f.range_high_price} 元</td>
-            ${mode === 'long' ? `<td class="td-mono" style="color:var(--accent)">${d.entryZoneText || '資料不足'}</td>` : ''}
+            ${mode === 'long' ? `<td class="td-mono" style="color:var(--accent)">${d.entryZoneText || '資料不足'}</td><td class="td-mono" style="color:var(--green)">${d.targetZoneText || '資料不足'}</td><td class="td-mono" style="color:var(--red)">${d.stopLossText || '資料不足'}</td>` : ''}
             <td class="td-mono">${f.confidence}/100</td>
             <td title="${d.liveReason || d.summary || ''}" style="color:${isExecutableAction(d.action)?color:'var(--warn)'};font-weight:700">${d.action}｜${d.buyType}</td>
           </tr>`;
         }).join('')}</tbody>
       </table>
-      <div style="font-size:10px;color:var(--muted);margin-top:10px">價格區間取歷史相似案例的第 25～75 百分位，不是保證價格；停損參考請點入個股查看。</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:10px">價格區間取歷史相似案例的第 25～75 百分位，不是保證價格；停損設在模型支撐下方，進場後仍須遵守。</div>
     </div>`;
 }
 
