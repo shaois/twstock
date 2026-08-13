@@ -11,6 +11,7 @@
 body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC',sans-serif;font-size:14px;min-height:100vh;}
 header{background:linear-gradient(135deg,#0d1b2e,#0a0e1a);border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;}
 .logo{font-size:18px;font-weight:700;color:var(--accent);display:flex;align-items:center;gap:8px;}
+.version-badge{font-size:10px;line-height:1;color:#f8fafc;background:#334155;border:1px solid #475569;border-radius:4px;padding:4px 6px;font-family:'JetBrains Mono',monospace;font-weight:700;}
 .header-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .api-input{background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:12px;font-family:'JetBrains Mono',monospace;width:220px;}
 .api-input:focus{outline:none;border-color:var(--accent);}
@@ -91,7 +92,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#00d4aa" stroke-width="1.5" fill="rgba(0,212,170,.08)"/>
       <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    台股選股儀表板
+    台股選股儀表板 <span class="version-badge">v69</span>
   </div>
   <div class="header-right">
     <select class="api-select" id="aiProvider">
@@ -1960,8 +1961,8 @@ async function fetchCacheJsonStrict(file, retries=3, version=''){
   const localBase = new URL('cache/', window.location.href).toString();
   const cacheVersion = encodeURIComponent(version || Date.now());
   const urls = [
-    `${localBase}${file}?v=${cacheVersion}`,
-    `${GH_CACHE_BASE}/${file}?v=${cacheVersion}`
+    `${GH_CACHE_BASE}/${file}?v=${cacheVersion}`,
+    `${localBase}${file}?v=${cacheVersion}`
   ];
   let lastError = null;
   for(const url of urls){
