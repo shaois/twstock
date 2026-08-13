@@ -2,13 +2,14 @@ name: Daily FinMind Cache Refresh
 
 on:
   schedule:
-    # Taiwan time 04:00-08:00. 5 batches x 40 stocks = 200 stocks per day.
-    # The later window gives FinMind time to publish the previous trading day.
+    # Taiwan time 01:00-05:00. 5 batches x 40 stocks = 200 stocks per day.
+    # GitHub scheduled jobs may start late, so keep a four-hour buffer before
+    # the Taiwan market opens at 09:00.
+    - cron: '0 17 * * *'
+    - cron: '0 18 * * *'
+    - cron: '0 19 * * *'
     - cron: '0 20 * * *'
     - cron: '0 21 * * *'
-    - cron: '0 22 * * *'
-    - cron: '0 23 * * *'
-    - cron: '0 0 * * *'
   workflow_dispatch:
 
 permissions:
