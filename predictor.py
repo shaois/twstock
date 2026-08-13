@@ -36,7 +36,10 @@ MIN_VALIDATION_PICKS = {20: 30}
 MIN_HOLDOUT_PERIODS = 4
 MIN_HOLDOUT_PICKS = 8
 VALIDATION_LOOKBACK_DAYS = 500
-MODEL_SELECTION_SIZE = 3
+# Historical validation keeps a three-stock portfolio so its published
+# performance remains comparable across releases. Today's eligible list is
+# not capped: every stock that passes MODEL_CANDIDATE_FLOOR is surfaced.
+VALIDATION_PORTFOLIO_SIZE = 3
 MODEL_CANDIDATE_FLOOR = {
     "return": 1.0,
     "alpha": 1.0,
@@ -545,7 +548,7 @@ def _walk_forward_validation(samples):
                 candidate
                 for _, candidate in sorted(
                     ranked, key=lambda item: item[0], reverse=True
-                )[:MODEL_SELECTION_SIZE]
+                )[:VALIDATION_PORTFOLIO_SIZE]
             ]
             if top:
                 metrics[horizon].append({
@@ -663,9 +666,9 @@ def build_predictions(price_db, scores=None, benchmark_rows=None):
         item["rank_20d"] = round(_rank_value(item, 20), 3)
         output[stock_id] = item
 
-    # Production must use the exact same relative-selection rule as the
-    # walk-forward test. A forecast can be positive without being one of the
-    # few stocks the model would actually select.
+    # Eligibility is threshold based, not quota based. Ranking controls the
+    # display order, but it must not hide a stock that independently clears
+    # the expected-return, benchmark-alpha, probability and downside floors.
     selected_rows = sorted(
         (
             (stock_id, item)
@@ -676,7 +679,7 @@ def build_predictions(price_db, scores=None, benchmark_rows=None):
         ),
         key=lambda pair: pair[1].get("rank_20d", -999),
         reverse=True,
-    )[:MODEL_SELECTION_SIZE]
+    )
     selected_ids = [stock_id for stock_id, _ in selected_rows]
     for stock_id, item in output.items():
         if not item.get("available"):
@@ -721,7 +724,10 @@ def build_predictions(price_db, scores=None, benchmark_rows=None):
             "minimum_benchmark_win_rate": MIN_BENCHMARK_WIN_RATE,
             "minimum_holdout_periods": MIN_HOLDOUT_PERIODS,
             "minimum_holdout_picks": MIN_HOLDOUT_PICKS,
-            "selection_size": MODEL_SELECTION_SIZE,
+            "validation_portfolio_size": VALIDATION_PORTFOLIO_SIZE,
+            "selection_size": None,
+            "selection_rule": "all_stocks_passing_candidate_floor",
+            "eligible_20d_count": len(selected_ids),
             "candidate_floor": dict(MODEL_CANDIDATE_FLOOR),
             "selected_20d": selected_ids,
             "signal_thresholds": dict(SIGNAL_THRESHOLDS),

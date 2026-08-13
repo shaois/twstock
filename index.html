@@ -92,7 +92,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#00d4aa" stroke-width="1.5" fill="rgba(0,212,170,.08)"/>
       <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    台股選股儀表板 <span class="version-badge">v71</span>
+    台股選股儀表板 <span class="version-badge">v72</span>
   </div>
   <div class="header-right">
     <select class="api-select" id="aiProvider">
@@ -5769,7 +5769,8 @@ function apply20dValueEntryDecision(sc, decision, forecast){
 
 function buildForecastExecutionDecision(sc, mode, forecast){
   const operational=mode === 'long' ? model20dOperationalState() : {enabled:true,tier:'confirmed'};
-  if(mode === 'long' && operational.enabled && forecast.raw_signal === '買進'){
+  if(mode === 'long' && operational.enabled &&
+    (forecast.raw_signal === '買進' || passes20dCandidateFloor(forecast))){
     forecast={...forecast,signal:'買進',safety_block:''};
   }
   const base = {...getCacheSelectionDecision(sc, mode)};
@@ -5878,15 +5879,22 @@ function getForecastCandidatePool(mode, useStableList=true){
   }).filter(Boolean);
 }
 
-// The 20-day page is a model ranking, not a buy-gate result. Keep the five
-// highest-ranked forecasts visible even when none is currently executable.
+function passes20dCandidateFloor(forecast){
+  const floor=ghCache?.predictionModel?.candidate_floor || {};
+  return forecast.available &&
+    Number(forecast.expected_return) >= Number(floor.return ?? 1) &&
+    Number(forecast.expected_alpha) >= Number(floor.alpha ?? 1) &&
+    Number(forecast.up_probability) >= Number(floor.up_probability ?? 52) &&
+    Number(forecast.downside_return) >= Number(floor.downside ?? -12);
+}
+
+// List every forecast that clears the existing profitability and risk floors.
+// modelSelected remains accepted for older cache files during this release.
 function get20dModelRankingPool(){
   return Object.values(allScores).map(sc=>{
     const forecast=getForwardPrediction(sc,20);
     if(!forecast.available) return null;
-    // A positive ranking score is not an actionable model signal. Keep the
-    // leaderboard aligned with the backend thresholds (including confidence).
-    if(!forecast.modelSelected) return null;
+    if(!forecast.modelSelected && !passes20dCandidateFloor(forecast)) return null;
     const stability=forecast.stability || {};
     const qualityBonus=Number(sc.fScore || 0)*0.03 + Number(sc.vScore || 0)*0.02;
     return {
@@ -5988,7 +5996,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
   const horizon=mode === 'short' ? 5 : 20;
   const title=buyableOnly
     ? '目前可買進候選'
-    : '20 日勝過0050候選（最多3支）';
+    : '20 日勝過0050候選';
   const color=mode === 'short' ? 'var(--accent2)' : 'var(--accent)';
   const pool=mode === 'long' && !buyableOnly
     ? get20dModelRankingPool()
@@ -6017,7 +6025,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
     return;
   }
   container.innerHTML='<div class="screener-panel"><div class="ai-loading"><div class="spinner"></div>正在取得預測候選股的官方盤中報價...</div></div>';
-  const quotePool=buyableOnly ? pool.slice(0,25) : (mode === 'long' ? pool.slice(0,5) : pool.slice(0,20));
+  const quotePool=buyableOnly ? pool.slice(0,25) : (mode === 'long' ? pool : pool.slice(0,20));
   await loadRealtimeQuotes(quotePool.map(sc=>sc.id));
   const evaluated=quotePool.map(sc=>({
     ...sc,
@@ -6030,7 +6038,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
   const modelFreshnessWarning=modelTradingDayGap > 1
     ? `<div style="font-size:12px;color:var(--red);font-weight:700;margin-bottom:8px">資料警告：模型日期 ${ghCache.predictionModel.latest_date} 已落後盤中 ${modelTradingDayGap} 個交易日；本頁只保留候選觀察，全部禁止進場，請先完成最新 Cache。</div>`
     : '';
-  const candidates=(buyableOnly
+  const rankedCandidates=(buyableOnly
     ? evaluated.filter(sc=>isExecutableAction(sc.execution.action)).sort((a,b)=>{
         const confirmedDiff=Number(isConfirmedBuyAction(b.execution.action)) -
           Number(isConfirmedBuyAction(a.execution.action));
@@ -6041,7 +6049,8 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
           (a.forecastRank + Math.max(-1,Math.min(ar,2))*0.35);
       })
     : evaluated
-  ).slice(0,5);
+  );
+  const candidates=buyableOnly ? rankedCandidates.slice(0,5) : rankedCandidates;
   const confirmedBuyCount=buyableOnly
     ? candidates.filter(sc=>isConfirmedBuyAction(sc.execution.action)).length
     : 0;
@@ -6100,12 +6109,12 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
   const gc={'A+':'#00ffcc',A:'var(--green)',B:'var(--accent)',C:'var(--warn)',D:'var(--red)'};
   container.innerHTML=`
     <div class="screener-panel" style="border:1px solid ${color}">
-      <div class="panel-title" style="margin-bottom:8px;color:${color}">${buyableOnly ? '目前可進場候選 Top 5' : title}</div>
+      <div class="panel-title" style="margin-bottom:8px;color:${color}">${buyableOnly ? '目前可進場候選 Top 5' : `${title}（符合門檻 ${candidates.length} 支）`}</div>
       ${modelFreshnessWarning}
       ${buyableSummary}
       ${integrated20dSummary}
       ${controlledModelNotice}
-      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '從全部200支股票的20日原始預測前25名尋找當下買點；正式買進訊號優先，小量試單只代表條件尚未完整確認。' : (mode === 'long' ? '本表固定顯示20日模型前五名；排行不等於買進。名次依20日預期獲利、上漲機率、穩定度與基本品質排序，盤中價格只判斷買進、小量試單或觀望，不會讓整張排行消失。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '從全部200支股票的20日原始預測前25名尋找當下買點；正式買進訊號優先，小量試單只代表條件尚未完整確認。' : (mode === 'long' ? '本表列出所有通過既有20日預期獲利、領先0050、上漲機率及下行風險門檻的股票，不限制名額；排名只決定順序，不會淘汰已達門檻者。歷史績效仍採每日前三名投資組合驗證，避免更換已公布的比較口徑。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:12px">${forecastValidationText(horizon)}。${renderRealtimeStatus(liveQuoteState.market)}</div>
       <table>
         <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' && !buyableOnly ? '<th>名單狀態</th>' : ''}<th>模型預期${horizon}日</th><th>盤中剩餘預期</th><th>盤中漲跌</th><th>上漲機率</th><th>相對大盤</th><th>模型價格區間</th>${mode === 'long' ? '<th>逢低布局區</th><th>目標區</th><th>停損</th>' : ''}<th>信心</th><th>現在進場</th></tr></thead>
