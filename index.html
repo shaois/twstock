@@ -1956,17 +1956,18 @@ async function waitCacheFetch(ms){
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function fetchCacheJsonStrict(file, retries=3){
+async function fetchCacheJsonStrict(file, retries=3, version=''){
   const localBase = new URL('cache/', window.location.href).toString();
+  const cacheVersion = encodeURIComponent(version || Date.now());
   const urls = [
-    `${localBase}${file}`,
-    `${GH_CACHE_BASE}/${file}`
+    `${localBase}${file}?v=${cacheVersion}`,
+    `${GH_CACHE_BASE}/${file}?v=${cacheVersion}`
   ];
   let lastError = null;
   for(const url of urls){
     for(let i=0;i<retries;i++){
       try{
-        const r = await fetch(url, {cache:'default'});
+        const r = await fetch(url, {cache:'no-store'});
         if(!r.ok) throw new Error(`${file} HTTP ${r.status}`);
         return await r.json();
       }catch(e){
@@ -1978,10 +1979,10 @@ async function fetchCacheJsonStrict(file, retries=3){
   throw lastError || new Error(`${file} 載入失敗`);
 }
 
-async function fetchOptionalCacheJson(file){
+async function fetchOptionalCacheJson(file, version){
   try{
     await waitCacheFetch(120);
-    return await fetchCacheJsonStrict(file, 2);
+    return await fetchCacheJsonStrict(file, 2, version);
   }catch(_){
     return {data:{}};
   }
@@ -1989,8 +1990,9 @@ async function fetchOptionalCacheJson(file){
 
 loadGitHubCache = async function(force=false){
   if(ghCache.loaded && !force) return ghCache;
-  const scores = await fetchCacheJsonStrict('scores.json', 4);
+  const scores = await fetchCacheJsonStrict('scores.json', 4, Date.now());
   const scoreData = scores?.data || {};
+  const cacheVersion = scores?._saved_at || Date.now();
   const expectedCount = Array.isArray(CANDIDATES) ? CANDIDATES.length : 200;
   const missingScoreIds = (Array.isArray(CANDIDATES) ? CANDIDATES : []).filter(s => !scoreData[s.id]).map(s => s.id);
   if(missingScoreIds.length > 0){
@@ -2000,7 +2002,7 @@ loadGitHubCache = async function(force=false){
   const files = ['fundamental.json','revenue.json','price.json','exdiv.json','balance.json','news.json','institutional.json','predictions.json'];
   const loaded = {};
   for(const file of files){
-    loaded[file] = await fetchOptionalCacheJson(file);
+    loaded[file] = await fetchOptionalCacheJson(file, cacheVersion);
   }
 
   ghCache.fundamental = loaded['fundamental.json']?.data || {};

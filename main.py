@@ -39,6 +39,12 @@ cache = DataCache()
 CACHE_DIR = Path("/tmp/twstock_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 STATIC_CACHE_DIR = Path(__file__).parent / "cache"
+if STATIC_CACHE_DIR.exists():
+    app.mount(
+        "/cache",
+        StaticFiles(directory=STATIC_CACHE_DIR, check_dir=False),
+        name="cache",
+    )
 REALTIME_QUOTE_TTL_SECONDS = 15
 _realtime_quote_cache: dict[str, tuple[datetime, dict]] = {}
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")

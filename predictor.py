@@ -496,9 +496,9 @@ def _walk_forward_validation(samples):
     metrics = {20: []}
     # Use non-overlapping test windows. The previous 5-day step for a 20-day
     # horizon counted the same market move up to four times.
-    # Five picks per period require at least 16 periods to make the 80-pick
-    # reliability gate attainable. A 500-session window provides up to 24
-    # non-overlapping 20-day periods without counting the same move twice.
+    # Three picks per period provide enough independent observations for the
+    # 30-pick gate. A 500-session window provides up to 24 non-overlapping
+    # 20-day periods without counting the same market move twice.
     eligible_by_horizon = {
         20: dates[-VALIDATION_LOOKBACK_DAYS:-20:20],
     }
