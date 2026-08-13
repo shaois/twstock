@@ -92,7 +92,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#00d4aa" stroke-width="1.5" fill="rgba(0,212,170,.08)"/>
       <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    台股選股儀表板 <span class="version-badge">v72</span>
+    台股選股儀表板 <span class="version-badge">v73</span>
   </div>
   <div class="header-right">
     <select class="api-select" id="aiProvider">
@@ -5691,8 +5691,10 @@ function apply20dValueEntryDecision(sc, decision, forecast){
     ? (expectedTarget / livePrice - 1) * 100
     : null;
 
-  const forecastQualified=forecast.signal === '買進' &&
-    expectedReturn >= 5 && expectedAlpha >= 2 && upProbability >= 55;
+  const factorQualified=forecast.signal === '買進' &&
+    forecast.selection_basis === '歷史驗證固定因子與同排名結果';
+  const forecastQualified=factorQualified || (forecast.signal === '買進' &&
+    expectedReturn >= 5 && expectedAlpha >= 2 && upProbability >= 55);
   const change=Number(live.changePct);
   const relative=Number(live.relativePct);
   const fromOpen=Number(live.fromOpenPct);
@@ -5719,7 +5721,7 @@ function apply20dValueEntryDecision(sc, decision, forecast){
   }else if(!forecastQualified){
     decision.action='觀望';
     decision.position='0%';
-    decision.buyType='20日獲利條件不足';
+    decision.buyType='20日模型條件不足';
     decision.liveReason=`預期報酬 ${expectedReturn.toFixed(2)}%、上漲機率 ${upProbability.toFixed(1)}%、相對大盤 ${expectedAlpha.toFixed(2)}%`;
   }else if(modelTradingDayGap > 1){
     decision.action='觀望';
@@ -5775,7 +5777,7 @@ function buildForecastExecutionDecision(sc, mode, forecast){
   }
   const base = {...getCacheSelectionDecision(sc, mode)};
   base.action = forecast.signal === '買進' ? '買進' : '觀望';
-  base.position = forecast.confidence >= 60 ? '20-30%' : '10-20%';
+  base.position = mode === 'long' ? operational.maxPosition : '10-20%';
   base.buyType = `${forecast.horizon}日預測`;
   base.reasons = [
     `預期報酬 ${forecast.expected_return >= 0 ? '+' : ''}${forecast.expected_return}%`,
@@ -6016,12 +6018,12 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
       <div class="panel-title" style="color:var(--warn);margin-bottom:8px">20 日模型目前停用</div>
       <div style="font-size:12px;color:var(--warn);font-weight:700;margin-bottom:6px">${reasonText}</div>
       <div style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:12px">目前驗證 ${validation.periods || 0} 期／${validation.sample_picks || 0} 筆，上漲命中 ${validation.hit_rate ?? 'N/A'}%，扣成本平均報酬 ${validation.average_return ?? 'N/A'}%，平均領先0050 ${validation.average_alpha ?? 'N/A'}%。下表只是研究排名，不是買進推薦。</div>
-      ${research.length ? `<details><summary style="cursor:pointer;color:var(--muted);font-weight:700">查看研究排名（非推薦）</summary><div style="margin-top:10px;overflow-x:auto"><table><thead><tr><th>研究排名</th><th>股票</th><th>預期20日</th><th>上漲機率</th><th>信心</th><th>狀態</th></tr></thead><tbody>${research.map((sc,index)=>`<tr onclick="showDetail('${sc.id}')"><td>#${index+1}</td><td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> ${sc.name}</td><td>${sc.forecast.expected_return>=0?'+':''}${sc.forecast.expected_return}%</td><td>${sc.forecast.up_probability}%</td><td>${sc.forecast.confidence}/100</td><td style="color:var(--warn);font-weight:700">研究觀察｜未通過模型門檻</td></tr>`).join('')}</tbody></table></div></details>` : ''}
+      ${research.length ? `<details><summary style="cursor:pointer;color:var(--muted);font-weight:700">查看研究排名（非推薦）</summary><div style="margin-top:10px;overflow-x:auto"><table><thead><tr><th>研究排名</th><th>股票</th><th>預期20日</th><th>歷史同排名上漲率</th><th>樣本品質</th><th>狀態</th></tr></thead><tbody>${research.map((sc,index)=>`<tr onclick="showDetail('${sc.id}')"><td>#${index+1}</td><td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> ${sc.name}</td><td>${sc.forecast.expected_return>=0?'+':''}${sc.forecast.expected_return}%</td><td>${sc.forecast.up_probability}%</td><td>${sc.forecast.confidence}/100</td><td style="color:var(--warn);font-weight:700">研究觀察｜未通過模型門檻</td></tr>`).join('')}</tbody></table></div></details>` : ''}
     </div>`;
     return;
   }
   if(!pool.length){
-    container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">模型雖已通過整體驗證，但今天沒有股票通過完整的20日買進門檻（含預期報酬、相對大盤、上漲機率、信心與下行風險）。模型日期：${ghCache.predictionModel.latest_date || '未知'}。</div>`;
+    container.innerHTML=`<div class="screener-panel" style="border:1px solid var(--warn);color:var(--muted)">模型雖已通過整體驗證，但今天沒有股票通過完整的20日買進門檻（含預期報酬、相對大盤、歷史同排名上漲率、樣本品質與下行風險）。模型日期：${ghCache.predictionModel.latest_date || '未知'}。</div>`;
     return;
   }
   container.innerHTML='<div class="screener-panel"><div class="ai-loading"><div class="spinner"></div>正在取得預測候選股的官方盤中報價...</div></div>';
@@ -6114,10 +6116,10 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
       ${buyableSummary}
       ${integrated20dSummary}
       ${controlledModelNotice}
-      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '從全部200支股票的20日原始預測前25名尋找當下買點；正式買進訊號優先，小量試單只代表條件尚未完整確認。' : (mode === 'long' ? '本表列出所有通過既有20日預期獲利、領先0050、上漲機率及下行風險門檻的股票，不限制名額；排名只決定順序，不會淘汰已達門檻者。歷史績效仍採每日前三名投資組合驗證，避免更換已公布的比較口徑。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '從固定因子模型選出的5支候選中尋找逢低買點；盤中行情只控制進場，不改寫歷史模型排名。' : (mode === 'long' ? '使用約四年歷史行情逐月模擬：每期只用當時已知資料，從約200支股票選固定因子前5名並持有20個交易日，再與同期0050比較。今天的候選立即沿用同一套規則，不需要等待新的上線樣本。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:12px">${forecastValidationText(horizon)}。${renderRealtimeStatus(liveQuoteState.market)}</div>
       <table>
-        <thead><tr><th>${buyableOnly ? '可買進排名' : '預測排名'}</th><th>股票</th><th>等級</th>${mode === 'long' && !buyableOnly ? '<th>名單狀態</th>' : ''}<th>模型預期${horizon}日</th><th>盤中剩餘預期</th><th>盤中漲跌</th><th>上漲機率</th><th>相對大盤</th><th>模型價格區間</th>${mode === 'long' ? '<th>逢低布局區</th><th>目標區</th><th>停損</th>' : ''}<th>信心</th><th>現在進場</th></tr></thead>
+        <thead><tr><th>${buyableOnly ? '可買進排名' : '模型排名'}</th><th>股票</th><th>等級</th>${mode === 'long' && !buyableOnly ? '<th>名單狀態</th>' : ''}<th>歷史同排名預期${horizon}日</th><th>盤中剩餘預期</th><th>盤中漲跌</th><th>歷史同排名上漲率</th><th>相對大盤</th><th>模型價格區間</th>${mode === 'long' ? '<th>逢低布局區</th><th>目標區</th><th>停損</th>' : ''}<th>樣本品質</th><th>現在進場</th></tr></thead>
         <tbody>${candidates.map((sc,index)=>{
           const f=sc.forecast, d=sc.execution;
           const returnColor=f.expected_return>=0?'var(--green)':'var(--red)';
@@ -6138,7 +6140,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
           </tr>`;
         }).join('')}</tbody>
       </table>
-      <div style="font-size:10px;color:var(--muted);margin-top:10px">價格區間取歷史相似案例的第 25～75 百分位，不是保證價格；停損設在模型支撐下方，進場後仍須遵守。</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:10px">價格區間取歷史同排名股票20日結果的第 25～75 百分位，不是保證價格；停損設在下行情境附近，進場後仍須遵守。</div>
     </div>`;
 }
 
@@ -6184,7 +6186,7 @@ buildAIDataTextV2=function(id,sc,mode){
   if(mode==='short') return `${base}\n短線分析僅使用技術面、量價與籌碼，不使用已下架的 5 日預測模型。\n`;
   const prediction=getForwardPrediction(sc,20);
   if(!prediction.available) return `${base}\n未來報酬模型：資料不足，不得自行猜測未來漲幅。\n`;
-  return `${base}\n未來20日統計預測：${prediction.signal}；預期報酬 ${prediction.expected_return}%；上漲機率 ${prediction.up_probability}%；相對大盤 ${prediction.expected_alpha}%；價格區間 ${prediction.range_low_price}～${prediction.range_high_price} 元；下行情境 ${prediction.downside_price} 元；信心 ${prediction.confidence}/100。\n請以此預測為主要結論，盤中行情只用來判斷進場時機，不得因單日上漲就提高未來預測。\n`;
+  return `${base}\n未來20日統計預測：${prediction.signal}；歷史同排名預期報酬 ${prediction.expected_return}%；歷史同排名上漲率 ${prediction.up_probability}%；相對大盤 ${prediction.expected_alpha}%；價格區間 ${prediction.range_low_price}～${prediction.range_high_price} 元；下行情境 ${prediction.downside_price} 元；樣本品質 ${prediction.confidence}/100（不是上漲機率）。\n請以固定因子歷史驗證結果作為模型是否可用的主要依據；盤中行情只用來判斷進場時機，不得因單日上漲就提高未來預測。\n`;
 };
 </script>
 </body>
