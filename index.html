@@ -92,7 +92,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#00d4aa" stroke-width="1.5" fill="rgba(0,212,170,.08)"/>
       <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    台股選股儀表板 <span class="version-badge">v76</span>
+    台股選股儀表板 <span class="version-badge">v77</span>
   </div>
   <div class="header-right">
     <select class="api-select" id="aiProvider">
@@ -6238,6 +6238,152 @@ runAI=async function(id){
   }finally{
     setTitle();
   }
+};
+
+// v77: AI 20-day analysis must use the exact same forecast and entry decision
+// as the 20-day candidate table. Intraday noise may change execution details,
+// but an old short-term rule must never replace the 20-day model conclusion.
+function getAI20DayDecision(sc){
+  const forecast=getForwardPrediction(sc,20);
+  if(!forecast.available){
+    return {
+      forecast,
+      decision:{
+        action:'觀望', position:'0%', buyType:'20日模型資料不足',
+        entryZoneText:'資料不足', targetZoneText:'資料不足',
+        stopLossText:'資料不足', liveReason:forecast.reason || '20日模型資料不足'
+      }
+    };
+  }
+  return {forecast,decision:buildForecastExecutionDecision(sc,'long',forecast)};
+}
+
+var __getPracticalTradeDecisionBeforeV77=getPracticalTradeDecision;
+getPracticalTradeDecision=function(sc,mode='long'){
+  if(mode==='long') return getAI20DayDecision(sc).decision;
+  return __getPracticalTradeDecisionBeforeV77(sc,mode);
+};
+
+function formatAI20Number(value,digits=1){
+  const n=Number(value);
+  return Number.isFinite(n) ? n.toFixed(digits) : '資料不足';
+}
+
+function buildAI20InsightData(id,sc,forecast,decision){
+  const f=sc?.f || {};
+  const t=sc?.t || {};
+  const v=sc?.vDetail || {};
+  const chip=typeof getChipMood==='function' ? getChipMood(sc) : {label:'資料不足',reasons:[]};
+  const news=typeof getNewsMood==='function' ? getNewsMood(sc) : {label:'資料不足',note:''};
+  const live=decision?.realtime || {};
+  return `股票：${id} ${sc.name}
+分析期間：未來20個交易日（不是當沖，也不是5日短線）
+系統結論：${decision.action}
+布局方式：${decision.buyType || '依20日模型'}
+建議部位：${decision.position || '0%'}
+布局區：${decision.entryZoneText || '資料不足'}
+目標區：${decision.targetZoneText || '資料不足'}
+停損：${decision.stopLossText || '資料不足'}
+執行原因：${decision.liveReason || '依20日模型判斷'}
+模型預期20日報酬：${formatAI20Number(forecast.expected_return,2)}%
+模型預期領先0050：${formatAI20Number(forecast.expected_alpha,2)}%
+歷史同排名上漲率：${formatAI20Number(forecast.up_probability,1)}%
+模型信心：${formatAI20Number(forecast.confidence,0)}/100
+基本面：EPS ${formatAI20Number(f.eps,2)}、ROE ${formatAI20Number(f.roe,2)}%、營收年增 ${formatAI20Number(f.yoy,2)}%、基本面分數 ${sc.fScore}/50
+估值面：PE ${formatAI20Number(v.pe,1)}、殖利率 ${formatAI20Number(v.divYield,2)}%、估值分數 ${sc.vScore}/20
+中期結構：現價 ${formatAI20Number(t.price,2)}、MA20 ${formatAI20Number(t.ma20,2)}、MA60 ${formatAI20Number(t.ma60,2)}、RSI14 ${formatAI20Number(t.rsi,1)}、MACD柱 ${formatAI20Number(t.macdHist,3)}
+籌碼：${chip.label || '資料不足'}；${(chip.reasons || []).slice(0,3).join('、') || '無補充'}
+題材新聞：${news.label || '資料不足'}；${news.note || '無補充'}
+盤中資訊（只用於執行，不得推翻20日模型）：個股 ${formatAI20Number(live.changePct,2)}%、大盤 ${formatAI20Number(live.marketPct,2)}%、相對大盤 ${formatAI20Number(live.relativePct,2)}%`;
+}
+
+askAI=async function(id){
+  const apiKey=getApiKey();
+  if(!apiKey){showToast(`請先輸入 ${getAIProvider()==='groq' ? 'Groq' : 'NVIDIA'} API Key`);return;}
+  const sc=allScores[id];
+  if(!sc){showToast('找不到這檔股票資料');return;}
+
+  const panel=document.getElementById('aiPanel');
+  const content=document.getElementById('aiContent');
+  const title=panel?.querySelector('.panel-title');
+  const badge=panel?.querySelector('.ai-badge');
+  if(title) title.textContent='AI 20日分析';
+  if(badge) badge.textContent=getAIName();
+  panel.style.display='block';
+  content.innerHTML=`<div class="ai-loading"><div class="spinner"></div> ${getAIName()} 正在分析20日布局邏輯...</div>`;
+  panel.scrollIntoView({behavior:'smooth',block:'start'});
+
+  await loadRealtimeQuotes([id]);
+  const {forecast,decision}=getAI20DayDecision(sc);
+  const fixedPlan=[
+    `結論：${decision.action}`,
+    `策略：${decision.buyType || '依20日模型'}`,
+    `建議部位：${decision.position || '0%'}`,
+    `逢低布局區：${decision.entryZoneText || '資料不足'}`,
+    `目標賣出區：${decision.targetZoneText || '資料不足'}`,
+    `停損價：${decision.stopLossText || '資料不足'}`
+  ].join('\n');
+
+  if(!forecast.available){
+    content.textContent=`${fixedPlan}\n\n模型狀態：${decision.liveReason}`;
+    return;
+  }
+
+  const data=buildAI20InsightData(id,sc,forecast,decision);
+  const prompt=`你是台股20交易日波段布局分析師。你的任務不是重算模型，也不是做當沖，而是解釋既有20日模型結論背後的投資邏輯。
+
+硬性規則：
+1. 系統結論、部位、布局區、目標區與停損已由同一套20日模型決定，你不得改寫、升級或降級。
+2. 單日漲跌、MA5與盤中相對強弱只能說明執行節奏，不能單獨推翻20日結論。
+3. 不要逐項複誦數字；要說明因果、優勢、矛盾與可能失效的原因。
+4. 不得編造新聞、訂單、產業事件或未提供的事實。
+5. 核心問題是：未來20個交易日為何可能或不可能勝過0050？
+
+${data}
+
+只輸出以下四行，每行一個完整且精準的句子：
+20日核心見解：說明最重要的報酬來源或模型不採取買進的主因。
+勝過0050的條件：說明要靠什麼條件才能實現超額報酬。
+最大矛盾：指出目前最可能讓預測落空的一項衝突，不要只是列數據。
+失效觀察：說明接下來應觀察什麼中期變化；不要用MA5或單日跌幅作唯一條件。`;
+
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),90000);
+  try{
+    const response=await fetch(getAIEndpoint(),{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      signal:controller.signal,
+      body:JSON.stringify({
+        api_key:apiKey,
+        body:{
+          model:getAIModel(),
+          messages:[{role:'user',content:prompt}],
+          temperature:0.12,
+          max_tokens:320
+        }
+      })
+    });
+    let result;
+    try{result=await response.json();}
+    catch(_){result={error:{message:await response.text()}};}
+    if(!response.ok) throw new Error(result?.detail || result?.error?.message || `AI API 回傳 ${response.status}`);
+    const insight=String(result?.choices?.[0]?.message?.content || '').trim();
+    if(!insight) throw new Error(result?.error?.message || 'AI 沒有回傳分析內容');
+    content.textContent=`${fixedPlan}\n\nAI 見解\n${insight}`;
+    showToast(`${getAIName()} 20日分析完成`);
+  }catch(error){
+    let message=error?.message || 'AI 回應失敗';
+    if(error?.name==='AbortError') message='AI 回應逾時，請再按一次';
+    if(message.includes('Failed to fetch')) message='AI 連線失敗，請確認 Render 服務與 API Key';
+    content.textContent=`${fixedPlan}\n\nAI 見解暫時無法取得：${message}`;
+  }finally{
+    clearTimeout(timer);
+  }
+};
+
+runAI=async function(id){
+  return askAI(id);
 };
 </script>
 </body>
