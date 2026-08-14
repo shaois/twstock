@@ -92,7 +92,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#00d4aa" stroke-width="1.5" fill="rgba(0,212,170,.08)"/>
       <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    台股選股儀表板 <span class="version-badge">v75</span>
+    台股選股儀表板 <span class="version-badge">v76</span>
   </div>
   <div class="header-right">
     <select class="api-select" id="aiProvider">
@@ -594,8 +594,7 @@ function showDetail(id){
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <span class="grade-badge g${sc.grade.replace('+','p')}" style="font-size:14px;padding:5px 12px">${sc.grade} 級</span>
-        <button class="btn btn-primary" onclick="runAI('${sc.id}')">AI 中長期</button>
-        <button class="btn btn-secondary" onclick="runAIShort('${sc.id}')">AI 短線</button>
+        <button class="btn btn-primary" onclick="runAI('${sc.id}')">AI 20日</button>
       </div>
     </div>
     <div class="score-overview">
@@ -610,7 +609,7 @@ function showDetail(id){
     ${exDivHtml}
     
     <div id="aiPanel" style="display:none" class="ai-panel">
-      <div class="ai-header"><div class="panel-title" style="margin:0">AI 中長期分析</div><span class="ai-badge">llama-3.3-70b · NVIDIA NIM</span></div>
+      <div class="ai-header"><div class="panel-title" style="margin:0">AI 20日分析</div><span class="ai-badge">llama-3.3-70b · NVIDIA NIM</span></div>
       <div id="aiContent" class="ai-content"></div>
     </div>
 
@@ -6194,6 +6193,51 @@ buildAIDataTextV2=function(id,sc,mode){
   const prediction=getForwardPrediction(sc,20);
   if(!prediction.available) return `${base}\n未來報酬模型：資料不足，不得自行猜測未來漲幅。\n`;
   return `${base}\n未來20日統計預測：${prediction.signal}；歷史同排名預期報酬 ${prediction.expected_return}%；歷史同排名上漲率 ${prediction.up_probability}%；相對大盤 ${prediction.expected_alpha}%；價格區間 ${prediction.range_low_price}～${prediction.range_high_price} 元；下行情境 ${prediction.downside_price} 元；樣本品質 ${prediction.confidence}/100（不是上漲機率）。\n請以固定因子歷史驗證結果作為模型是否可用的主要依據；盤中行情只用來判斷進場時機，不得因單日上漲就提高未來預測。\n`;
+};
+
+// v76: keep the stock detail page focused on the single 20-day workflow.
+function removeLegacyStockDetailNotices(){
+  const detail=document.getElementById('stockDetail');
+  if(!detail) return;
+  detail.querySelectorAll('.ai-guard-notice,.realtime-execution-notice,.forward-prediction-notice,.daytrade-notice').forEach(el=>el.remove());
+}
+
+addAIGuardNotice=function(){ removeLegacyStockDetailNotices(); };
+addRealtimeExecutionNotice=function(){ removeLegacyStockDetailNotices(); };
+addForwardPredictionNotice=function(){ removeLegacyStockDetailNotices(); };
+addDayTradeNotice=function(){ removeLegacyStockDetailNotices(); };
+
+var __showDetailBeforeV76=showDetail;
+showDetail=function(id){
+  __showDetailBeforeV76(id);
+  const detail=document.getElementById('stockDetail');
+  const actionBox=detail?.querySelector('.stock-header > div:last-child');
+  if(actionBox){
+    actionBox.querySelectorAll('button').forEach(btn=>btn.remove());
+    const ai20Button=document.createElement('button');
+    ai20Button.className='btn btn-primary';
+    ai20Button.textContent='AI 20日';
+    ai20Button.onclick=()=>runAI(id);
+    actionBox.appendChild(ai20Button);
+  }
+  const title=detail?.querySelector('#aiPanel .panel-title');
+  if(title) title.textContent='AI 20日分析';
+  removeLegacyStockDetailNotices();
+};
+
+var __runAIBeforeV76=runAI;
+runAI=async function(id){
+  const request=__runAIBeforeV76(id);
+  const setTitle=()=>{
+    const title=document.querySelector('#stockDetail #aiPanel .panel-title');
+    if(title) title.textContent='AI 20日分析';
+  };
+  setTitle();
+  try{
+    return await request;
+  }finally{
+    setTitle();
+  }
 };
 </script>
 </body>
