@@ -92,7 +92,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#00d4aa" stroke-width="1.5" fill="rgba(0,212,170,.08)"/>
       <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    台股選股儀表板 <span class="version-badge">v74</span>
+    台股選股儀表板 <span class="version-badge">v75</span>
   </div>
   <div class="header-right">
     <select class="api-select" id="aiProvider">
@@ -5697,21 +5697,19 @@ function apply20dValueEntryDecision(sc, decision, forecast){
     expectedReturn >= 5 && expectedAlpha >= 2 && upProbability >= 55);
   const change=Number(live.changePct);
   const relative=Number(live.relativePct);
-  const fromOpen=Number(live.fromOpenPct);
   const dayPosition=Number(live.dayPosition);
-  const distanceToMa20=ma20 > 0 && livePrice > 0 ? (livePrice / ma20 - 1) * 100 : null;
-  const openingFade=Number.isFinite(fromOpen) && fromOpen <= -1.5 &&
-    Number.isFinite(dayPosition) && dayPosition <= 0.25;
   const modelTradingDayGap=tradingDayGap(
     forecast.asOfDate,
     live.market?.quote_date || live.quote?.quote_date
   );
   decision.modelTradingDayGap=modelTradingDayGap;
+  // A 20-day layout decision uses structural support, not minute-by-minute
+  // relative strength. A normal red day can be a better entry; only a real
+  // support break or an exceptional selloff blocks the layout.
   const breakdown=(ma20 > 0 && livePrice < ma20 * 0.97) ||
-    (Number.isFinite(change) && change <= -3) || openingFade;
-  const chased=entryHigh > 0 && livePrice > entryHigh ||
-    (Number.isFinite(change) && change >= 3) ||
-    (Number.isFinite(distanceToMa20) && distanceToMa20 >= 7);
+    (support > 0 && livePrice < support * 0.94) ||
+    (Number.isFinite(change) && change <= -6);
+  const chased=entryHigh > 0 && livePrice > entryHigh;
 
   if(forecast.safety_block){
     decision.action='觀望';
@@ -5742,7 +5740,7 @@ function apply20dValueEntryDecision(sc, decision, forecast){
     decision.action='觀望';
     decision.position='0%';
     decision.buyType='等待止跌';
-    decision.liveReason=`價格跌破支撐或盤中走弱；先等重新站穩 ${decision.entryZoneText}`;
+    decision.liveReason=`價格已實質跌破中期支撐；先等重新站穩 ${decision.entryZoneText}`;
   }else if(chased){
     decision.action='觀望';
     decision.position='0%';
@@ -5761,13 +5759,16 @@ function apply20dValueEntryDecision(sc, decision, forecast){
     decision.liveReason=intradaySoftness
       ? `仍在逢低布局區 ${decision.entryZoneText}；盤中短線偏弱，分批掛單，不因幾分鐘波動降級模型建議`
       : `進入逢低布局區 ${decision.entryZoneText}；不要求先漲贏大盤才確認`;
+  }else if(livePrice < entryLow){
+    decision.action='買進';
+    decision.position='20-30%';
+    decision.buyType='低於布局區｜分批布局';
+    decision.liveReason=`價格低於原布局區 ${decision.entryZoneText}，但中期支撐尚未失守；以20日角度分批布局，不用單日弱勢否定模型`;
   }else{
     decision.action='觀望';
     decision.position='0%';
-    decision.buyType=livePrice < entryLow ? '等待止跌' : '等待回檔';
-    decision.liveReason=livePrice < entryLow
-      ? `價格低於布局區 ${decision.entryZoneText}，先確認沒有跌破趨勢`
-      : `等待價格回到逢低布局區 ${decision.entryZoneText}`;
+    decision.buyType='等待回檔';
+    decision.liveReason=`等待價格回到逢低布局區 ${decision.entryZoneText}`;
   }
 
   decision.summary=`${decision.action}，${decision.position}；${decision.buyType}：${decision.liveReason}`;
@@ -6076,7 +6077,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
         const smallCount=candidates.filter(sc=>normalizeBuyActionText(sc.execution.action)==='小量試單').length;
         const waitCount=candidates.length-buyCount-smallCount;
         const summaryColor=buyCount ? 'var(--green)' : smallCount ? 'var(--accent)' : 'var(--warn)';
-        return `<div style="font-size:12px;color:${summaryColor};font-weight:700;margin-bottom:8px">今日布局：買進 ${buyCount} 支｜受控模型小量試單 ${smallCount} 支｜等待回檔或止跌 ${waitCount} 支。20日排名與買進等級不因幾分鐘盤中強弱反覆切換；短線偏弱只改為分批執行。</div>`;
+        return `<div style="font-size:12px;color:${summaryColor};font-weight:700;margin-bottom:8px">20日布局：買進 ${buyCount} 支｜受控模型小量試單 ${smallCount} 支｜等待回檔或中期止跌 ${waitCount} 支。單日紅黑、短暫落後大盤不否定20日模型；只有實質跌破中期支撐才停止布局。</div>`;
       })()
     : '';
   const controlledModelNotice=mode === 'long' && operational.tier === 'controlled'
@@ -6125,7 +6126,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
       <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '從固定因子模型選出的5支候選中尋找逢低買點；盤中行情只控制進場，不改寫歷史模型排名。' : (mode === 'long' ? '使用約四年歷史行情逐月模擬：每期只用當時已知資料，從約200支股票選固定因子前5名並持有20個交易日，再與同期0050比較。今天的候選立即沿用同一套規則，不需要等待新的上線樣本。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:12px">${forecastValidationText(horizon)}。${renderRealtimeStatus(liveQuoteState.market)}</div>
       <table>
-        <thead><tr><th>${buyableOnly ? '可買進排名' : '模型排名'}</th><th>股票</th><th>等級</th>${mode === 'long' && !buyableOnly ? '<th>名單狀態</th>' : ''}<th>歷史同排名預期${horizon}日</th><th>盤中剩餘預期</th><th>盤中漲跌</th><th>歷史同排名上漲率</th><th>相對大盤</th><th>模型價格區間</th>${mode === 'long' ? '<th>逢低布局區</th><th>目標區</th><th>停損</th>' : ''}<th>樣本品質</th><th>現在進場</th></tr></thead>
+        <thead><tr><th>${buyableOnly ? '可買進排名' : '模型排名'}</th><th>股票</th><th>等級</th>${mode === 'long' && !buyableOnly ? '<th>名單狀態</th>' : ''}<th>歷史同排名預期${horizon}日</th><th>盤中剩餘預期</th><th>盤中漲跌</th><th>歷史同排名上漲率</th><th>相對大盤</th><th>模型價格區間</th>${mode === 'long' ? '<th>逢低布局區</th><th>目標區</th><th>停損</th>' : ''}<th>樣本品質</th><th>20日布局建議</th></tr></thead>
         <tbody>${candidates.map((sc,index)=>{
           const f=sc.forecast, d=sc.execution;
           const returnColor=f.expected_return>=0?'var(--green)':'var(--red)';
