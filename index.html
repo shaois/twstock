@@ -92,7 +92,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#00d4aa" stroke-width="1.5" fill="rgba(0,212,170,.08)"/>
       <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    台股選股儀表板 <span class="version-badge">v73</span>
+    台股選股儀表板 <span class="version-badge">v74</span>
   </div>
   <div class="header-right">
     <select class="api-select" id="aiProvider">
@@ -5749,12 +5749,18 @@ function apply20dValueEntryDecision(sc, decision, forecast){
     decision.buyType='等待回檔';
     decision.liveReason=`目前 ${formatEntryPrice(livePrice)} 元已高於逢低布局區 ${decision.entryZoneText}，不追高`;
   }else if(livePrice >= entryLow && livePrice <= entryHigh){
-    const weakButAcceptable=(Number.isFinite(relative) && relative < -1.5) ||
+    // The 20-day recommendation must not flip between buy/trial on a few
+    // minutes of relative-strength noise. Material breakdown/chase checks
+    // above may still block entry; mild intraday weakness only changes how
+    // the order is executed.
+    const intradaySoftness=(Number.isFinite(relative) && relative < -1.5) ||
       (Number.isFinite(dayPosition) && dayPosition < 0.30);
-    decision.action=weakButAcceptable ? '小量試單' : '買進';
-    decision.position=weakButAcceptable ? '10-20%' : '20-30%';
-    decision.buyType=weakButAcceptable ? '布局區內先小量' : '逢低布局';
-    decision.liveReason=`進入逢低布局區 ${decision.entryZoneText}；不要求先漲贏大盤才確認`;
+    decision.action='買進';
+    decision.position='20-30%';
+    decision.buyType=intradaySoftness ? '逢低布局｜分批執行' : '逢低布局';
+    decision.liveReason=intradaySoftness
+      ? `仍在逢低布局區 ${decision.entryZoneText}；盤中短線偏弱，分批掛單，不因幾分鐘波動降級模型建議`
+      : `進入逢低布局區 ${decision.entryZoneText}；不要求先漲贏大盤才確認`;
   }else{
     decision.action='觀望';
     decision.position='0%';
@@ -6070,7 +6076,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
         const smallCount=candidates.filter(sc=>normalizeBuyActionText(sc.execution.action)==='小量試單').length;
         const waitCount=candidates.length-buyCount-smallCount;
         const summaryColor=buyCount ? 'var(--green)' : smallCount ? 'var(--accent)' : 'var(--warn)';
-        return `<div style="font-size:12px;color:${summaryColor};font-weight:700;margin-bottom:8px">今日布局：買進 ${buyCount} 支｜小量試單 ${smallCount} 支｜等待回檔或止跌 ${waitCount} 支。20日排名不因盤中漲跌更換。</div>`;
+        return `<div style="font-size:12px;color:${summaryColor};font-weight:700;margin-bottom:8px">今日布局：買進 ${buyCount} 支｜受控模型小量試單 ${smallCount} 支｜等待回檔或止跌 ${waitCount} 支。20日排名與買進等級不因幾分鐘盤中強弱反覆切換；短線偏弱只改為分批執行。</div>`;
       })()
     : '';
   const controlledModelNotice=mode === 'long' && operational.tier === 'controlled'
