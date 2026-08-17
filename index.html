@@ -92,7 +92,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#00d4aa" stroke-width="1.5" fill="rgba(0,212,170,.08)"/>
       <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    台股選股儀表板 <span class="version-badge">v78</span>
+    台股選股儀表板 <span class="version-badge">v79</span>
   </div>
   <div class="header-right">
     <select class="api-select" id="aiProvider">
@@ -5694,8 +5694,11 @@ function apply20dValueEntryDecision(sc, decision, forecast){
     forecast.selection_basis === '歷史驗證固定因子與同排名結果';
   const forecastQualified=factorQualified || (forecast.signal === '買進' &&
     expectedReturn >= 5 && expectedAlpha >= 2 && upProbability >= 55);
+  const hasStabilityMetadata=forecast.stability &&
+    typeof forecast.stability === 'object';
   const stability=forecast.stability || {};
-  const awaitingCrossDayConfirmation=stability.is_core !== true &&
+  const awaitingCrossDayConfirmation=hasStabilityMetadata &&
+    stability.is_core !== true &&
     Number(stability.observations || 1) < 2;
   const change=Number(live.changePct);
   const relative=Number(live.relativePct);

@@ -1108,6 +1108,15 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         {"stock_id": row.get("stock_id"), "weak_days": 0}
         for row in latest_snapshot.get("20d", [])[:5]
     ]
+    # Older cache versions stored stable ids as strings. Normalize both
+    # formats so a version upgrade does not silently discard the old core.
+    previous_stable = [
+        {"stock_id": item, "weak_days": 0}
+        if isinstance(item, str)
+        else item
+        for item in previous_stable
+        if item
+    ]
 
     stable_ids = []
     stable_meta = {}
@@ -1187,13 +1196,14 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         remaining.append((stability_score, stock_id, appearances))
     remaining.sort(reverse=True)
 
+    bootstrap_core = not stable_ids
     for _, stock_id, appearances in remaining:
         if len(stable_ids) >= STABLE_CORE_SIZE:
             break
         # Bootstrap an empty log immediately. Afterwards a new stock must be
         # present on at least one older trading date plus today before it can
         # replace a 20-day core holding.
-        if previous_stable and appearances < 1:
+        if not bootstrap_core and appearances < 1:
             continue
         stable_ids.append(stock_id)
         stable_meta[stock_id] = {
@@ -1204,7 +1214,11 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         }
 
     stable_ids = stable_ids[:STABLE_CORE_SIZE]
-    for stock_id in current_candidate_ids:
+    # A retained core can temporarily fall below today's candidate floor.
+    # It must still receive complete stability metadata or the frontend will
+    # mistake it for a brand-new signal and hide the 20-day recommendation.
+    metadata_ids = list(dict.fromkeys(current_candidate_ids + stable_ids))
+    for stock_id in metadata_ids:
         item = prediction_data[stock_id]
         current = item["prediction_20d"]
         return_values = history_values(stock_id, "expected_return") + [
