@@ -30,6 +30,11 @@ FEATURE_NAMES = (
 FEATURE_WEIGHTS = (1.1, 1.2, 0.7, 1.4, 1.0, 0.8, 0.9, 0.8, 0.8, 0.6, 0.8)
 FACTOR_WEIGHTS = (0.1, 0.5, 0.5, 1.0, 0.7, -0.1, 0.4, 0.4, -0.5, 0.2, 0.3)
 FACTOR_SELECTION_SIZE = 5
+STABLE_CORE_SIZE = 5
+STABLE_ENTRY_RANK = 12
+STABLE_RETAIN_RANK = 25
+STABLE_EXIT_GRACE_DAYS = 2
+PREDICTION_LOG_CANDIDATE_SIZE = 25
 MIN_VALIDATION_PERIODS = 12
 MIN_LIVE_TRACKING_SAMPLES = 30
 MIN_VALIDATION_HIT_RATE = 50
@@ -1067,25 +1072,28 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
                 forecast["signal"] = "買進"
                 forecast["safety_block"] = ""
 
-    current_rows = sorted(
+    quality_rows = sorted(
         (
             (stock_id, item)
             for stock_id, item in prediction_data.items()
             if item.get("available")
             and item.get("as_of_date") == predictions.get("model", {}).get("latest_date")
-            and item.get("model_selected_20d") is True
             and _number((scores or {}).get(stock_id, {}).get("fScore")) >= 15
             and _number((scores or {}).get(stock_id, {}).get("total")) >= 55
         ),
         key=lambda pair: pair[1].get("factor_score_20d", -999),
         reverse=True,
     )
+    current_rows = [
+        (stock_id, item)
+        for stock_id, item in quality_rows
+        if item.get("model_selected_20d") is True
+        or _passes_candidate_floor(item.get("prediction_20d", {}))
+    ][:PREDICTION_LOG_CANDIDATE_SIZE]
     current_position = {
-        stock_id: index + 1 for index, (stock_id, _) in enumerate(current_rows)
+        stock_id: index + 1 for index, (stock_id, _) in enumerate(quality_rows)
     }
-    # The stable list reduces one-day churn, but it must not preserve a stock
-    # that has already fallen well outside today's actionable forecast set.
-    current_top12 = [stock_id for stock_id, _ in current_rows[:12]]
+    current_candidate_ids = [stock_id for stock_id, _ in current_rows]
 
     model_date = predictions.get("model", {}).get("latest_date") or ""
     # A trading day can run several cache batches. Only older dates count as
@@ -1093,7 +1101,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
     recent_dates = [
         date for date in sorted(history)
         if not model_date or date < model_date
-    ][-2:]
+    ][-4:]
     recent_snapshots = [history[date] for date in recent_dates]
     latest_snapshot = recent_snapshots[-1] if recent_snapshots else {}
     previous_stable = latest_snapshot.get("stable_20d") or [
@@ -1115,12 +1123,28 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             or _number(score.get("total")) < 55
         ):
             continue
-        if not item.get("model_selected_20d") or stock_id not in current_top12:
+        forecast = item.get("prediction_20d", {})
+        position = current_position.get(stock_id, 999)
+        hard_invalid = (
+            bool(forecast.get("safety_block"))
+            or _number(forecast.get("expected_return")) <= 0
+            or _number(forecast.get("expected_alpha")) <= 0
+            or _number(forecast.get("up_probability")) < 50
+            or _number(forecast.get("downside_return")) < -15
+            or position > STABLE_RETAIN_RANK
+        )
+        if hard_invalid:
+            continue
+        currently_strong = stock_id in current_candidate_ids
+        weak_days = 0 if currently_strong else int(previous.get("weak_days") or 0) + 1
+        if weak_days > STABLE_EXIT_GRACE_DAYS:
             continue
         stable_ids.append(stock_id)
         stable_meta[stock_id] = {
             "status": "續留",
-            "weak_days": 0,
+            "weak_days": weak_days,
+            "entered_date": previous.get("entered_date") or model_date,
+            "age_days": int(previous.get("age_days") or 0) + 1,
         }
 
     def history_values(stock_id, field):
@@ -1147,7 +1171,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         return values
 
     remaining = []
-    for stock_id in current_top12:
+    for stock_id in current_candidate_ids[:STABLE_ENTRY_RANK]:
         if stock_id in stable_ids:
             continue
         appearances = sum(
@@ -1159,21 +1183,28 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             )
         )
         position = current_position.get(stock_id, 99)
-        stability_score = 100 - position * 3 + appearances * 12
+        stability_score = 100 - position * 3 + appearances * 20
         remaining.append((stability_score, stock_id, appearances))
     remaining.sort(reverse=True)
 
     for _, stock_id, appearances in remaining:
-        if len(stable_ids) >= 5:
+        if len(stable_ids) >= STABLE_CORE_SIZE:
             break
+        # Bootstrap an empty log immediately. Afterwards a new stock must be
+        # present on at least one older trading date plus today before it can
+        # replace a 20-day core holding.
+        if previous_stable and appearances < 1:
+            continue
         stable_ids.append(stock_id)
         stable_meta[stock_id] = {
             "status": "再入選" if appearances else "新進",
             "weak_days": 0,
+            "entered_date": model_date,
+            "age_days": 1,
         }
 
-    stable_ids = stable_ids[:5]
-    for stock_id in stable_ids:
+    stable_ids = stable_ids[:STABLE_CORE_SIZE]
+    for stock_id in current_candidate_ids:
         item = prediction_data[stock_id]
         current = item["prediction_20d"]
         return_values = history_values(stock_id, "expected_return") + [
@@ -1182,10 +1213,21 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         probability_values = history_values(stock_id, "up_probability") + [
             _number(current.get("up_probability"))
         ]
-        meta = stable_meta[stock_id]
+        prior_appearances = sum(
+            1
+            for snapshot in recent_snapshots
+            if any(row.get("stock_id") == stock_id for row in snapshot.get("20d", []))
+        )
+        meta = stable_meta.get(stock_id, {
+            "status": "待確認",
+            "weak_days": 0,
+            "entered_date": None,
+            "age_days": 0,
+        })
         meta.update({
             "current_position": current_position.get(stock_id),
-            "observations": len(return_values),
+            "observations": prior_appearances + 1,
+            "is_core": stock_id in stable_ids,
             "smoothed_expected_return": round(
                 sum(return_values) / len(return_values), 2
             ),
@@ -1194,6 +1236,8 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             ),
         })
         item["stable_20d"] = meta
+        if stock_id not in stable_meta:
+            stable_meta[stock_id] = meta
 
     model["stable_20d"] = stable_ids
     model["stable_20d_meta"] = stable_meta
@@ -1219,7 +1263,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         }
     }
     model["stability_rule"] = (
-        "最近3次預測僅供顯示；核心候選必須維持買進訊號且仍在今日原始前12名"
+        "20日核心保留5支；一般排名轉弱容許2個交易日，跌出品質前25名或報酬風險失效立即淘汰；新訊號需跨2個交易日確認"
     )
     return predictions
 
@@ -1245,14 +1289,16 @@ def update_prediction_log(existing_log, predictions, price_db):
                     for stock_id, item in prediction_data.items()
                     if item.get("available")
                     and item.get("as_of_date") == model_date
-                    and item.get(f"prediction_{horizon}d", {}).get(
-                        "raw_signal",
-                        item.get(f"prediction_{horizon}d", {}).get("signal"),
-                    ) == "買進"
+                    and (
+                        item.get("model_selected_20d") is True
+                        or _passes_candidate_floor(
+                            item.get(f"prediction_{horizon}d", {})
+                        )
+                    )
                 ),
-                key=lambda pair: pair[1].get(f"rank_{horizon}d", -999),
+                key=lambda pair: pair[1].get("factor_score_20d", -999),
                 reverse=True,
-            )[:10]
+            )[:PREDICTION_LOG_CANDIDATE_SIZE]
             snapshot[f"{horizon}d"] = [
                 {
                     "stock_id": stock_id,
@@ -1270,6 +1316,14 @@ def update_prediction_log(existing_log, predictions, price_db):
                 .get("stable_20d_meta", {})
                 .get(stock_id, {})
                 .get("weak_days", 0),
+                "entered_date": predictions.get("model", {})
+                .get("stable_20d_meta", {})
+                .get(stock_id, {})
+                .get("entered_date"),
+                "age_days": predictions.get("model", {})
+                .get("stable_20d_meta", {})
+                .get(stock_id, {})
+                .get("age_days", 0),
             }
             for stock_id in predictions.get("model", {}).get("stable_20d", [])
         ]

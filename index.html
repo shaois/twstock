@@ -92,7 +92,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#00d4aa" stroke-width="1.5" fill="rgba(0,212,170,.08)"/>
       <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    台股選股儀表板 <span class="version-badge">v77</span>
+    台股選股儀表板 <span class="version-badge">v78</span>
   </div>
   <div class="header-right">
     <select class="api-select" id="aiProvider">
@@ -5694,6 +5694,9 @@ function apply20dValueEntryDecision(sc, decision, forecast){
     forecast.selection_basis === '歷史驗證固定因子與同排名結果';
   const forecastQualified=factorQualified || (forecast.signal === '買進' &&
     expectedReturn >= 5 && expectedAlpha >= 2 && upProbability >= 55);
+  const stability=forecast.stability || {};
+  const awaitingCrossDayConfirmation=stability.is_core !== true &&
+    Number(stability.observations || 1) < 2;
   const change=Number(live.changePct);
   const relative=Number(live.relativePct);
   const dayPosition=Number(live.dayPosition);
@@ -5720,6 +5723,11 @@ function apply20dValueEntryDecision(sc, decision, forecast){
     decision.position='0%';
     decision.buyType='20日模型條件不足';
     decision.liveReason=`預期報酬 ${expectedReturn.toFixed(2)}%、上漲機率 ${upProbability.toFixed(1)}%、相對大盤 ${expectedAlpha.toFixed(2)}%`;
+  }else if(awaitingCrossDayConfirmation){
+    decision.action='觀望';
+    decision.position='0%';
+    decision.buyType='新訊號待確認';
+    decision.liveReason='這是今天才出現的新候選，需跨兩個不同交易日維持條件後才納入20日布局，避免名單每日翻轉';
   }else if(modelTradingDayGap > 1){
     decision.action='觀望';
     decision.position='0%';
@@ -5902,8 +5910,8 @@ function get20dModelRankingPool(){
   return Object.values(allScores).map(sc=>{
     const forecast=getForwardPrediction(sc,20);
     if(!forecast.available) return null;
-    if(!forecast.modelSelected && !passes20dCandidateFloor(forecast)) return null;
     const stability=forecast.stability || {};
+    if(!forecast.modelSelected && stability.is_core !== true && !passes20dCandidateFloor(forecast)) return null;
     const qualityBonus=Number(sc.fScore || 0)*0.03 + Number(sc.vScore || 0)*0.02;
     return {
       ...sc,
