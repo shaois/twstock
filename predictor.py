@@ -847,6 +847,10 @@ def build_predictions(price_db, scores=None, benchmark_rows=None):
             continue
         forecast = item["prediction_20d"]
         item["model_selected_20d"] = stock_id in selected_ids
+        # Portfolio membership and today's order timing are different outputs.
+        # A temporary entry-price block must not become a model rejection.
+        item["portfolio_recommended_20d"] = stock_id in selected_ids
+        item["portfolio_rank_20d"] = selected_rank.get(stock_id)
         if stock_id in selected_ids:
             rank_position = selected_rank[stock_id]
             _apply_factor_rank_profile(
@@ -858,9 +862,13 @@ def build_predictions(price_db, scores=None, benchmark_rows=None):
             forecast["raw_signal"] = "買進"
             forecast["signal"] = "買進" if validation_ready[20] else "觀察"
             forecast["selection_basis"] = "歷史驗證固定因子與同排名結果"
+            forecast["portfolio_signal"] = "核心推薦"
         elif forecast.get("raw_signal") == "買進":
             forecast["raw_signal"] = "觀察"
             forecast["signal"] = "觀察"
+            forecast["portfolio_signal"] = "研究觀察"
+        else:
+            forecast["portfolio_signal"] = "研究觀察"
 
     return {
         "_saved_at": datetime.now().isoformat(),
@@ -901,6 +909,10 @@ def build_predictions(price_db, scores=None, benchmark_rows=None):
             "validation_portfolio_size": VALIDATION_PORTFOLIO_SIZE,
             "selection_size": FACTOR_SELECTION_SIZE,
             "selection_rule": "top_fixed_cross_section_factor_rank",
+            "decision_layers": {
+                "portfolio": "固定截面因子前5名，回答未來20日持有什麼",
+                "execution": "即時價格與支撐區，回答今天是否下單",
+            },
             "eligible_20d_count": len(selected_ids),
             "candidate_floor": dict(MODEL_CANDIDATE_FLOOR),
             "selected_20d": selected_ids,

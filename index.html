@@ -5627,6 +5627,8 @@ function getForwardPrediction(sc, horizon){
     currentPrice:Number(prediction.current_price),
     rank:Number(prediction[`rank_${horizon}d`] || 0),
     modelSelected:horizon === 20 ? prediction.model_selected_20d === true : false,
+    portfolioRecommended:horizon === 20 ? prediction.portfolio_recommended_20d === true : false,
+    portfolioRank:horizon === 20 ? Number(prediction.portfolio_rank_20d || 0) : 0,
     stability:horizon === 20
       ? (prediction.stable_20d || ghCache?.predictionModel?.stable_20d_meta?.[sc?.id] || null)
       : null,
@@ -6092,11 +6094,12 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
       : `<div style="font-size:12px;color:var(--warn);font-weight:700;margin-bottom:8px">目前確認買進 0 支；以下 ${trialCount} 支僅為「小量試單」候選，不是正式買進推薦。</div>`;
   const integrated20dSummary=mode === 'long' && !buyableOnly
     ? (()=>{
+        const recommendedCount=candidates.filter(sc=>sc.forecast.portfolioRecommended || sc.forecast.stability?.is_core === true).length;
         const buyCount=candidates.filter(sc=>isConfirmedBuyAction(sc.execution.action)).length;
         const smallCount=candidates.filter(sc=>normalizeBuyActionText(sc.execution.action)==='小量試單').length;
         const waitCount=candidates.length-buyCount-smallCount;
         const summaryColor=buyCount ? 'var(--green)' : smallCount ? 'var(--accent)' : 'var(--warn)';
-        return `<div style="font-size:12px;color:${summaryColor};font-weight:700;margin-bottom:8px">20日布局：買進 ${buyCount} 支｜受控模型小量試單 ${smallCount} 支｜等待回檔或中期止跌 ${waitCount} 支。單日紅黑、短暫落後大盤不否定20日模型；只有實質跌破中期支撐才停止布局。</div>`;
+        return `<div style="font-size:12px;color:${summaryColor};font-weight:700;margin-bottom:8px">20日模型核心推薦 ${recommendedCount} 支｜今天可買進 ${buyCount} 支｜受控小量試單 ${smallCount} 支｜其餘等待回檔或止跌 ${waitCount} 支。</div><div style="font-size:11px;color:var(--muted);margin-bottom:8px">「核心推薦」回答未來20日持有什麼；「今天可買進」回答目前價格是否適合下單。等待回檔不等於模型取消推薦。</div>`;
       })()
     : '';
   const controlledModelNotice=mode === 'long' && operational.tier === 'controlled'
@@ -6145,7 +6148,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
       <div style="font-size:11px;color:var(--muted);margin-bottom:5px;line-height:1.6">${buyableOnly ? '從固定因子模型選出的5支候選中尋找逢低買點；盤中行情只控制進場，不改寫歷史模型排名。' : (mode === 'long' ? '使用約四年歷史行情逐月模擬：每期只用當時已知資料，從約200支股票選固定因子前5名並持有20個交易日，再與同期0050比較。今天的候選立即沿用同一套規則，不需要等待新的上線樣本。' : '依歷史相似情境的未來報酬排名；盤中資料只調整進場時機，不改寫預測排名。')}模型日期：${ghCache.predictionModel.latest_date || '未知'}${forecastSnapshotText()}。</div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:12px">${forecastValidationText(horizon)}。${renderRealtimeStatus(liveQuoteState.market)}</div>
       <table>
-        <thead><tr><th>${buyableOnly ? '可買進排名' : '模型排名'}</th><th>股票</th><th>等級</th>${mode === 'long' && !buyableOnly ? '<th>名單狀態</th>' : ''}<th>歷史同排名預期${horizon}日</th><th>盤中剩餘預期</th><th>盤中漲跌</th><th>歷史同排名上漲率</th><th>相對大盤</th><th>模型價格區間</th>${mode === 'long' ? '<th>逢低布局區</th><th>目標區</th><th>停損</th>' : ''}<th>樣本品質</th><th>20日布局建議</th></tr></thead>
+        <thead><tr><th>${buyableOnly ? '今日進場排名' : '核心推薦排名'}</th><th>股票</th><th>等級</th>${mode === 'long' && !buyableOnly ? '<th>推薦／執行狀態</th>' : ''}<th>歷史同排名預期${horizon}日</th><th>盤中剩餘預期</th><th>盤中漲跌</th><th>歷史同排名上漲率</th><th>相對大盤</th><th>模型價格區間</th>${mode === 'long' ? '<th>逢低布局區</th><th>目標區</th><th>停損</th>' : ''}<th>樣本品質</th><th>20日布局建議</th></tr></thead>
         <tbody>${candidates.map((sc,index)=>{
           const f=sc.forecast, d=sc.execution;
           const returnColor=f.expected_return>=0?'var(--green)':'var(--red)';
@@ -6153,7 +6156,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
             <td class="td-mono" style="color:var(--muted)">#${index+1}</td>
             <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> ${sc.name}</td>
             <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
-            ${mode === 'long' && !buyableOnly ? `<td style="color:${String(f.stableStatus).includes('待確認')?'var(--warn)':'var(--accent)'}">${f.stableStatus || '模型候選'}｜${f.stablePosition ? `目前#${f.stablePosition}` : '目前榜外'}｜${f.stableAgeDays ? `持有第${f.stableAgeDays}日` : `${f.stableObservations || 1}次確認`}${f.stableHoldingDaysRemaining ? `｜剩${f.stableHoldingDaysRemaining}日審查` : ''}</td>` : ''}
+            ${mode === 'long' && !buyableOnly ? `<td style="color:${String(f.stableStatus).includes('待確認')?'var(--warn)':'var(--accent)'}"><b>${f.portfolioRecommended || f.stability?.is_core === true ? '核心推薦' : '研究觀察'}</b>｜今日執行：${d.action}・${d.buyType}<br><span style="font-size:10px;color:var(--muted)">${f.stableStatus || '模型候選'}｜${f.stablePosition ? `目前#${f.stablePosition}` : '目前榜外'}｜${f.stableAgeDays ? `持有第${f.stableAgeDays}日` : `${f.stableObservations || 1}次確認`}${f.stableHoldingDaysRemaining ? `｜剩${f.stableHoldingDaysRemaining}日審查` : ''}</span></td>` : ''}
             <td class="td-mono" style="color:${returnColor};font-weight:700">${f.expected_return>=0?'+':''}${f.expected_return}%</td>
             <td class="td-mono" style="color:${d.remainingExpectedReturn>=0?'var(--green)':'var(--red)'}">${Number.isFinite(d.remainingExpectedReturn)?`${d.remainingExpectedReturn>=0?'+':''}${d.remainingExpectedReturn.toFixed(2)}%`:'N/A'}</td>
             <td class="td-mono" style="color:${Number(d.realtime?.changePct)>=0?'var(--green)':'var(--red)'}">${Number.isFinite(d.realtime?.changePct)?`${d.realtime.changePct>=0?'+':''}${d.realtime.changePct.toFixed(2)}%`:'N/A'}</td>
@@ -6175,7 +6178,7 @@ findBuyableTop5 = function(){ return renderForecastTop5('long'); };
 findMomentumTop5 = function(){ return renderForecastTop5('long'); };
 
 const forecastTopButton=document.querySelector('button[onclick="findTop5Buys()"]');
-if(forecastTopButton) forecastTopButton.textContent='20日勝過0050候選';
+if(forecastTopButton) forecastTopButton.textContent='20日核心推薦';
 document.querySelectorAll('button[data-buyable-top5="1"]').forEach(btn=>btn.remove());
 const forecastShortButton=document.querySelector('button[onclick="findMomentumTop5()"]');
 if(forecastShortButton) forecastShortButton.remove();
