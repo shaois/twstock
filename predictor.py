@@ -30,12 +30,9 @@ FEATURE_NAMES = (
 FEATURE_WEIGHTS = (1.1, 1.2, 0.7, 1.4, 1.0, 0.8, 0.9, 0.8, 0.8, 0.6, 0.8)
 FACTOR_WEIGHTS = (0.1, 0.5, 0.5, 1.0, 0.7, -0.1, 0.4, 0.4, -0.5, 0.2, 0.3)
 FACTOR_SELECTION_SIZE = 5
-STABLE_CORE_SIZE = 5
-STABLE_ENTRY_RANK = 12
 STABLE_HOLD_DAYS = 20
 STABLE_REVIEW_RANK = 40
 STABLE_EXIT_GRACE_DAYS = 3
-PREDICTION_LOG_CANDIDATE_SIZE = 25
 MIN_VALIDATION_PERIODS = 12
 MIN_LIVE_TRACKING_SAMPLES = 30
 MIN_VALIDATION_HIT_RATE = 50
@@ -847,10 +844,6 @@ def build_predictions(price_db, scores=None, benchmark_rows=None):
             continue
         forecast = item["prediction_20d"]
         item["model_selected_20d"] = stock_id in selected_ids
-        # Portfolio membership and today's order timing are different outputs.
-        # A temporary entry-price block must not become a model rejection.
-        item["portfolio_recommended_20d"] = stock_id in selected_ids
-        item["portfolio_rank_20d"] = selected_rank.get(stock_id)
         if stock_id in selected_ids:
             rank_position = selected_rank[stock_id]
             _apply_factor_rank_profile(
@@ -862,13 +855,9 @@ def build_predictions(price_db, scores=None, benchmark_rows=None):
             forecast["raw_signal"] = "買進"
             forecast["signal"] = "買進" if validation_ready[20] else "觀察"
             forecast["selection_basis"] = "歷史驗證固定因子與同排名結果"
-            forecast["portfolio_signal"] = "核心推薦"
         elif forecast.get("raw_signal") == "買進":
             forecast["raw_signal"] = "觀察"
             forecast["signal"] = "觀察"
-            forecast["portfolio_signal"] = "研究觀察"
-        else:
-            forecast["portfolio_signal"] = "研究觀察"
 
     return {
         "_saved_at": datetime.now().isoformat(),
@@ -909,10 +898,6 @@ def build_predictions(price_db, scores=None, benchmark_rows=None):
             "validation_portfolio_size": VALIDATION_PORTFOLIO_SIZE,
             "selection_size": FACTOR_SELECTION_SIZE,
             "selection_rule": "top_fixed_cross_section_factor_rank",
-            "decision_layers": {
-                "portfolio": "固定截面因子前5名，回答未來20日持有什麼",
-                "execution": "即時價格與支撐區，回答今天是否下單",
-            },
             "eligible_20d_count": len(selected_ids),
             "candidate_floor": dict(MODEL_CANDIDATE_FLOOR),
             "selected_20d": selected_ids,
@@ -926,7 +911,7 @@ def build_predictions(price_db, scores=None, benchmark_rows=None):
 
 
 def apply_prediction_stability(predictions, existing_log, scores=None):
-    """Build a lower-turnover 20-day core list from current and recent forecasts."""
+    """Manage every confirmed candidate through an independent 20-day cycle."""
     prediction_data = predictions.get("data", {})
     current_calibration = _number(
         predictions.get("model", {}).get("calibration_factor"), 1.0
@@ -1102,7 +1087,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         for stock_id, item in quality_rows
         if item.get("model_selected_20d") is True
         or _passes_candidate_floor(item.get("prediction_20d", {}))
-    ][:PREDICTION_LOG_CANDIDATE_SIZE]
+    ]
     current_position = {
         stock_id: index + 1 for index, (stock_id, _) in enumerate(quality_rows)
     }
@@ -1119,7 +1104,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
     latest_snapshot = recent_snapshots[-1] if recent_snapshots else {}
     previous_stable = latest_snapshot.get("stable_20d") or [
         {"stock_id": row.get("stock_id"), "weak_days": 0}
-        for row in latest_snapshot.get("20d", [])[:5]
+        for row in latest_snapshot.get("20d", [])
     ]
     # Older cache versions stored stable ids as strings. Normalize both
     # formats so a version upgrade does not silently discard the old core.
@@ -1203,7 +1188,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         return values
 
     remaining = []
-    for stock_id in current_candidate_ids[:STABLE_ENTRY_RANK]:
+    for stock_id in current_candidate_ids:
         if stock_id in stable_ids:
             continue
         appearances = sum(
@@ -1219,7 +1204,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         remaining.append((stability_score, stock_id, appearances))
     remaining.sort(reverse=True)
 
-    usable_previous_core = any(
+    usable_previous_managed_list = any(
         previous.get("stock_id") in prediction_data
         and prediction_data[previous.get("stock_id")].get("available")
         and prediction_data[previous.get("stock_id")].get("as_of_date") == model_date
@@ -1228,14 +1213,13 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
     # A stale core left by an older cache format must not block the model
     # forever. Rebuild it as a pending core, while still requiring the next
     # model day before the frontend may show a buy recommendation.
-    bootstrap_core = not usable_previous_core
+    bootstrap_managed_list = not usable_previous_managed_list
     for _, stock_id, appearances in remaining:
-        if len(stable_ids) >= STABLE_CORE_SIZE:
-            break
-        # Bootstrap an empty log immediately. Afterwards a new stock must be
-        # present on at least one older trading date plus today before it can
-        # replace a 20-day core holding.
-        if not bootstrap_core and appearances < 1:
+        # Bootstrap an empty log immediately. Afterwards every new candidate
+        # must be present on at least one older model date plus today. There is
+        # deliberately no fixed list size: passing the model and confirmation
+        # rules, rather than a capacity limit, decides membership.
+        if not bootstrap_managed_list and appearances < 1:
             continue
         stable_ids.append(stock_id)
         stable_meta[stock_id] = {
@@ -1247,8 +1231,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             "observations": appearances + 1,
         }
 
-    stable_ids = stable_ids[:STABLE_CORE_SIZE]
-    # A retained core can temporarily fall below today's candidate floor.
+    # A retained managed stock can temporarily fall below today's candidate floor.
     # It must still receive complete stability metadata or the frontend will
     # mistake it for a brand-new signal and hide the 20-day recommendation.
     metadata_ids = list(dict.fromkeys(current_candidate_ids + stable_ids))
@@ -1277,6 +1260,8 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             "observations": max(
                 int(meta.get("observations") or 0), prior_appearances + 1
             ),
+            "is_managed": stock_id in stable_ids,
+            # Kept for one release so older frontends and caches remain usable.
             "is_core": stock_id in stable_ids,
             "holding_days_remaining": max(
                 0, STABLE_HOLD_DAYS - int(meta.get("age_days") or 0)
@@ -1316,7 +1301,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         }
     }
     model["stability_rule"] = (
-        "核心股票按20個交易日生命週期管理；單日排名與盤中漲跌不換股，持有期後才按排名與連續3日轉弱審查；重大風險可提前退出；新訊號需跨2個模型日確認"
+        "所有通過門檻且跨2個模型日確認的股票，各自按20個交易日生命週期管理；不設固定名額，單日排名與盤中漲跌不換股；重大風險可提前退出"
     )
     return predictions
 
@@ -1351,7 +1336,7 @@ def update_prediction_log(existing_log, predictions, price_db):
                 ),
                 key=lambda pair: pair[1].get("factor_score_20d", -999),
                 reverse=True,
-            )[:PREDICTION_LOG_CANDIDATE_SIZE]
+            )
             snapshot[f"{horizon}d"] = [
                 {
                     "stock_id": stock_id,
