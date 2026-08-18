@@ -32,8 +32,9 @@ FACTOR_WEIGHTS = (0.1, 0.5, 0.5, 1.0, 0.7, -0.1, 0.4, 0.4, -0.5, 0.2, 0.3)
 FACTOR_SELECTION_SIZE = 5
 STABLE_CORE_SIZE = 5
 STABLE_ENTRY_RANK = 12
-STABLE_RETAIN_RANK = 25
-STABLE_EXIT_GRACE_DAYS = 2
+STABLE_HOLD_DAYS = 20
+STABLE_REVIEW_RANK = 40
+STABLE_EXIT_GRACE_DAYS = 3
 PREDICTION_LOG_CANDIDATE_SIZE = 25
 MIN_VALIDATION_PERIODS = 12
 MIN_LIVE_TRACKING_SAMPLES = 30
@@ -1101,7 +1102,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
     recent_dates = [
         date for date in sorted(history)
         if not model_date or date < model_date
-    ][-4:]
+    ][-25:]
     recent_snapshots = [history[date] for date in recent_dates]
     latest_snapshot = recent_snapshots[-1] if recent_snapshots else {}
     previous_stable = latest_snapshot.get("stable_20d") or [
@@ -1128,32 +1129,42 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             not stock_id
             or not item.get("available")
             or item.get("as_of_date") != model_date
-            or _number(score.get("fScore")) < 15
-            or _number(score.get("total")) < 55
         ):
             continue
         forecast = item.get("prediction_20d", {})
         position = current_position.get(stock_id, 999)
+        previous_age = int(previous.get("age_days") or 0)
+        age_days = previous_age + 1
+        within_holding_window = age_days <= STABLE_HOLD_DAYS
+        # During a 20-trading-day layout, a one-day ranking, probability or
+        # alpha change is not an exit signal. Only unusable data, a model-wide
+        # safety stop or a material downside/quality failure can end it early.
         hard_invalid = (
             bool(forecast.get("safety_block"))
-            or _number(forecast.get("expected_return")) <= 0
-            or _number(forecast.get("expected_alpha")) <= 0
-            or _number(forecast.get("up_probability")) < 50
-            or _number(forecast.get("downside_return")) < -15
-            or position > STABLE_RETAIN_RANK
+            or _number(forecast.get("expected_return")) < -3
+            or _number(forecast.get("downside_return")) < -20
+            or _number(score.get("fScore")) < 5
+            or _number(score.get("total")) < 35
         )
         if hard_invalid:
             continue
         currently_strong = stock_id in current_candidate_ids
         weak_days = 0 if currently_strong else int(previous.get("weak_days") or 0) + 1
-        if weak_days > STABLE_EXIT_GRACE_DAYS:
+        review_failed = (
+            not within_holding_window
+            and position > STABLE_REVIEW_RANK
+            and weak_days > STABLE_EXIT_GRACE_DAYS
+        )
+        if review_failed:
             continue
         stable_ids.append(stock_id)
         stable_meta[stock_id] = {
-            "status": "續留",
+            "status": "持有期" if within_holding_window else "續留審查",
             "weak_days": weak_days,
             "entered_date": previous.get("entered_date") or model_date,
-            "age_days": int(previous.get("age_days") or 0) + 1,
+            "age_days": age_days,
+            "holding_days_remaining": max(0, STABLE_HOLD_DAYS - age_days),
+            "observations": int(previous.get("observations") or 1) + 1,
         }
 
     def history_values(stock_id, field):
@@ -1196,7 +1207,16 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         remaining.append((stability_score, stock_id, appearances))
     remaining.sort(reverse=True)
 
-    bootstrap_core = not stable_ids
+    usable_previous_core = any(
+        previous.get("stock_id") in prediction_data
+        and prediction_data[previous.get("stock_id")].get("available")
+        and prediction_data[previous.get("stock_id")].get("as_of_date") == model_date
+        for previous in previous_stable
+    )
+    # A stale core left by an older cache format must not block the model
+    # forever. Rebuild it as a pending core, while still requiring the next
+    # model day before the frontend may show a buy recommendation.
+    bootstrap_core = not usable_previous_core
     for _, stock_id, appearances in remaining:
         if len(stable_ids) >= STABLE_CORE_SIZE:
             break
@@ -1207,10 +1227,12 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
             continue
         stable_ids.append(stock_id)
         stable_meta[stock_id] = {
-            "status": "再入選" if appearances else "新進",
+            "status": "再入選待確認" if appearances else "初始化待確認",
             "weak_days": 0,
             "entered_date": model_date,
             "age_days": 1,
+            "holding_days_remaining": STABLE_HOLD_DAYS - 1,
+            "observations": appearances + 1,
         }
 
     stable_ids = stable_ids[:STABLE_CORE_SIZE]
@@ -1240,8 +1262,13 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         })
         meta.update({
             "current_position": current_position.get(stock_id),
-            "observations": prior_appearances + 1,
+            "observations": max(
+                int(meta.get("observations") or 0), prior_appearances + 1
+            ),
             "is_core": stock_id in stable_ids,
+            "holding_days_remaining": max(
+                0, STABLE_HOLD_DAYS - int(meta.get("age_days") or 0)
+            ),
             "smoothed_expected_return": round(
                 sum(return_values) / len(return_values), 2
             ),
@@ -1277,7 +1304,7 @@ def apply_prediction_stability(predictions, existing_log, scores=None):
         }
     }
     model["stability_rule"] = (
-        "20日核心保留5支；一般排名轉弱容許2個交易日，跌出品質前25名或報酬風險失效立即淘汰；新訊號需跨2個交易日確認"
+        "核心股票按20個交易日生命週期管理；單日排名與盤中漲跌不換股，持有期後才按排名與連續3日轉弱審查；重大風險可提前退出；新訊號需跨2個模型日確認"
     )
     return predictions
 
@@ -1338,6 +1365,10 @@ def update_prediction_log(existing_log, predictions, price_db):
                 .get("stable_20d_meta", {})
                 .get(stock_id, {})
                 .get("age_days", 0),
+                "observations": predictions.get("model", {})
+                .get("stable_20d_meta", {})
+                .get(stock_id, {})
+                .get("observations", 1),
             }
             for stock_id in predictions.get("model", {}).get("stable_20d", [])
         ]

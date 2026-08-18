@@ -92,7 +92,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#00d4aa" stroke-width="1.5" fill="rgba(0,212,170,.08)"/>
       <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    台股選股儀表板 <span class="version-badge">v79</span>
+    台股選股儀表板 <span class="version-badge">v80</span>
   </div>
   <div class="header-right">
     <select class="api-select" id="aiProvider">
@@ -5697,8 +5697,8 @@ function apply20dValueEntryDecision(sc, decision, forecast){
   const hasStabilityMetadata=forecast.stability &&
     typeof forecast.stability === 'object';
   const stability=forecast.stability || {};
+  const isStableCore=hasStabilityMetadata && stability.is_core === true;
   const awaitingCrossDayConfirmation=hasStabilityMetadata &&
-    stability.is_core !== true &&
     Number(stability.observations || 1) < 2;
   const change=Number(live.changePct);
   const relative=Number(live.relativePct);
@@ -5726,6 +5726,11 @@ function apply20dValueEntryDecision(sc, decision, forecast){
     decision.position='0%';
     decision.buyType='20日模型條件不足';
     decision.liveReason=`預期報酬 ${expectedReturn.toFixed(2)}%、上漲機率 ${upProbability.toFixed(1)}%、相對大盤 ${expectedAlpha.toFixed(2)}%`;
+  }else if(hasStabilityMetadata && !isStableCore){
+    decision.action='觀望';
+    decision.position='0%';
+    decision.buyType='尚未進入20日核心';
+    decision.liveReason='仍是研究候選；需進入固定20日核心名單後，才會提供布局建議，避免每日排名變動造成追進殺出';
   }else if(awaitingCrossDayConfirmation){
     decision.action='觀望';
     decision.position='0%';
@@ -5891,7 +5896,9 @@ function getForecastCandidatePool(mode, useStableList=true){
         smoothedUpProbability:Number(stability.smoothed_up_probability ?? sc.forecast.up_probability),
         stableStatus:stability.status || '核心候選',
         stableObservations:Number(stability.observations || 1),
-        stablePosition:Number(stability.current_position || 0)
+        stablePosition:Number(stability.current_position || 0),
+        stableAgeDays:Number(stability.age_days || 0),
+        stableHoldingDaysRemaining:Number(stability.holding_days_remaining || 0)
       },
       stableOrder:index+1
     };
@@ -5924,7 +5931,9 @@ function get20dModelRankingPool(){
         smoothedUpProbability:Number(stability.smoothed_up_probability ?? forecast.up_probability),
         stableStatus:stability.status || '模型候選',
         stableObservations:Number(stability.observations || 1),
-        stablePosition:Number(stability.current_position || forecast.rank || 0)
+        stablePosition:Number(stability.current_position || forecast.rank || 0),
+        stableAgeDays:Number(stability.age_days || 0),
+        stableHoldingDaysRemaining:Number(stability.holding_days_remaining || 0)
       },
       forecastRank:Number(forecast.rank || 0)+qualityBonus
     };
@@ -6144,7 +6153,7 @@ async function renderForecastTop5(mode='long', buyableOnly=false){
             <td class="td-mono" style="color:var(--muted)">#${index+1}</td>
             <td><b class="td-mono" style="color:var(--accent2)">${sc.id}</b> ${sc.name}</td>
             <td><span class="grade-badge g${String(sc.grade).replace('+','p')}" style="color:${gc[sc.grade]||'var(--text)'}">${sc.grade}</span></td>
-            ${mode === 'long' && !buyableOnly ? `<td style="color:${f.stableStatus==='新進'?'var(--warn)':'var(--accent)'}">${f.stableStatus || '核心候選'}｜${f.stablePosition ? `原始#${f.stablePosition}` : '原始榜外'}｜${f.stableObservations || 1}次</td>` : ''}
+            ${mode === 'long' && !buyableOnly ? `<td style="color:${String(f.stableStatus).includes('待確認')?'var(--warn)':'var(--accent)'}">${f.stableStatus || '模型候選'}｜${f.stablePosition ? `目前#${f.stablePosition}` : '目前榜外'}｜${f.stableAgeDays ? `持有第${f.stableAgeDays}日` : `${f.stableObservations || 1}次確認`}${f.stableHoldingDaysRemaining ? `｜剩${f.stableHoldingDaysRemaining}日審查` : ''}</td>` : ''}
             <td class="td-mono" style="color:${returnColor};font-weight:700">${f.expected_return>=0?'+':''}${f.expected_return}%</td>
             <td class="td-mono" style="color:${d.remainingExpectedReturn>=0?'var(--green)':'var(--red)'}">${Number.isFinite(d.remainingExpectedReturn)?`${d.remainingExpectedReturn>=0?'+':''}${d.remainingExpectedReturn.toFixed(2)}%`:'N/A'}</td>
             <td class="td-mono" style="color:${Number(d.realtime?.changePct)>=0?'var(--green)':'var(--red)'}">${Number.isFinite(d.realtime?.changePct)?`${d.realtime.changePct>=0?'+':''}${d.realtime.changePct.toFixed(2)}%`:'N/A'}</td>
