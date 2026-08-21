@@ -5,7 +5,8 @@ on:
     branches: ["main"]
     paths:
       - "index.html"
-      - "cache/scores.json"
+      - "app.js"
+      - "cache/universe.json"
       - "cache/predictions.json"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
@@ -31,9 +32,11 @@ jobs:
 
       - name: Prepare website files
         run: |
-          mkdir -p _site
+          mkdir -p _site/cache
           cp index.html _site/index.html
-          cp -R cache _site/cache
+          cp app.js _site/app.js
+          cp cache/universe.json _site/cache/universe.json
+          cp cache/predictions.json _site/cache/predictions.json
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v4
