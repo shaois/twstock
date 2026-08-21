@@ -1,0 +1,16 @@
+上傳 v85 後，請在 GitHub 刪除下列舊檔案。它們已不屬於正式系統：
+
+ai_analyzer.py
+cache.py
+data_fetcher.py
+fetch_cache.py
+research_factor.py
+scorer.py
+cache/balance.json
+cache/exdiv.json
+cache/fundamental.json
+cache/institutional.json
+cache/news.json
+cache/revenue.json
+cache/scores.json
+tests/test_predictor_v84.py

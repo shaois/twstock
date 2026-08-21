@@ -1,83 +1,47 @@
-# 台股中長期選股儀表板
+# 台股 20 日獲利模型（v85）
 
-整合 **TWSE 開放資料** × **基本面/技術面評分** × **NVIDIA NIM AI 分析**
+本專案只保留一個投資目標：使用已完成的日線資料，估計未來 20 個交易日的淨報酬，並以同期 0050 為比較基準。
 
-## 快速啟動
+## 唯一正式流程
 
-### 1. 安裝依賴
+1. GitHub Actions 每日分五批更新 200 支股票的日線。
+2. 最後一批完成後，以相同日期的 0050 日線建立比較基準。
+3. `predictor.py` 對全部 200 支股票套用同一套 20 日模型。
+4. 模型先完成不重疊 20 日樣本的歷史驗證，再決定是否開放正式候選。
+5. `index.html` 與 `app.js` 只讀取 `universe.json` 和 `predictions.json`。
+6. AI 20 日分析只解釋模型結果，不參與排名，也不能改變模型結論。
+
+## 正式檔案
+
+- `predictor.py`：唯一預測模型、歷史驗證與 20 日持有管理。
+- `update_all.py`：每日五批資料更新與模型輸出。
+- `verify_model.py`：模型契約與歷史驗證檢查。
+- `main.py`：網站與 AI API 代理。
+- `index.html`、`app.js`：只呈現 20 日模型。
+- `cache/price.json`：股票已完成日線。
+- `cache/benchmark.json`：0050 已完成日線。
+- `cache/universe.json`：固定 200 支股票名單。
+- `cache/predictions.json`：唯一正式模型輸出。
+- `cache/prediction_log.json`：同一模型的 20 日持有紀錄。
+- `cache/progress.json`：五批更新進度。
+
+## 啟動
+
 ```bash
-cd twstock-app
 pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-### 2. 啟動後端
+## 驗證
+
 ```bash
-python main.py
-```
-或
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+python -m unittest discover -s tests -v
+python verify_model.py
 ```
 
-### 3. 開啟瀏覽器
-```
-http://localhost:8000
-```
+## 重要限制
 
-### 4. 使用流程
-1. 在右上角貼上你的 **NVIDIA API Key**（可從 https://build.nvidia.com 取得）
-2. 點擊「**載入前50大**」— 載入股票清單，背景開始批次評分（約2~3分鐘）
-3. 點擊左側任一股票 → 查看詳細評分
-4. 點擊「**🤖 AI 分析**」→ 取得 AI 中長期投資建議
-5. 點擊「**篩選優質股**」→ 列出所有評分 ≥ 60 的標的
-
----
-
-## 評分架構（滿分100分）
-
-### 基本面（50分）
-| 指標 | 滿分 | 說明 |
-|------|------|------|
-| EPS | 15 | > 10元 滿分 |
-| ROE | 15 | > 20% 滿分 |
-| 月營收年增率 | 10 | > 20% 滿分 |
-| 股息殖利率 | 10 | > 5% 滿分 |
-
-### 技術面（50分）
-| 指標 | 滿分 | 說明 |
-|------|------|------|
-| 均線多頭排列 | 15 | price>MA5>MA20>MA60 |
-| RSI14 | 10 | 50~70 最佳 |
-| MACD | 10 | MACD > Signal 且 Hist > 0 |
-| 成交量趨勢 | 8 | 近5日均量 > 近20日均量 |
-| 52週價格位置 | 7 | 中低位置較佳 |
-
-### 評級
-| 等級 | 分數 | 建議 |
-|------|------|------|
-| A | ≥80 | 強烈建議關注 |
-| B | 65~79 | 值得追蹤 |
-| C | 50~64 | 中性觀望 |
-| D | <50 | 暫不建議 |
-
----
-
-## 資料來源
-- **股價日K**：`https://www.twse.com.tw/exchangeReport/STOCK_DAY`
-- **EPS/ROE**：`https://opendata.twse.com.tw/v1/opendata/t187ap14_L`
-- **月營收**：`https://opendata.twse.com.tw/v1/opendata/t187ap05_L`
-- **股利**：`https://opendata.twse.com.tw/v1/opendata/t187ap29_L`
-
-## AI 模型
-- **NVIDIA NIM**: `meta/llama-3.3-70b-instruct`
-- API: `https://integrate.api.nvidia.com/v1/chat/completions`
-- 取得免費 API Key: https://build.nvidia.com/meta/llama-3_3-70b-instruct
-
----
-
-## 注意事項
-⚠ **本工具僅供個人研究參考，不構成任何投資建議。投資有風險，請自行判斷。**
-
-- TWSE API 有 rate limit，批次評分有加入 0.5s 間隔
-- AI 分析結果快取 12 小時，評分快取 6 小時，股票清單快取 24 小時
-- 快取存在記憶體中，重啟後需重新載入
+- 模型只使用執行日以前已完成的日線，盤中波動不會改變排名。
+- 每筆歷史標籤固定比較第 20 個交易日，並扣除 0.6% 交易成本。
+- 正式候選必須通過開發區間與封存區間的歷史門檻。
+- 歷史績效不保證未來獲利；本工具僅供研究，不構成投資建議。

@@ -1,475 +1,105 @@
-"""
-台股中長期選股建議 App - 後端核心引擎 v6.1
-打通台股前 100 大資料鏈，並修復前端 Proxy API 遺漏問題
-"""
+"""Static dashboard and AI explanation proxy for the single 20-day model."""
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-import httpx
-import json
+from __future__ import annotations
+
 import asyncio
-from datetime import datetime, timedelta
 import os
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from typing import Any
 
+import httpx
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+
+ROOT = Path(__file__).resolve().parent
+CACHE_DIR = ROOT / "cache"
 NVIDIA_API_KEY_ENV = os.environ.get("NVIDIA_API_KEY", "")
 GROQ_API_KEY_ENV = os.environ.get("GROQ_API_KEY", "")
-FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
 
-from data_fetcher import TWStockFetcher, TOP100_STATIC
-from scorer import StockScorer
-from ai_analyzer import AIAnalyzer, DataCache
-
-app = FastAPI(title="台股選股 App", version="1.0.0")
-
+app = FastAPI(title="Taiwan stock 20-day relative-return model", version="85")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
-fetcher = TWStockFetcher()
-scorer = StockScorer()
-cache = DataCache()
+if CACHE_DIR.exists():
+    app.mount("/cache", StaticFiles(directory=CACHE_DIR), name="cache")
 
-CACHE_DIR = Path("/tmp/twstock_cache")
-CACHE_DIR.mkdir(exist_ok=True)
-STATIC_CACHE_DIR = Path(__file__).parent / "cache"
-if STATIC_CACHE_DIR.exists():
-    app.mount(
-        "/cache",
-        StaticFiles(directory=STATIC_CACHE_DIR, check_dir=False),
-        name="cache",
-    )
-REALTIME_QUOTE_TTL_SECONDS = 15
-_realtime_quote_cache: dict[str, tuple[datetime, dict]] = {}
-TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 
-def _cache_path(stock_id: str, dtype: str) -> Path:
-    return CACHE_DIR / f"{dtype}_{stock_id}.json"
+def _request_parts(request: dict[str, Any], environment_key: str) -> tuple[str, dict[str, Any]]:
+    api_key = str(request.get("api_key") or environment_key).strip()
+    body = request.get("body")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API Key is required")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid AI request body")
+    return api_key, dict(body)
 
-def _cache_read(stock_id: str, dtype: str) -> dict | None:
-    p = _cache_path(stock_id, dtype)
-    if p.exists():
-        try:
-            data = json.loads(p.read_text())
-            saved_at = datetime.fromisoformat(data.get("_saved_at", "2000-01-01"))
-            if datetime.now() - saved_at <= timedelta(hours=25):
-                return data
-        except Exception:
-            pass
-
-    static_path = STATIC_CACHE_DIR / f"{dtype}.json"
-    if not static_path.exists(): return None
-    try:
-        data = json.loads(static_path.read_text(encoding="utf-8"))
-        rows = data.get("data", {}).get(stock_id)
-        if rows is None: return None
-        return {"status": 200, "data": rows, "_saved_at": data.get("_saved_at")}
-    except Exception: return None
-
-def _cache_write(stock_id: str, dtype: str, payload: dict):
-    payload["_saved_at"] = datetime.now().isoformat()
-    _cache_path(stock_id, dtype).write_text(json.dumps(payload, ensure_ascii=False))
-
-STOCK_IDS = [s["stock_id"] for s in TOP100_STATIC]
-
-async def _fetch_finmind_raw(stock_id: str, dtype: str, token: str) -> dict:
-    today = datetime.today()
-    if dtype == "fundamental":
-        start = (today - timedelta(days=540)).strftime("%Y-%m-%d")
-        url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start}&token={token}"
-    elif dtype == "revenue":
-        start = (today - timedelta(days=400)).strftime("%Y-%m-%d")
-        url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={stock_id}&start_date={start}&token={token}"
-    elif dtype == "price":
-        start = (today - timedelta(days=270)).strftime("%Y-%m-%d")
-        url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={stock_id}&start_date={start}&token={token}"
-    elif dtype == "balance":
-        start = (today - timedelta(days=540)).strftime("%Y-%m-%d")
-        url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockBalanceSheet&data_id={stock_id}&start_date={start}&token={token}"
-    else: return {}
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        return (await client.get(url)).json()
-
-@app.post("/api/admin/refresh-cache")
-async def refresh_cache(background_tasks: BackgroundTasks, secret: str = ""):
-    if secret != os.environ.get("CRON_SECRET", "twstock2026"): raise HTTPException(status_code=403, detail="Forbidden")
-    background_tasks.add_task(_run_daily_cache)
-    return {"message": f"快取更新已開始，預計抓取 {len(STOCK_IDS)} 檔", "stocks": len(STOCK_IDS)}
-
-async def _run_daily_cache():
-    if not FINMIND_TOKEN: return
-    for i, sid in enumerate(STOCK_IDS):
-        try:
-            for dtype in ["fundamental", "balance", "revenue", "price"]:
-                data = await _fetch_finmind_raw(sid, dtype, FINMIND_TOKEN)
-                if data.get("status") == 200: _cache_write(sid, dtype, data)
-                elif data.get("status") == 402: return
-            await asyncio.sleep(0.8)
-        except Exception: pass
-
-@app.get("/api/stock/{stock_id}/score")
-async def get_stock_score(stock_id: str):
-    try:
-        cache_key = f"score_{stock_id}"
-        if data := cache.get(cache_key): return {"success": True, "data": data}
-        if score_snapshot := _cache_read(stock_id, "scores"):
-            data = score_snapshot.get("data")
-            if data:
-                cache.set(cache_key, data, ttl_hours=6)
-                return {"success": True, "data": data}
-        
-        fm_fundamental = _cache_read(stock_id, "fundamental")
-        fm_revenue = _cache_read(stock_id, "revenue")
-        fm_exdiv = _cache_read(stock_id, "exdiv")
-        fm_balance = _cache_read(stock_id, "balance")
-        technical = await fetcher.fetch_technical(stock_id)
-        current_price = technical.get("current_price", 0)
-
-        fundamental = fetcher.parse_fundamental_dynamic(stock_id, fm_fundamental, fm_revenue, fm_balance)
-        if fundamental.get("cash_dividend", 0) == 0 and fm_exdiv:
-            fundamental["cash_dividend"] = fm_exdiv.get("data", {}).get("div", 0)
-        valuation = fetcher.parse_valuation_dynamic(stock_id, current_price, fundamental, fm_fundamental)
-
-        data = scorer.calculate(stock_id, fundamental, technical, valuation)
-        data.update({
-            "fundamental": fundamental,
-            "technical": technical,
-            "valuation": valuation,
-        })
-        cache.set(cache_key, data, ttl_hours=6)
-        return {"success": True, "data": data}
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/stock/{stock_id}/ai-analysis")
-async def get_ai_analysis(stock_id: str, api_key: str = ""):
-    effective_key = api_key or NVIDIA_API_KEY_ENV
-    if not effective_key: raise HTTPException(status_code=400, detail="需 NVIDIA API Key")
-    try:
-        if data := cache.get(f"ai_{stock_id}"): return {"success": True, "data": data}
-        
-        score_cache = cache.get(f"score_{stock_id}")
-        if not score_cache:
-            resp = await get_stock_score(stock_id)
-            score_cache = resp["data"]
-            
-        data = await AIAnalyzer(effective_key).analyze(stock_id, score_cache)
-        cache.set(f"ai_{stock_id}", data, ttl_hours=12)
-        return {"success": True, "data": data}
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/top50")
-@app.get("/api/top100")
-async def get_top100():
-    try:
-        data = cache.get("top100")
-        if not data:
-            data = await fetcher.fetch_top100_stocks()
-            cache.set("top100", data, ttl_hours=24)
-        return {"success": True, "data": data, "updated_at": cache.get_time("top100")}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/screener")
-async def run_screener(min_score: float = 60.0):
-    try:
-        top100 = cache.get("top100") or await fetcher.fetch_top100_stocks()
-        cache.set("top100", top100, ttl_hours=24)
-        results = []
-        for stock in top100:
-            sid = stock["stock_id"]
-            if (s := cache.get(f"score_{sid}")) and s.get("total_score", 0) >= min_score:
-                results.append(s)
-        return {"success": True, "data": sorted(results, key=lambda x: x.get("total_score", 0), reverse=True), "count": len(results)}
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/batch-score")
-async def batch_score(background_tasks: BackgroundTasks):
-    async def run_batch():
-        top100 = cache.get("top100") or await fetcher.fetch_top100_stocks()
-        for stock in top100:
-            sid = stock["stock_id"]
-            if not cache.get(f"score_{sid}"):
-                try: await get_stock_score(sid); await asyncio.sleep(0.5)
-                except Exception: pass
-    background_tasks.add_task(run_batch)
-    return {"success": True, "message": "批次評分中(共100檔)，請稍後刷新"}
-
-# ==========================================
-# 修復：將你原本給前端畫圖用的所有 Proxy 路由完整補回，防止畫面 404 崩潰
-# ==========================================
-
-@app.get("/api/finmind/fundamental/{stock_id}")
-async def finmind_fundamental_proxy(stock_id: str, token: str = ""):
-    cached = _cache_read(stock_id, "fundamental")
-    if cached: return JSONResponse(content=cached)
-    import datetime as dt
-    start_date = (dt.date.today() - dt.timedelta(days=540)).strftime("%Y-%m-%d")
-    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}&token={token}"
-    async with httpx.AsyncClient() as client:
-        r = await client.get(url)
-        data = r.json()
-        if data.get("status") == 200: _cache_write(stock_id, "fundamental", data)
-        return JSONResponse(content=data, status_code=r.status_code)
-
-@app.get("/api/finmind/revenue/{stock_id}")
-async def finmind_revenue_proxy(stock_id: str, token: str = ""):
-    cached = _cache_read(stock_id, "revenue")
-    if cached: return JSONResponse(content=cached)
-    import datetime as dt
-    start_date = (dt.date.today() - dt.timedelta(days=400)).strftime("%Y-%m-%d")
-    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={stock_id}&start_date={start_date}&token={token}"
-    async with httpx.AsyncClient() as client:
-        r = await client.get(url)
-        data = r.json()
-        if data.get("status") == 200: _cache_write(stock_id, "revenue", data)
-        return JSONResponse(content=data, status_code=r.status_code)
-
-@app.get("/api/finmind/price/{stock_id}")
-async def finmind_price_proxy(stock_id: str, token: str = "", start_date: str = ""):
-    cached = _cache_read(stock_id, "price")
-    if cached: return JSONResponse(content=cached)
-    if not start_date:
-        from datetime import datetime, timedelta
-        start_date = (datetime.today() - timedelta(days=270)).strftime("%Y-%m-%d")
-    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={stock_id}&start_date={start_date}&token={token}"
-    async with httpx.AsyncClient() as client:
-        r = await client.get(url)
-        data = r.json()
-        if data.get("status") == 200: _cache_write(stock_id, "price", data)
-        return JSONResponse(content=data, status_code=r.status_code)
-
-@app.get("/api/finmind/{stock_id}")
-async def finmind_proxy(stock_id: str, token: str = "", start_date: str = "2026-03-01"):
-    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={stock_id}&start_date={start_date}&token={token}"
-    async with httpx.AsyncClient() as client:
-        return JSONResponse(content=(await client.get(url)).json())
 
 @app.post("/api/nvidia")
-async def nvidia_proxy(request: dict):
-    api_key = request.get("api_key") or NVIDIA_API_KEY_ENV
-    if not api_key: raise HTTPException(status_code=400, detail="需要 NVIDIA API Key")
-    body = request.get("body", {})
+async def nvidia_proxy(request: dict[str, Any]) -> Any:
+    api_key, body = _request_parts(request, NVIDIA_API_KEY_ENV)
+    body.setdefault("temperature", 0.05)
+    body.setdefault("max_tokens", 420)
+    timeout = httpx.Timeout(120.0, connect=20.0)
     try:
-        timeout = httpx.Timeout(120.0, connect=20.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            r = await client.post(
+            response = await client.post(
                 "https://integrate.api.nvidia.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=body
+                headers={"Authorization": f"Bearer {api_key}"},
+                json=body,
             )
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="AI 回應逾時，請稍後再試一次")
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"AI 連線失敗：{str(e)}")
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"NVIDIA connection failed: {exc}") from exc
+    if response.is_error:
+        raise HTTPException(status_code=response.status_code, detail=response.text[:500])
+    return response.json()
 
-    try:
-        payload = r.json()
-    except ValueError:
-        payload = {"error": {"message": r.text[:1000] or "AI 服務回傳空白內容"}}
-    return JSONResponse(content=payload, status_code=r.status_code)
 
 @app.post("/api/groq")
-async def groq_proxy(request: dict):
-    api_key = request.get("api_key") or GROQ_API_KEY_ENV
-    if not api_key:
-        raise HTTPException(status_code=400, detail="需要 Groq API Key")
-    body = request.get("body", {})
+async def groq_proxy(request: dict[str, Any]) -> Any:
+    api_key, body = _request_parts(request, GROQ_API_KEY_ENV)
     body.setdefault("temperature", 0.05)
-    body.setdefault("max_tokens", 320)
+    body.setdefault("max_tokens", 420)
+    retry_statuses = {408, 409, 429, 500, 502, 503, 504}
+    timeout = httpx.Timeout(90.0, connect=20.0)
+    last_response: httpx.Response | None = None
     try:
-        timeout = httpx.Timeout(120.0, connect=20.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            last_response = None
             for attempt in range(3):
-                r = await client.post(
+                last_response = await client.post(
                     "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                    json=body
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json=body,
                 )
-                last_response = r
-                if r.status_code not in (408, 409, 429, 500, 502, 503, 504):
+                if last_response.status_code not in retry_statuses:
                     break
-                await asyncio.sleep(1.2 * (attempt + 1))
-            r = last_response
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Groq AI 回應逾時，請稍後再試")
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Groq AI 連線失敗：{str(e)}")
+                if attempt < 2:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Groq connection failed: {exc}") from exc
+    if last_response is None:
+        raise HTTPException(status_code=502, detail="Groq did not respond")
+    if last_response.is_error:
+        raise HTTPException(status_code=last_response.status_code, detail=last_response.text[:500])
+    return last_response.json()
 
-    try:
-        payload = r.json()
-    except ValueError:
-        payload = {"error": {"message": r.text[:1000] or "Groq AI 回傳內容無法解析"}}
-    return JSONResponse(content=payload, status_code=r.status_code)
 
-@app.get("/", response_class=HTMLResponse)
-async def root():
-    for p in ["static/index.html", "index.html"]:
-        html_path = Path(__file__).parent / p
-        if html_path.exists():
-            return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>Frontend not found</h1>", status_code=404)
+@app.get("/")
+async def root() -> FileResponse:
+    return FileResponse(ROOT / "index.html")
+
+
+@app.get("/app.js")
+async def app_script() -> FileResponse:
+    return FileResponse(ROOT / "app.js", media_type="application/javascript")
+
 
 @app.get("/health")
-async def health(): return {"status": "ok", "time": datetime.now().isoformat()}
-
-@app.get("/api/yahoo/{stock_id}")
-async def yahoo_proxy(stock_id: str, range: str = "1y"):
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{stock_id}.TW?interval=1d&range={range}"
-    async with httpx.AsyncClient() as client:
-        return JSONResponse(content=(await client.get(url)).json())
-
-
-def _mis_number(value) -> float | None:
-    try:
-        if value in (None, "", "-"):
-            return None
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _mis_book_price(value) -> float | None:
-    for part in str(value or "").split("_"):
-        number = _mis_number(part)
-        if number and number > 0:
-            return number
-    return None
-
-
-def _parse_mis_quote(row: dict, stock_id: str, taipei_now: datetime) -> dict | None:
-    previous_close = _mis_number(row.get("y"))
-    traded_price = _mis_number(row.get("z"))
-    best_ask = _mis_book_price(row.get("a"))
-    best_bid = _mis_book_price(row.get("b"))
-    price_kind = "成交價"
-    price = traded_price
-    if price is None and best_bid is not None and best_ask is not None:
-        price = (best_bid + best_ask) / 2
-        price_kind = "買賣中間價估算"
-    elif price is None:
-        price = best_bid or best_ask
-        price_kind = "最佳買賣價估算"
-
-    if not price or not previous_close:
-        return None
-
-    quote_date_raw = str(row.get("d") or "")
-    quote_date = (
-        f"{quote_date_raw[:4]}-{quote_date_raw[4:6]}-{quote_date_raw[6:8]}"
-        if len(quote_date_raw) == 8 else ""
-    )
-    today = taipei_now.strftime("%Y-%m-%d")
-    valid_for_trading = quote_date == today
-    stale_reason = "" if valid_for_trading else f"報價日期 {quote_date or '未知'}，台灣日期 {today}"
-    change = price - previous_close
-
-    def rounded(field: str, fallback: float) -> float:
-        return round(_mis_number(row.get(field)) or fallback, 2)
-
-    return {
-        "stock_id": stock_id,
-        "name": row.get("n") or row.get("nf") or "",
-        "exchange": row.get("ex") or "",
-        "price": round(price, 2),
-        "price_kind": price_kind,
-        "previous_close": round(previous_close, 2),
-        "change": round(change, 2),
-        "change_pct": round(change / previous_close * 100, 2),
-        "open": rounded("o", price),
-        "high": rounded("h", price),
-        "low": rounded("l", price),
-        "volume": int(_mis_number(row.get("v")) or 0),
-        "quote_date": quote_date,
-        "quote_time": str(row.get("t") or ""),
-        "valid_for_trading": valid_for_trading,
-        "stale_reason": stale_reason,
-        "source": "TWSE MIS",
-    }
-
-
-async def _fetch_realtime_mis(client: httpx.AsyncClient, stock_ids: list[str]) -> tuple[dict | None, dict]:
-    cache_key = "mis:" + ",".join(sorted(stock_ids))
-    cached = _realtime_quote_cache.get(cache_key)
-    if cached and (datetime.now() - cached[0]).total_seconds() < REALTIME_QUOTE_TTL_SECONDS:
-        result = cached[1]
-        return result.get("market"), result.get("stocks", {})
-
-    channels = ["tse_t00.tw"]
-    for stock_id in stock_ids:
-        channels.extend((f"tse_{stock_id}.tw", f"otc_{stock_id}.tw"))
-    response = await client.get(
-        "https://mis.twse.com.tw/stock/api/getStockInfo.jsp",
-        params={"ex_ch": "|".join(channels), "json": "1", "delay": "0"},
-    )
-    response.raise_for_status()
-    body = response.json()
-    if body.get("rtcode") != "0000":
-        raise ValueError(body.get("rtmessage") or "TWSE MIS 回應異常")
-
-    taipei_now = datetime.now(TAIPEI_TZ)
-    market = None
-    stocks = {}
-    requested = set(stock_ids)
-    for row in body.get("msgArray") or []:
-        code = str(row.get("c") or "")
-        if code == "t00":
-            market = _parse_mis_quote(row, "TAIEX", taipei_now)
-        elif code in requested and code not in stocks:
-            parsed = _parse_mis_quote(row, code, taipei_now)
-            if parsed:
-                stocks[code] = parsed
-
-    result = {"market": market, "stocks": stocks}
-    _realtime_quote_cache[cache_key] = (datetime.now(), result)
-    return market, stocks
-
-
-@app.post("/api/realtime-quotes")
-async def realtime_quotes(request: dict):
-    stock_ids = []
-    for value in request.get("stock_ids", []):
-        stock_id = str(value).strip()
-        if stock_id.isdigit() and 4 <= len(stock_id) <= 6 and stock_id not in stock_ids:
-            stock_ids.append(stock_id)
-    stock_ids = stock_ids[:25]
-    if not stock_ids:
-        raise HTTPException(status_code=400, detail="請提供股票代碼")
-
-    timeout = httpx.Timeout(12.0, connect=5.0)
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Referer": "https://mis.twse.com.tw/",
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-    }
-    try:
-        async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
-            market, stock_data = await _fetch_realtime_mis(client, stock_ids)
-    except (httpx.HTTPError, ValueError, TypeError) as exc:
-        raise HTTPException(status_code=502, detail=f"證交所盤中報價暫時無法取得：{exc}")
-
-    if not market or not market.get("valid_for_trading"):
-        reason = (market or {}).get("stale_reason") or "未取得同日大盤資料"
-        for item in stock_data.values():
-            item["valid_for_trading"] = False
-            item["stale_reason"] = f"大盤資料無法驗證：{reason}"
-
-    return {
-        "success": True,
-        "market": market,
-        "stocks": stock_data,
-        "requested": len(stock_ids),
-        "received": len(stock_data),
-        "source": "TWSE MIS",
-        "updated_at": datetime.now(TAIPEI_TZ).isoformat(),
-    }
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+async def health() -> dict[str, str]:
+    return {"status": "ok", "model": "single_horizon_20d_relative_strength_v85"}
