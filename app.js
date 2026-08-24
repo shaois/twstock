@@ -1,6 +1,7 @@
 "use strict";
 
-const APP_VERSION = "v85";
+const APP_VERSION = "v86";
+const MODEL_IMPLEMENTATION_VERSION = "v85";
 const MODEL_NAME = "single_horizon_20d_relative_strength_v85";
 const CONTRACT_VERSION = "20d-relative-strength-v1";
 const MODEL_OBJECTIVE = "outperform_0050_net_return_over_next_20_trading_sessions";
@@ -63,6 +64,30 @@ function setProgress(message = "") {
   bar.classList.toggle("show", Boolean(message));
 }
 
+function updateCacheStatus() {
+  const status = byId("cacheStatus");
+  if (!status) return;
+  if (!state.loaded) {
+    status.textContent = "快取：尚未載入";
+    status.classList.remove("loaded");
+    return;
+  }
+  const date = state.model.latest_date || "--";
+  status.textContent = `快取交易日：${date}｜${Object.keys(state.predictions).length}/200 支`;
+  status.classList.add("loaded");
+}
+
+function initApp() {
+  state.loaded = false;
+  updateCacheStatus();
+  byId("stockCount").textContent = "(0)";
+  byId("stockList").innerHTML =
+    '<div style="padding:16px;color:var(--muted);font-size:12px">請點擊上方「載入最新快取」</div>';
+  byId("welcome").style.display = "flex";
+  byId("screenerResult").style.display = "none";
+  byId("stockDetail").style.display = "none";
+}
+
 async function fetchCache(name) {
   const response = await fetch(`cache/${name}.json?v=${Date.now()}`, { cache: "no-store" });
   if (!response.ok) throw new Error(`${name}.json 讀取失敗（HTTP ${response.status}）`);
@@ -83,7 +108,7 @@ function validateModel(universePayload, predictionPayload) {
   const errors = [];
 
   if (model.name !== MODEL_NAME) errors.push(`模型名稱不是 ${MODEL_NAME}`);
-  if (model.implementation_version !== APP_VERSION) errors.push(`模型版次不是 ${APP_VERSION}`);
+  if (model.implementation_version !== MODEL_IMPLEMENTATION_VERSION) errors.push(`模型版次不是 ${MODEL_IMPLEMENTATION_VERSION}`);
   if (contract.version !== CONTRACT_VERSION) errors.push("模型契約版本不符");
   if (contract.objective !== MODEL_OBJECTIVE) errors.push("模型目標不是未來 20 日超越 0050");
   if (JSON.stringify(contract.forecast_horizons) !== "[20]") errors.push("仍含有 20 日以外的預測週期");
@@ -106,6 +131,11 @@ function validateModel(universePayload, predictionPayload) {
 }
 
 async function loadStocks() {
+  const cacheStatus = byId("cacheStatus");
+  if (cacheStatus) {
+    cacheStatus.textContent = "快取：載入中...";
+    cacheStatus.classList.remove("loaded");
+  }
   setProgress("正在讀取並驗證 200 支股票的單一 20 日模型...");
   try {
     const [universePayload, predictionPayload] = await Promise.all([
@@ -116,11 +146,13 @@ async function loadStocks() {
     state.universe = universePayload.data;
     state.predictions = predictionPayload.data;
     state.loaded = true;
+    updateCacheStatus();
     renderStockList();
     show20dCandidates();
     showToast(`已載入 200 支股票，單一 20 日模型 ${APP_VERSION}`);
   } catch (error) {
     state.loaded = false;
+    updateCacheStatus();
     byId("welcome").style.display = "none";
     byId("stockDetail").style.display = "none";
     byId("screenerResult").style.display = "block";
@@ -177,7 +209,10 @@ function candidateRowHtml(row, index, official) {
 }
 
 function show20dCandidates() {
-  if (!state.loaded) return void loadStocks();
+  if (!state.loaded) {
+    showToast("請先按「載入最新快取」");
+    return;
+  }
   state.currentStockId = "";
   renderStockList();
   byId("welcome").style.display = "none";
@@ -225,7 +260,7 @@ function showStock(stockId) {
   byId("stockDetail").style.display = "block";
   byId("stockDetail").innerHTML = `
     <div class="stock-header"><div class="stock-title"><h1>${escapeHtml(stockId)} <span style="color:var(--muted)">${escapeHtml(stockName(stockId))}</span></h1>
-      <div class="sub">單一 20 日模型 · 資料日 ${escapeHtml(item.as_of_date || "--")}</div></div>
+      <div class="sub">單一 20 日模型 · 快取交易日 ${escapeHtml(state.model.latest_date || item.as_of_date || "--")}</div></div>
       <button class="btn btn-primary" onclick="runAI20d('${escapeHtml(stockId)}')">AI 20日</button></div>
     <div class="score-overview">
       <div class="score-card"><div class="val" style="color:var(--accent)">${percent(forecast.expected_return)}</div><div class="lbl">預期 20 日報酬</div></div>
@@ -289,4 +324,4 @@ window.show20dCandidates = show20dCandidates;
 window.showStock = showStock;
 window.renderStockList = renderStockList;
 window.runAI20d = runAI20d;
-document.addEventListener("DOMContentLoaded", loadStocks);
+document.addEventListener("DOMContentLoaded", initApp);
