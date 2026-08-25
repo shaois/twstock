@@ -1,6 +1,7 @@
+const V87_AI_EXPLANATION_POLICY = "你只能解釋已鎖定的 20 日模型結果，不得改變研究候選資格、排名、門檻，也不得自行產生買進結論。請明確說明這是研究候選，不保證獲利。";
 "use strict";
 
-const APP_VERSION = "v86";
+const APP_VERSION = "v87";
 const MODEL_IMPLEMENTATION_VERSION = "v85";
 const MODEL_NAME = "single_horizon_20d_relative_strength_v85";
 const CONTRACT_VERSION = "20d-relative-strength-v1";
@@ -197,7 +198,7 @@ function candidateRowHtml(row, index, official) {
   return `<tr onclick="showStock('${escapeHtml(row.stockId)}')">
     <td class="td-mono">#${index}</td>
     <td><span class="s-id">${escapeHtml(row.stockId)}</span> ${escapeHtml(stockName(row.stockId))}</td>
-    <td style="color:${official ? "var(--accent)" : "var(--warn)"}">${official ? "20 日正式名單" : "研究候選"}</td>
+    <td style="color:${official ? "var(--accent)" : "var(--warn)"}">${official ? "20 日研究候選" : "研究候選"}</td>
     <td class="td-mono" style="color:${signedClass(forecast.expected_return)}">${percent(forecast.expected_return)}</td>
     <td class="td-mono" style="color:${signedClass(forecast.expected_alpha)}">${percent(forecast.expected_alpha)}</td>
     <td class="td-mono">${percent(forecast.up_probability, 1)}</td>
@@ -226,13 +227,13 @@ function show20dCandidates() {
   const validation = state.model.validation || {};
   const officialBody = official.length
     ? official.map((row, index) => candidateRowHtml(row, index + 1, true)).join("")
-    : `<tr><td colspan="10" style="padding:18px;color:var(--warn)">目前沒有通過同一套 20 日歷史驗證門檻的正式名單。原因：${escapeHtml((gate.failed_checks || []).join("、") || "今日沒有股票符合門檻")}</td></tr>`;
+    : `<tr><td colspan="10" style="padding:18px;color:var(--warn)">目前沒有通過同一套 20 日歷史驗證門檻的研究候選。原因：${escapeHtml((gate.failed_checks || []).join("、") || "今日沒有股票符合門檻")}</td></tr>`;
 
   byId("screenerResult").innerHTML = `
     <div class="screener-panel" style="border-color:var(--accent)">
-      <div class="panel-title">20 日相對 0050 模型名單</div>
+      <div class="panel-title">20 日淨報酬研究候選</div>
       <div style="color:var(--muted);font-size:12px;line-height:1.8;margin-bottom:12px">
-        唯一目標：未來 20 個交易日扣除成本後超越 0050。資料日 ${escapeHtml(state.model.latest_date || "--")}；正式名單 ${official.length} 支。<br>
+        唯一目標：未來 20 個交易日扣除成本後超越 0050。資料日 ${escapeHtml(state.model.latest_date || "--")}；研究候選 ${official.length} 支。<br>
         模型只使用完整日線；盤中報價、AI 及其他舊評分都不參與排名。歷史驗證 ${number(validation.periods)} 期。
       </div>
       <table><thead><tr><th>順位</th><th>股票</th><th>狀態</th><th>預期20日</th><th>預期超額</th><th>上漲機率</th><th>價格區間</th><th>下行情境</th><th>樣本</th><th>信心</th></tr></thead><tbody>${officialBody}</tbody></table>
@@ -261,32 +262,32 @@ function showStock(stockId) {
   byId("stockDetail").innerHTML = `
     <div class="stock-header"><div class="stock-title"><h1>${escapeHtml(stockId)} <span style="color:var(--muted)">${escapeHtml(stockName(stockId))}</span></h1>
       <div class="sub">單一 20 日模型 · 快取交易日 ${escapeHtml(state.model.latest_date || item.as_of_date || "--")}</div></div>
-      <button class="btn btn-primary" onclick="runAI20d('${escapeHtml(stockId)}')">AI 20日</button></div>
+      <button class="btn btn-primary" onclick="runAI20d('${escapeHtml(stockId)}')">AI 解讀</button></div>
     <div class="score-overview">
       <div class="score-card"><div class="val" style="color:var(--accent)">${percent(forecast.expected_return)}</div><div class="lbl">預期 20 日報酬</div></div>
       <div class="score-card"><div class="val" style="color:${signedClass(forecast.expected_alpha)}">${percent(forecast.expected_alpha)}</div><div class="lbl">預期超越 0050</div></div>
       <div class="score-card"><div class="val" style="color:var(--accent2)">${percent(forecast.up_probability, 1)}</div><div class="lbl">歷史上漲機率</div></div>
       <div class="score-card"><div class="val" style="color:var(--warn)">${number(forecast.confidence)}/100</div><div class="lbl">模型信心</div></div>
-      <div class="score-card"><div class="val" style="color:${selected ? "var(--green)" : "var(--warn)"}">${selected ? "正式名單" : "研究觀察"}</div><div class="lbl">20 日結論</div></div>
+      <div class="score-card"><div class="val" style="color:${selected ? "var(--green)" : "var(--warn)"}">${selected ? "研究候選" : "研究觀察"}</div><div class="lbl">20 日結論</div></div>
     </div>
     <div class="panel" style="margin-bottom:14px;border-color:${selected ? "var(--accent)" : "var(--warn)"}">
       <div class="panel-title">20 日布局資料</div><div class="detail-grid" style="margin:0">
         <div>${metric("模型順位", `#${number(item.factor_rank_20d, "--")}`)}${metric("模型價", money(item.current_price))}${metric("20 日價格區間", `${money(forecast.range_low_price)} ~ ${money(forecast.range_high_price)}`)}${metric("下行情境", money(forecast.downside_price))}</div>
-        <div>${metric("相似樣本", number(forecast.analogue_count))}${metric("因子分數", number(item.factor_score_20d))}${metric("截面百分位", `${number(item.factor_percentile_20d)}%`)}${metric("持有進度", selected ? `第 ${number(stable.age_days)} / 20 個交易日` : "未進入正式名單")}</div>
+        <div>${metric("相似樣本", number(forecast.analogue_count))}${metric("因子分數", number(item.factor_score_20d))}${metric("截面百分位", `${number(item.factor_percentile_20d)}%`)}${metric("持有進度", selected ? `第 ${number(stable.age_days)} / 20 個交易日` : "未進入研究候選")}</div>
       </div>
     </div>
-    <div class="ai-panel" id="aiPanel" style="display:none"><div class="ai-header"><div class="panel-title" style="margin:0">AI 20日解讀</div><span class="ai-badge" id="aiBadge"></span></div><div class="ai-content" id="aiContent"></div></div>`;
+    <div class="ai-panel" id="aiPanel" style="display:none"><div class="ai-header"><div class="panel-title" style="margin:0">AI 解讀解讀</div><span class="ai-badge" id="aiBadge"></span></div><div class="ai-content" id="aiContent"></div></div>`;
 }
 
 function modelDecision(stockId) {
-  return state.predictions[stockId]?.model_selected_20d === true ? "20 日正式名單" : "研究觀察";
+  return state.predictions[stockId]?.model_selected_20d === true ? "20 日研究候選" : "研究觀察";
 }
 
 function aiPrompt(stockId) {
   const item = state.predictions[stockId];
   const forecast = item.prediction_20d;
   const decision = modelDecision(stockId);
-  return `你是台股20個交易日投資模型的解讀助理。唯一週期是20個交易日，唯一比較基準是0050。\n模型已決定「${decision}」，你只能解釋，不可改寫排名或結論。\n股票：${stockId} ${stockName(stockId)}\n預期20日報酬：${forecast.expected_return}%\n預期超額：${forecast.expected_alpha}%\n歷史上漲機率：${forecast.up_probability}%\n價格區間：${forecast.range_low_price}至${forecast.range_high_price}\n下行情境：${forecast.downside_price}\n請用繁體中文，最多160字，依序輸出：\n結論：逐字寫「${decision}」\n核心見解：一個主要報酬來源與一個主要風險\n執行方式：若為正式名單說明20日內如何分批；否則說明等待條件\n失效條件：一個可驗證條件`;
+  return `你是台股20個交易日投資模型的解讀助理。唯一週期是20個交易日，唯一比較基準是0050。\n模型已決定「${decision}」，你只能解釋，不可改寫排名或結論。\n股票：${stockId} ${stockName(stockId)}\n預期20日報酬：${forecast.expected_return}%\n預期超額：${forecast.expected_alpha}%\n歷史上漲機率：${forecast.up_probability}%\n價格區間：${forecast.range_low_price}至${forecast.range_high_price}\n下行情境：${forecast.downside_price}\n請用繁體中文，最多160字，依序輸出：\n結論：逐字寫「${decision}」\n核心見解：一個主要報酬來源與一個主要風險\n執行方式：若為研究候選說明20日內如何分批；否則說明等待條件\n失效條件：一個可驗證條件`;
 }
 
 async function runAI20d(stockId) {
