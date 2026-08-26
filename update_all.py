@@ -75,7 +75,9 @@ def load_universe() -> dict[str, dict[str, str]]:
 
 
 def resolve_start_index(progress: Any, today_str: str, stock_count: int) -> int:
-    if not isinstance(progress, dict) or progress.get("date") != today_str:
+    # The five scheduled batches run from 23:00 to 03:00 Taipei time. Keep an
+    # unfinished cycle across midnight; a completed cycle already stores index 0.
+    if not isinstance(progress, dict):
         return 0
     try:
         index = int(progress.get("index", 0))
