@@ -16,12 +16,12 @@ def load_cache(name):
         return json.load(handle)["data"]
 
 
-class Single20DayContractV85Tests(unittest.TestCase):
+class Single20DayContractV88Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.prices = load_cache("price.json")
         cls.universe = load_cache("universe.json")
-        cls.benchmark = load_cache("benchmark.json")["0050"]
+        cls.benchmark = load_cache("benchmark.json")
         latest = max(
             row["date"]
             for rows in list(cls.prices.values()) + [cls.benchmark]
@@ -37,7 +37,7 @@ class Single20DayContractV85Tests(unittest.TestCase):
         contract = self.result["model"]["architecture_contract"]
         self.assertEqual(self.result["model"]["name"], predictor.MODEL_NAME)
         self.assertEqual(contract["version"], "20d-relative-strength-v1")
-        self.assertEqual(contract["implementation_version"], "v85")
+        self.assertEqual(contract["implementation_version"], "v88")
         self.assertEqual(
             contract["objective"],
             "outperform_0050_net_return_over_next_20_trading_sessions",
@@ -94,6 +94,55 @@ class Single20DayContractV85Tests(unittest.TestCase):
         first.pop("_saved_at", None)
         second.pop("_saved_at", None)
         self.assertEqual(first, second)
+
+    def test_v88_risk_diagnostics_are_present_without_extra_horizons(self):
+        available = [item for item in self.result["data"].values() if item.get("available")]
+        self.assertTrue(available)
+        for item in available:
+            forecast = item["prediction_20d"]
+            self.assertIn("expected_net_after_buffer", forecast)
+            self.assertIn("reward_risk_ratio", forecast)
+            self.assertIn("average_volume_20_shares", forecast)
+            self.assertIn("average_turnover_5_twd", forecast)
+            self.assertIn("benchmark_momentum_20d", forecast)
+
+    def test_holding_age_uses_actual_trading_calendar(self):
+        result = copy.deepcopy(self.result)
+        stock_id = next(
+            stock_id for stock_id, item in result["data"].items()
+            if item.get("available")
+        )
+        trading_dates = [
+            "2026-01-02", "2026-01-05", "2026-01-06", "2026-01-07",
+            "2026-01-08", "2026-01-09", "2026-01-12", "2026-01-13",
+            "2026-01-14", "2026-01-15",
+        ]
+        model = result["model"]
+        model["latest_date"] = trading_dates[-1]
+        model["trading_calendar_dates"] = trading_dates
+        model["validation_gate"] = {"enabled": True, "failed_checks": []}
+        result["data"][stock_id]["as_of_date"] = trading_dates[-1]
+        existing_log = {
+            trading_dates[-2]: {
+                "model_name": predictor.MODEL_NAME,
+                "architecture_contract_version": predictor.MODEL_CONTRACT_VERSION,
+                "implementation_version": predictor.MODEL_IMPLEMENTATION_VERSION,
+                "stable_20d": [{
+                    "stock_id": stock_id,
+                    "entered_date": trading_dates[0],
+                    "age_days": 1,
+                    "observations": 1,
+                }],
+            }
+        }
+
+        stable = predictor.apply_prediction_stability(
+            result, existing_log, self.universe, run_date="2026-01-16"
+        )
+
+        self.assertEqual(
+            stable["model"]["stable_20d_meta"][stock_id]["age_days"], 10
+        )
 
     def test_current_session_rows_cannot_change_model(self):
         noisy_prices = copy.deepcopy(self.prices)
@@ -162,10 +211,11 @@ class Single20DayContractV85Tests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
         production = html + script + (ROOT / "main.py").read_text(encoding="utf-8")
-        self.assertIn("v85", html)
-        self.assertIn("AI 20日", script)
+        self.assertIn("v88", html)
+        self.assertIn("runAI20d", script)
         self.assertIn('fetchCache("universe")', script)
         self.assertIn('fetchCache("predictions")', script)
+        self.assertIn('state.model.validation?.["20d"]', script)
         for obsolete in (
             "scores.json", "fundamental.json", "institutional.json", "news.json",
             "prediction_5d", "selected_5d", "runAIShort", "findMomentumTop5",
