@@ -41,10 +41,18 @@ FORECAST_CALIBRATION = 0.75
 # Conservative round-trip estimate: buy/sell commissions plus sell-side tax.
 # Validation must measure what an investor can keep, not the gross price move.
 ROUND_TRIP_COST_PCT = 0.60
+SAFETY_BUFFER_PCT = 2.00
+MIN_EXPECTED_ALPHA_PCT = 1.00
+MIN_PROFIT_PROBABILITY_PCT = 52.50
+MIN_REWARD_RISK_RATIO = 0.80
+MIN_AVG_VOLUME_20_SHARES = 2_000_000
+MIN_AVG_TURNOVER_5_TWD = 50_000_000
+MIN_COMPLETE_HISTORY_DAYS = 250
+MIN_BENCHMARK_MOMENTUM_20D_PCT = 0.0
 TAIPEI_TZ = timezone(timedelta(hours=8))
 MODEL_CONTRACT_VERSION = "20d-relative-strength-v1"
-MODEL_IMPLEMENTATION_VERSION = "v85"
-MODEL_NAME = "single_horizon_20d_relative_strength_v85"
+MODEL_IMPLEMENTATION_VERSION = "v88"
+MODEL_NAME = "single_horizon_20d_relative_strength_v88"
 
 
 def _number(value, default=0.0):
@@ -92,6 +100,7 @@ def _normalize_price_rows(rows):
             "date": date,
             "close": close,
             "volume": max(0.0, _number(row.get("Trading_Volume"))),
+            "turnover": max(0.0, _number(row.get("Trading_money"))),
         }
     normalized = [by_date[date] for date in sorted(by_date)]
 
@@ -257,6 +266,22 @@ def _feature_vector(rows, end, market_index):
     )
 
 
+def _entry_metrics(rows, end, market_index):
+    """Return point-in-time gates that are available in history and production."""
+    if end < 20:
+        return {}
+    volumes = [row["volume"] for row in rows]
+    turnovers = [row.get("turnover", 0.0) for row in rows]
+    return {
+        "average_volume_20_shares": sum(volumes[end - 19:end + 1]) / 20,
+        "average_turnover_5_twd": sum(turnovers[end - 4:end + 1]) / 5,
+        "history_days": end + 1,
+        "benchmark_momentum_20d": _market_return(
+            market_index, rows[end - 20]["date"], rows[end]["date"]
+        ),
+    }
+
+
 def _common_snapshot_date(series_by_stock, minimum_coverage=0.90):
     """Return the newest date available for nearly the whole stock universe."""
     if not series_by_stock:
@@ -301,6 +326,7 @@ def _prepare_samples(price_db, snapshot_date=None, benchmark_rows=None):
                 "price": rows[current_end]["close"],
                 "features": current_features,
                 "history_days": current_end + 1,
+                "entry_metrics": _entry_metrics(rows, current_end, market_index),
             }
         closes = [row["close"] for row in rows]
         for index in range(60, len(rows) - 20):
@@ -314,7 +340,9 @@ def _prepare_samples(price_db, snapshot_date=None, benchmark_rows=None):
                 "stock_id": stock_id,
                 "base_date": rows[index]["date"],
                 "label_end_date": rows[index + 20]["date"],
+                "price": base_price,
                 "features": features,
+                "entry_metrics": _entry_metrics(rows, index, market_index),
                 # Large one-off gaps, splits and event moves must not dominate
                 # the analogue average used for ordinary entry decisions.
                 "return_20d": max(-30.0, min(30.0, return_20d)),
@@ -324,6 +352,7 @@ def _prepare_samples(price_db, snapshot_date=None, benchmark_rows=None):
                 # the unmodified outcome or the reported result is too kind.
                 "actual_return_20d": return_20d,
                 "actual_alpha_20d": return_20d - market_20d,
+                "benchmark_return_20d": market_20d,
             })
     return samples, current
 
@@ -359,7 +388,7 @@ def _factor_percentiles(rows):
 
 
 def _historical_factor_periods(samples, minimum_coverage=180):
-    """Build non-overlapping historical portfolios using the production rule."""
+    """Build non-overlapping historical portfolios using the production rank."""
     by_date = defaultdict(list)
     for sample in samples:
         by_date[sample["base_date"]].append(sample)
@@ -370,15 +399,23 @@ def _historical_factor_periods(samples, minimum_coverage=180):
     for date in dates[::20][-40:]:
         universe = by_date[date]
         percentiles = _factor_percentiles(universe)
-        selected = []
+        candidates = []
         for sample in universe:
             percentile = percentiles.get(sample["stock_id"], 100.0)
             if percentile <= FACTOR_PREFILTER_PERCENTILE:
                 row = dict(sample)
                 row["factor_percentile"] = percentile
-                selected.append(row)
-        if selected:
-            periods.append({"date": date, "selected": selected})
+                candidates.append(row)
+        candidates.sort(key=lambda row: row["factor_percentile"])
+        if candidates:
+            periods.append({
+                "date": date,
+                "candidates": candidates,
+                "selected": candidates[:TARGET_PORTFOLIO_SIZE],
+                "benchmark_return_20d": candidates[0].get(
+                    "benchmark_return_20d", 0.0
+                ),
+            })
     return periods
 
 
@@ -453,15 +490,47 @@ def _cohort_prediction(cohort, current_price, factor_percentile, validation):
     }
 
 
-def _evaluate_candidate(forecast, factor_percentile, model_enabled=True):
-    """Apply the one eligibility rule shared by backtests and production."""
+def _candidate_eligibility(forecast, factor_percentile, entry_metrics):
+    """Keep the validated rank as eligibility; V88 risk metrics are diagnostics."""
     reasons = []
     if factor_percentile > FACTOR_PREFILTER_PERCENTILE:
         reasons.append(f"截面因子未進前{FACTOR_PREFILTER_PERCENTILE:g}%")
+    return not reasons, reasons
 
-    qualified = not reasons
+
+def _evaluate_candidate(
+    forecast, factor_percentile, entry_metrics, model_enabled=True
+):
+    """Apply the same V88 eligibility rule in backtests and production."""
+    qualified, reasons = _candidate_eligibility(
+        forecast, factor_percentile, entry_metrics
+    )
+    downside_risk = abs(min(0.0, _number(forecast.get("downside_return"))))
+    reward = max(0.0, _number(forecast.get("range_high_return")))
+    reward_risk_ratio = (
+        reward / downside_risk
+        if downside_risk > 0
+        else (999.0 if reward > 0 else 0.0)
+    )
+
     forecast["eligibility_reasons"] = reasons
     forecast["factor_percentile"] = round(factor_percentile, 1)
+    forecast["expected_net_after_buffer"] = round(
+        _number(forecast.get("expected_return"))
+        - ROUND_TRIP_COST_PCT
+        - SAFETY_BUFFER_PCT,
+        2,
+    )
+    forecast["reward_risk_ratio"] = round(reward_risk_ratio, 2)
+    forecast["average_volume_20_shares"] = round(
+        _number(entry_metrics.get("average_volume_20_shares"))
+    )
+    forecast["average_turnover_5_twd"] = round(
+        _number(entry_metrics.get("average_turnover_5_twd"))
+    )
+    forecast["benchmark_momentum_20d"] = round(
+        _number(entry_metrics.get("benchmark_momentum_20d")), 2
+    )
     forecast["raw_signal"] = "買進" if qualified else "觀察"
     forecast["signal"] = "買進" if qualified and model_enabled else "觀察"
     forecast["safety_block"] = (
@@ -517,6 +586,10 @@ def _summarize_validation_rows(rows):
         "benchmark_positive_period_rate": round(
             sum(row["alpha"] > 0 for row in rows) / len(rows) * 100, 1
         ) if rows else None,
+        "average_holdings": round(count / len(rows), 2) if rows else 0.0,
+        "cash_period_rate": round(
+            sum(row["count"] == 0 for row in rows) / len(rows) * 100, 1
+        ) if rows else 0.0,
         "round_trip_cost_pct": ROUND_TRIP_COST_PCT,
     }
 
@@ -527,6 +600,15 @@ def _walk_forward_validation(samples):
     rows = []
     for period in periods:
         selected = period["selected"]
+        if not selected:
+            rows.append({
+                "return": 0.0,
+                "alpha": -_number(period.get("benchmark_return_20d")),
+                "hits": 0,
+                "alpha_hits": 0,
+                "count": 0,
+            })
+            continue
         rows.append({
             "return": (
                 sum(item["actual_return_20d"] for item in selected)
@@ -555,7 +637,7 @@ def _walk_forward_validation(samples):
     summary = _summarize_validation_rows(development_rows)
     summary["sealed_holdout"] = _summarize_validation_rows(holdout_rows)
     summary["tested_periods"] = len(periods)
-    summary["empty_periods"] = 0
+    summary["empty_periods"] = sum(row["count"] == 0 for row in rows)
     return {"20d": summary}
 
 
@@ -617,7 +699,12 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
         for stock_id, rows in model_price_db.items()
     }
     latest_date, snapshot_count, snapshot_required = _common_snapshot_date(normalized)
-    benchmark_ready = len(_normalize_price_rows(completed_benchmark_rows)) >= 300
+    normalized_benchmark = _normalize_price_rows(completed_benchmark_rows)
+    benchmark_ready = len(normalized_benchmark) >= 300
+    trading_calendar_dates = [
+        row["date"] for row in normalized_benchmark
+        if not latest_date or row["date"] <= latest_date
+    ][-80:]
     samples, current = _prepare_samples(
         model_price_db, latest_date, benchmark_rows=completed_benchmark_rows
     )
@@ -646,7 +733,7 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
     gate = _validation_gate(validation, benchmark_ready)
     factor_periods = _historical_factor_periods(samples)
     historical_cohort = [
-        row for period in factor_periods for row in period["selected"]
+        row for period in factor_periods for row in period["candidates"]
     ]
     current_states = [
         state for state in current.values()
@@ -677,13 +764,24 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             validation,
         )
         qualified = _evaluate_candidate(
-            forecast, percentile, model_enabled=gate["enabled"]
+            forecast,
+            percentile,
+            state.get("entry_metrics", {}),
+            model_enabled=gate["enabled"],
         )
         item = {
             "available": True,
             "as_of_date": state["base_date"],
             "current_price": round(state["price"], 2),
             "history_days": state["history_days"],
+            "liquidity": {
+                "average_volume_20_shares": round(
+                    _number(state.get("entry_metrics", {}).get("average_volume_20_shares"))
+                ),
+                "average_turnover_5_twd": round(
+                    _number(state.get("entry_metrics", {}).get("average_turnover_5_twd"))
+                ),
+            },
             "prediction_20d": forecast,
             "factor_score_20d": round(factor_scores.get(stock_id, -999), 3),
             "factor_rank_20d": factor_rank.get(stock_id),
@@ -707,13 +805,15 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "run_date_taipei": run_date_taipei,
             "architecture_contract": _architecture_contract(),
             "description": (
-                "每日收盤後以全市場相對強弱、中期動能與波動品質進行截面排名；"
-                "歷史回測與正式名單共用前2.5%規則，盤中價格只供執行提醒。"
+                "每日收盤後以已通過同規則回測的相對強弱核心排名；V88新增淨報酬"
+                "安全緩衝、風險報酬、流動性、資料完整性與0050動能診斷，但不讓"
+                "未通過封存測試的硬門檻改寫排名；整體驗證未通過時維持現金。"
             ),
             "benchmark": "0050",
             "benchmark_source": "FinMind TaiwanStockPrice",
             "benchmark_ready": benchmark_ready,
             "latest_date": latest_date,
+            "trading_calendar_dates": trading_calendar_dates,
             "snapshot_stock_count": snapshot_count,
             "snapshot_total_count": len(universe_ids),
             "snapshot_required_count": snapshot_required,
@@ -733,11 +833,22 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "readiness_basis": "same_cross_section_rule_with_sealed_final_8_period_holdout",
             "live_tracking_role": "post_deployment_drift_monitor_only",
             "round_trip_cost_pct": ROUND_TRIP_COST_PCT,
+            "safety_buffer_pct": SAFETY_BUFFER_PCT,
+            "risk_diagnostic_references": {
+                "factor_prefilter_percentile": FACTOR_PREFILTER_PERCENTILE,
+                "minimum_expected_alpha_pct": MIN_EXPECTED_ALPHA_PCT,
+                "minimum_profit_probability_pct": MIN_PROFIT_PROBABILITY_PCT,
+                "minimum_reward_risk_ratio": MIN_REWARD_RISK_RATIO,
+                "minimum_average_volume_20_shares": MIN_AVG_VOLUME_20_SHARES,
+                "minimum_average_turnover_5_twd": MIN_AVG_TURNOVER_5_TWD,
+                "minimum_complete_history_days": MIN_COMPLETE_HISTORY_DAYS,
+                "minimum_benchmark_momentum_20d_pct": MIN_BENCHMARK_MOMENTUM_20D_PCT,
+            },
             "minimum_validation_periods": MIN_VALIDATION_PERIODS,
             "minimum_validation_picks": dict(MIN_VALIDATION_PICKS),
             "minimum_holdout_periods": MIN_HOLDOUT_PERIODS,
             "minimum_holdout_picks": MIN_HOLDOUT_PICKS,
-            "selection_rule": "daily_cross_section_top_2_5_percent",
+            "selection_rule": "validated_daily_cross_section_top_2_5_percent_with_v88_risk_diagnostics",
             "eligible_20d_count": len(selected_ids),
             "selected_20d": selected_ids,
             "warning": "模型是歷史統計估計，不保證未來報酬。",
@@ -896,6 +1007,11 @@ def apply_prediction_stability(
     # A 20-session portfolio must not accumulate a new daily shortlist. Keep
     # at most the original five positions until their own review date.
     previous_managed = previous_managed[:TARGET_PORTFOLIO_SIZE]
+    trading_calendar = [
+        str(date)[:10]
+        for date in (model.get("trading_calendar_dates") or [])
+        if date
+    ]
     managed_ids = []
     managed_meta = {}
     for previous in previous_managed:
@@ -908,7 +1024,16 @@ def apply_prediction_stability(
         ):
             continue
         forecast = item.get("prediction_20d", {})
-        age_days = int(previous.get("age_days") or 0) + 1
+        entered_date = str(previous.get("entered_date") or "")[:10]
+        elapsed_sessions = [
+            date for date in trading_calendar
+            if entered_date and entered_date <= date <= model_date
+        ]
+        age_days = (
+            len(elapsed_sessions)
+            if elapsed_sessions
+            else int(previous.get("age_days") or 0) + 1
+        )
         material_failure = (
             _number(forecast.get("expected_return")) < -3
             or _number(forecast.get("downside_return")) < -20
@@ -918,7 +1043,7 @@ def apply_prediction_stability(
         managed_ids.append(stock_id)
         managed_meta[stock_id] = {
             "status": "持有期",
-            "entered_date": previous.get("entered_date") or model_date,
+            "entered_date": entered_date or model_date,
             "age_days": age_days,
             "holding_days_remaining": max(0, STABLE_HOLD_DAYS - age_days),
             "observations": int(previous.get("observations") or 1) + 1,

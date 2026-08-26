@@ -102,4 +102,4 @@ async def app_script() -> FileResponse:
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "model": "single_horizon_20d_relative_strength_v85"}
+    return {"status": "ok", "model": "single_horizon_20d_relative_strength_v88"}

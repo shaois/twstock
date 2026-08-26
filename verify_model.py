@@ -15,7 +15,7 @@ def load_data(name):
 
 prices = load_data("price.json")
 universe = load_data("universe.json")
-benchmark = load_data("benchmark.json")["0050"]
+benchmark = load_data("benchmark.json")
 latest_date = max(
     row["date"]
     for rows in list(prices.values()) + [benchmark]

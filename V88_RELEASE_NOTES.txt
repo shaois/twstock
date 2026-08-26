@@ -1,0 +1,14 @@
+V88 - evidence-based 20-day relative-strength model
+
+1. Keeps the V87 core rank because every tested extra hard-gate variant reduced development alpha.
+2. Adds risk diagnostics: return after 0.6% cost and 2% buffer, reward/risk ratio, 20-day average volume, 5-day average turnover, history completeness, and 0050 momentum.
+3. Counts the 20-day holding cycle from the actual 0050 trading calendar instead of cache observations.
+4. Rejects V87/V85 managed positions when V88 starts; incompatible cached conclusions cannot carry forward.
+5. Allows an empty official portfolio whenever the validation gate is disabled.
+6. Fixes the UI validation-period display to read model.validation["20d"].
+7. Keeps AI explanation-only and preserves the single 20-trading-day objective versus 0050.
+
+Validation on the bundled point-in-time cache:
+- Development: 32 periods / 160 picks / +4.82% average net return / +2.39% alpha.
+- Sealed holdout: 8 periods / 40 picks / +10.44% average net return / +3.34% alpha.
+- Gate remains disabled because development positive-period consistency is 59.4%, below the unchanged 60% requirement.
