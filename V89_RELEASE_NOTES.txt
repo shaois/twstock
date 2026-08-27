@@ -1,0 +1,34 @@
+V89 - end-to-end practical 20-session model redesign
+
+1. Keeps one objective only: net return over the next 20 trading sessions
+   versus ETF 0050. There is no 5-day forecast, intraday model, or AI ranking.
+2. Replaces the V88 momentum-heavy rank with a fixed 12-factor rank. Medium-
+   term relative strength remains positive, while one-day acceleration, an
+   overheated close, and excessive MA20 extension receive negative weights.
+3. Keeps the portfolio inside the top 2.5% of the 200-stock cross-section.
+   V89 does not widen the pool or promote lower ranks merely to create names.
+4. Applies the same anti-chasing rule in historical validation and production:
+   base-day gain >= 7%, or gain >= 5% with close location >= 95%, waits.
+5. Removes the stack of unsealed per-stock hard gates that caused false empty
+   portfolios. Net buffer, liquidity, reward/risk, probability, and 0050
+   momentum remain visible risk diagnostics.
+6. The first 32 non-overlapping periods selected the fixed V89 weights. The
+   final eight periods were sealed and used only once for acceptance.
+7. V89 uses a maximum of five positions and the existing 20-trading-session
+   stability manager. AI remains explanation-only.
+
+Point-in-time validation after 0.6% round-trip cost:
+- Development: 32 periods, 156 picks, 4.88 average holdings, 0% cash periods,
+  +6.86% average net return, +4.43% alpha, 62.5% positive periods,
+  and -10.94% worst period.
+- Sealed holdout: 8 periods, 39 picks, 4.88 average holdings, 0% cash periods,
+  +13.41% average net return, +6.31% alpha, 75.0% positive periods,
+  and -6.34% worst period.
+
+Bundled-cache verification for 2026-08-26:
+- Formal validation gate: passed.
+- Selected: 2059, 2615, 2609, 2606, 2603.
+- All five have positive expected return after 0.6% cost and 2% buffer.
+
+Historical results do not guarantee future returns. Research candidates are
+not investment advice.

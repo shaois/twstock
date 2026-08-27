@@ -1,9 +1,9 @@
-const V88_AI_EXPLANATION_POLICY = "你只能解釋已鎖定的 20 日模型結果，不得改變研究候選資格、可靠度分級、排名、門檻，也不得自行產生買進結論。請明確說明這是研究候選，不保證獲利。";
+const V89_AI_EXPLANATION_POLICY = "你只能解釋已鎖定的 20 日模型結果，不得改變研究候選資格、可靠度分級、排名、門檻，也不得自行產生買進結論。請明確說明這是研究候選，不保證獲利。";
 "use strict";
 
-const APP_VERSION = "v88.2";
-const MODEL_IMPLEMENTATION_VERSION = "v88.2";
-const MODEL_NAME = "single_horizon_20d_relative_strength_v88_2";
+const APP_VERSION = "v89";
+const MODEL_IMPLEMENTATION_VERSION = "v89";
+const MODEL_NAME = "single_horizon_20d_relative_strength_v89";
 const CONTRACT_VERSION = "20d-relative-strength-v1";
 const MODEL_OBJECTIVE = "outperform_0050_net_return_over_next_20_trading_sessions";
 const BACKEND_URL = "https://twstock-app.onrender.com";
@@ -203,7 +203,7 @@ function candidateRowHtml(row, index, official) {
   return `<tr onclick="showStock('${escapeHtml(row.stockId)}')">
     <td class="td-mono">#${index}</td>
     <td><span class="s-id">${escapeHtml(row.stockId)}</span> ${escapeHtml(stockName(row.stockId))}</td>
-    <td style="color:${official || waiting ? "var(--warn)" : "var(--muted)"}">${status}</td>
+    <td style="color:${official ? (controlled ? "var(--warn)" : "var(--accent)") : waiting ? "var(--warn)" : "var(--muted)"}">${status}</td>
     <td class="td-mono" style="color:${signedClass(forecast.expected_return)}">${percent(forecast.expected_return)}</td>
     <td class="td-mono" style="color:${signedClass(forecast.expected_alpha)}">${percent(forecast.expected_alpha)}</td>
     <td class="td-mono">${percent(forecast.up_probability, 1)}</td>

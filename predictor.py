@@ -24,9 +24,17 @@ FEATURE_NAMES = (
     "volatility_20d",
     "recent_volume_ratio",
     "drawdown_60d",
+    "entry_day_return_pct",
+    "entry_close_location",
 )
 
-FACTOR_WEIGHTS = (0.2, 0.2, 1.5, 1.0, 0.0, 0.1, 0.1, -0.3, 0.1, 0.0)
+# V89 keeps medium-term relative strength as the main positive signal, while
+# penalising one-day acceleration and an overheated close.  These fixed
+# weights were selected on the first 32 non-overlapping periods and accepted
+# only after the final eight sealed periods remained positive versus 0050.
+FACTOR_WEIGHTS = (
+    0.2, 0.2, 1.0, 0.5, 0.0, -0.25, 0.1, -0.3, 0.1, 0.0, -1.0, -0.5
+)
 STABLE_HOLD_DAYS = 20
 TARGET_PORTFOLIO_SIZE = 5
 MIN_VALIDATION_PERIODS = 12
@@ -54,8 +62,8 @@ STRONG_CLOSE_DAY_RETURN_PCT = 5.0
 STRONG_CLOSE_LOCATION = 0.95
 TAIPEI_TZ = timezone(timedelta(hours=8))
 MODEL_CONTRACT_VERSION = "20d-relative-strength-v1"
-MODEL_IMPLEMENTATION_VERSION = "v88.2"
-MODEL_NAME = "single_horizon_20d_relative_strength_v88_2"
+MODEL_IMPLEMENTATION_VERSION = "v89"
+MODEL_NAME = "single_horizon_20d_relative_strength_v89"
 CONTROLLED_PORTFOLIO_SIZE = 2
 CONTROLLED_MAX_POSITION_PCT = 5
 
@@ -266,6 +274,13 @@ def _feature_vector(rows, end, market_index):
     recent_volume = sum(volumes[end - 4:end + 1]) / 5
     baseline_volume = sum(volumes[end - 19:end + 1]) / 20
     high_60 = max(closes[end - 59:end + 1])
+    previous_close = closes[end - 1]
+    high = rows[end].get("high", price)
+    low = rows[end].get("low", price)
+    entry_day_return = (
+        (price / previous_close - 1) * 100 if previous_close > 0 else 0.0
+    )
+    close_location = (price - low) / (high - low) if high > low else 0.5
     return (
         return_20d,
         return_60d,
@@ -277,6 +292,8 @@ def _feature_vector(rows, end, market_index):
         volatility,
         recent_volume / baseline_volume if baseline_volume else 1.0,
         (price / high_60 - 1) * 100 if high_60 else 0.0,
+        entry_day_return,
+        max(0.0, min(1.0, close_location)),
     )
 
 
@@ -411,7 +428,7 @@ def _factor_percentiles(rows):
 
 
 def _historical_factor_periods(samples, minimum_coverage=180):
-    """Build non-overlapping historical portfolios using the production rank."""
+    """Build non-overlapping portfolios with the exact V89 entry guard."""
     by_date = defaultdict(list)
     for sample in samples:
         by_date[sample["base_date"]].append(sample)
@@ -431,10 +448,17 @@ def _historical_factor_periods(samples, minimum_coverage=180):
                 candidates.append(row)
         candidates.sort(key=lambda row: row["factor_percentile"])
         if candidates:
+            selected = [
+                row for row in candidates[:TARGET_PORTFOLIO_SIZE]
+                if not _entry_guard_reasons(
+                    row.get("entry_metrics", {}).get("entry_day_return_pct"),
+                    row.get("entry_metrics", {}).get("entry_close_location"),
+                )
+            ]
             periods.append({
                 "date": date,
                 "candidates": candidates,
-                "selected": candidates[:TARGET_PORTFOLIO_SIZE],
+                "selected": selected,
                 "benchmark_return_20d": candidates[0].get(
                     "benchmark_return_20d", 0.0
                 ),
@@ -515,7 +539,7 @@ def _cohort_prediction(cohort, current_price, factor_percentile, validation):
 
 
 def _candidate_eligibility(forecast, factor_percentile, entry_metrics):
-    """Keep the validated rank as eligibility; V88 risk metrics are diagnostics."""
+    """Keep the validated V89 top-2.5% rank as model eligibility."""
     reasons = []
     if factor_percentile > FACTOR_PREFILTER_PERCENTILE:
         reasons.append(f"截面因子未進前{FACTOR_PREFILTER_PERCENTILE:g}%")
@@ -525,7 +549,7 @@ def _candidate_eligibility(forecast, factor_percentile, entry_metrics):
 def _evaluate_candidate(
     forecast, factor_percentile, entry_metrics, model_enabled=True
 ):
-    """Apply the same V88 eligibility rule in backtests and production."""
+    """Attach V89 diagnostics without adding unvalidated hard gates."""
     qualified, reasons = _candidate_eligibility(
         forecast, factor_percentile, entry_metrics
     )
@@ -575,7 +599,7 @@ def _evaluate_candidate(
 
 
 def _controlled_candidate_eligible(item):
-    """Apply V88 diagnostics only to the small controlled-risk tier.
+    """Apply diagnostic gates only to the legacy controlled-risk tier.
 
     The formal candidate rank remains the validated top 2.5%.  These checks
     can remove a name from the controlled tier, but never promote a stock from
@@ -598,11 +622,10 @@ def _controlled_candidate_eligible(item):
     )
 
 
-def _entry_execution_eligibility(item):
-    """Block chasing after a completed surge without changing model rank."""
-    forecast = item.get("prediction_20d") or {}
-    day_return = _number(forecast.get("entry_day_return_pct"))
-    close_location = _number(forecast.get("entry_close_location"))
+def _entry_guard_reasons(day_return, close_location):
+    """Return point-in-time V89 execution blocks for an overheated close."""
+    day_return = _number(day_return)
+    close_location = _number(close_location)
     reasons = []
     if day_return >= MAX_ENTRY_DAY_RETURN_PCT:
         reasons.append(f"基準日單日上漲{day_return:.2f}%，已達防追高門檻")
@@ -613,6 +636,16 @@ def _entry_execution_eligibility(item):
         reasons.append(
             f"基準日上漲{day_return:.2f}%且收盤位於當日區間頂端"
         )
+    return reasons
+
+
+def _entry_execution_eligibility(item):
+    """Block chasing after a completed surge without changing model rank."""
+    forecast = item.get("prediction_20d") or {}
+    reasons = _entry_guard_reasons(
+        forecast.get("entry_day_return_pct"),
+        forecast.get("entry_close_location"),
+    )
     return not reasons, reasons
 
 
@@ -911,12 +944,11 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "run_date_taipei": run_date_taipei,
             "architecture_contract": _architecture_contract(),
             "description": (
-                "每日收盤後以已通過同規則回測的相對強弱核心排名；V88.2在V88.1"
-                "可靠度分級之外新增防追高執行層，急漲或強勢收最高只改為等待回測，"
-                "不改20日預測與排名。V88.1的正式60%門檻只差一個期間且其他檢查"
-                "全過時，仍僅開放最多2檔、每檔5%的條件式布局；V88保留的淨報酬"
-                "安全緩衝、風險報酬、流動性、資料完整性與0050動能診斷，但不讓"
-                "未通過封存測試的硬門檻改寫排名。"
+                "V89單一20日模型：以20日及60日相對0050強度為主體，新增單日急漲、"
+                "收盤過熱與月線乖離懲罰，避免漲停股壟斷排名。排名後使用同一防追高"
+                "規則決定立即進場或等待回測；開發32期選定固定權重，最後8期只做"
+                "封存驗收。成交量、淨緩衝與風險報酬保留為揭露欄位，不再以未經封存"
+                "證實的多重硬門檻製造假性零持股。"
             ),
             "benchmark": "0050",
             "benchmark_source": "FinMind TaiwanStockPrice",
@@ -960,7 +992,7 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "minimum_validation_picks": dict(MIN_VALIDATION_PICKS),
             "minimum_holdout_periods": MIN_HOLDOUT_PERIODS,
             "minimum_holdout_picks": MIN_HOLDOUT_PICKS,
-            "selection_rule": "validated_daily_cross_section_top_2_5_percent_with_v88_2_entry_execution_guard",
+            "selection_rule": "v89_overheat_adjusted_relative_strength_top_2_5_percent_with_same_rule_entry_guard",
             "eligible_20d_count": len(selected_ids),
             "selected_20d": selected_ids,
             "warning": "模型是歷史統計估計，不保證未來報酬。",
