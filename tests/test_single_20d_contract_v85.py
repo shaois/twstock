@@ -16,7 +16,7 @@ def load_cache(name):
         return json.load(handle)["data"]
 
 
-class Single20DayContractV882Tests(unittest.TestCase):
+class Single20DayContractV89Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.prices = load_cache("price.json")
@@ -37,7 +37,7 @@ class Single20DayContractV882Tests(unittest.TestCase):
         contract = self.result["model"]["architecture_contract"]
         self.assertEqual(self.result["model"]["name"], predictor.MODEL_NAME)
         self.assertEqual(contract["version"], "20d-relative-strength-v1")
-        self.assertEqual(contract["implementation_version"], "v88.2")
+        self.assertEqual(contract["implementation_version"], "v89")
         self.assertEqual(
             contract["objective"],
             "outperform_0050_net_return_over_next_20_trading_sessions",
@@ -95,7 +95,7 @@ class Single20DayContractV882Tests(unittest.TestCase):
         second.pop("_saved_at", None)
         self.assertEqual(first, second)
 
-    def test_v88_risk_diagnostics_are_present_without_extra_horizons(self):
+    def test_v89_risk_diagnostics_are_present_without_extra_horizons(self):
         available = [item for item in self.result["data"].values() if item.get("available")]
         self.assertTrue(available)
         for item in available:
@@ -105,6 +105,29 @@ class Single20DayContractV882Tests(unittest.TestCase):
             self.assertIn("average_volume_20_shares", forecast)
             self.assertIn("average_turnover_5_twd", forecast)
             self.assertIn("benchmark_momentum_20d", forecast)
+
+    def test_v89_rank_penalises_one_day_overheating(self):
+        self.assertEqual(len(predictor.FEATURE_NAMES), 12)
+        self.assertEqual(len(predictor.FACTOR_WEIGHTS), 12)
+        weights = dict(zip(predictor.FEATURE_NAMES, predictor.FACTOR_WEIGHTS))
+        self.assertLess(weights["entry_day_return_pct"], 0)
+        self.assertLess(weights["entry_close_location"], 0)
+        self.assertGreater(weights["relative_20d"], 0)
+        self.assertGreater(weights["relative_60d"], 0)
+
+    def test_historical_portfolio_uses_same_entry_guard_as_production(self):
+        samples, _ = predictor._prepare_samples(
+            self.prices, benchmark_rows=self.benchmark
+        )
+        periods = predictor._historical_factor_periods(samples)
+        self.assertTrue(periods)
+        for period in periods:
+            for row in period["selected"]:
+                metrics = row["entry_metrics"]
+                self.assertFalse(predictor._entry_guard_reasons(
+                    metrics["entry_day_return_pct"],
+                    metrics["entry_close_location"],
+                ))
 
     def test_controlled_gate_only_allows_one_period_consistency_shortfall(self):
         development = {
@@ -313,7 +336,7 @@ class Single20DayContractV882Tests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
         production = html + script + (ROOT / "main.py").read_text(encoding="utf-8")
-        self.assertIn("v88.2", html)
+        self.assertIn("v89", html)
         self.assertIn("runAI20d", script)
         self.assertIn('fetchCache("universe")', script)
         self.assertIn('fetchCache("predictions")', script)
