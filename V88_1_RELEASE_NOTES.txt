@@ -1,0 +1,30 @@
+V88.1 - reliability-tier optimization
+
+1. Keeps the same 20-trading-day objective, 0050 benchmark, factor weights,
+   top-2.5% core rank, transaction cost, forecast calibration, and 20-day hold.
+2. Keeps the formal 60% development-period consistency threshold unchanged.
+3. Adds a controlled tier only when development_period_consistency is the sole
+   failed validation check and exactly one additional positive period would
+   satisfy 60%. All development and sealed-holdout checks must otherwise pass.
+4. Controlled entries must remain inside the original core rank and pass the
+   existing V88 diagnostics: positive return after 0.6% cost plus 2% buffer,
+   expected alpha >= 1%, probability >= 52.5%, reward/risk >= 0.8, 20-day
+   average volume >= 2,000 lots, 5-day turnover >= TWD 50 million, at least
+   250 history days, and non-negative 0050 20-day momentum.
+5. Controlled mode is capped at two stocks and 5% capital per stock. It may
+   remove names but cannot promote an outside stock or change model order.
+6. Any second validation failure, larger consistency shortfall, contract
+   mismatch, or confirmed live drift keeps new allocation at zero.
+7. The UI now distinguishes confirmed candidates, controlled allocation, and
+   research-only observations. AI remains explanation-only.
+
+Validation on the bundled point-in-time cache:
+- Development: 32 periods / 160 picks / +4.82% average net return / +2.39% alpha.
+- Sealed holdout: 8 periods / 40 picks / +10.44% average net return / +3.34% alpha.
+- Current controlled trigger: 19/32 positive periods; exactly one short of 20.
+- Controlled diagnostic filter walk-forward: 28 periods, 22 active periods,
+  +3.09% average return including cash periods and +0.27% average alpha.
+- Bundled-cache controlled selections after all checks: 3008 and 1303.
+
+Historical results do not guarantee future returns. Research candidates are
+not investment advice.

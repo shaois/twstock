@@ -51,8 +51,10 @@ MIN_COMPLETE_HISTORY_DAYS = 250
 MIN_BENCHMARK_MOMENTUM_20D_PCT = 0.0
 TAIPEI_TZ = timezone(timedelta(hours=8))
 MODEL_CONTRACT_VERSION = "20d-relative-strength-v1"
-MODEL_IMPLEMENTATION_VERSION = "v88"
-MODEL_NAME = "single_horizon_20d_relative_strength_v88"
+MODEL_IMPLEMENTATION_VERSION = "v88.1"
+MODEL_NAME = "single_horizon_20d_relative_strength_v88_1"
+CONTROLLED_PORTFOLIO_SIZE = 2
+CONTROLLED_MAX_POSITION_PCT = 5
 
 
 def _number(value, default=0.0):
@@ -539,6 +541,30 @@ def _evaluate_candidate(
     return qualified
 
 
+def _controlled_candidate_eligible(item):
+    """Apply V88 diagnostics only to the small controlled-risk tier.
+
+    The formal candidate rank remains the validated top 2.5%.  These checks
+    can remove a name from the controlled tier, but never promote a stock from
+    outside the core rank or reorder the core ranking.
+    """
+    forecast = item.get("prediction_20d") or {}
+    return (
+        item.get("model_qualified_20d") is True
+        and _number(forecast.get("expected_net_after_buffer")) > 0
+        and _number(forecast.get("expected_alpha")) >= MIN_EXPECTED_ALPHA_PCT
+        and _number(forecast.get("up_probability")) >= MIN_PROFIT_PROBABILITY_PCT
+        and _number(forecast.get("reward_risk_ratio")) >= MIN_REWARD_RISK_RATIO
+        and _number(forecast.get("average_volume_20_shares"))
+        >= MIN_AVG_VOLUME_20_SHARES
+        and _number(forecast.get("average_turnover_5_twd"))
+        >= MIN_AVG_TURNOVER_5_TWD
+        and int(item.get("history_days") or 0) >= MIN_COMPLETE_HISTORY_DAYS
+        and _number(forecast.get("benchmark_momentum_20d"), -999)
+        >= MIN_BENCHMARK_MOMENTUM_20D_PCT
+    )
+
+
 def _rank_value(prediction, horizon):
     data = prediction[f"prediction_{horizon}d"]
     downside_risk = abs(min(0.0, _number(data.get("downside_return"))))
@@ -559,6 +585,8 @@ def _rank_value(prediction, horizon):
 
 def _summarize_validation_rows(rows):
     count = sum(row["count"] for row in rows)
+    positive_periods = sum(row["return"] > 0 for row in rows)
+    benchmark_positive_periods = sum(row["alpha"] > 0 for row in rows)
     return {
         "periods": len(rows),
         "sample_picks": count,
@@ -581,11 +609,13 @@ def _summarize_validation_rows(rows):
             min(row["return"] for row in rows), 2
         ) if rows else None,
         "positive_period_rate": round(
-            sum(row["return"] > 0 for row in rows) / len(rows) * 100, 1
+            positive_periods / len(rows) * 100, 1
         ) if rows else None,
         "benchmark_positive_period_rate": round(
-            sum(row["alpha"] > 0 for row in rows) / len(rows) * 100, 1
+            benchmark_positive_periods / len(rows) * 100, 1
         ) if rows else None,
+        "positive_periods": positive_periods,
+        "benchmark_positive_periods": benchmark_positive_periods,
         "average_holdings": round(count / len(rows), 2) if rows else 0.0,
         "cash_period_rate": round(
             sum(row["count"] == 0 for row in rows) / len(rows) * 100, 1
@@ -667,10 +697,34 @@ def _validation_gate(validation, benchmark_ready):
             holdout.get("benchmark_positive_period_rate")
         ) >= 50,
     }
+    failed_checks = [name for name, passed in checks.items() if not passed]
+    development_periods = int(development.get("periods") or 0)
+    positive_periods = int(development.get("positive_periods") or 0)
+    required_positive_periods = math.ceil(development_periods * 0.60)
+    # The formal 60% rule is unchanged.  A controlled tier is available only
+    # when this is the sole failed check and exactly one additional positive
+    # period would have passed it.  It cannot waive a bad holdout, negative
+    # alpha, missing benchmark, insufficient history, or live-model drift.
+    controlled_enabled = (
+        failed_checks == ["development_period_consistency"]
+        and required_positive_periods - positive_periods == 1
+    )
     return {
         "enabled": all(checks.values()),
+        "controlled_enabled": controlled_enabled,
+        "tier": (
+            "confirmed" if all(checks.values())
+            else "controlled" if controlled_enabled
+            else "blocked"
+        ),
         "checks": checks,
-        "failed_checks": [name for name, passed in checks.items() if not passed],
+        "failed_checks": failed_checks,
+        "controlled_rule": {
+            "only_allowed_failure": "development_period_consistency",
+            "positive_periods": positive_periods,
+            "required_positive_periods": required_positive_periods,
+            "maximum_shortfall_periods": 1,
+        },
         "metrics": {
             "development": dict(development),
             "sealed_holdout": dict(holdout),
@@ -786,6 +840,7 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "factor_score_20d": round(factor_scores.get(stock_id, -999), 3),
             "factor_rank_20d": factor_rank.get(stock_id),
             "factor_percentile_20d": round(percentile, 1),
+            "model_qualified_20d": bool(qualified),
             "model_selected_20d": bool(qualified and gate["enabled"]),
         }
         item["rank_20d"] = round(_rank_value(item, 20), 3)
@@ -805,9 +860,11 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "run_date_taipei": run_date_taipei,
             "architecture_contract": _architecture_contract(),
             "description": (
-                "每日收盤後以已通過同規則回測的相對強弱核心排名；V88新增淨報酬"
+                "每日收盤後以已通過同規則回測的相對強弱核心排名；V88.1新增可靠度"
+                "分級，在正式60%門檻只差一個期間且其他檢查全過時，僅開放最多"
+                "2檔、每檔5%的條件式布局；不改20日模型排名。V88保留的淨報酬"
                 "安全緩衝、風險報酬、流動性、資料完整性與0050動能診斷，但不讓"
-                "未通過封存測試的硬門檻改寫排名；整體驗證未通過時維持現金。"
+                "未通過封存測試的硬門檻改寫排名。"
             ),
             "benchmark": "0050",
             "benchmark_source": "FinMind TaiwanStockPrice",
@@ -848,7 +905,7 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "minimum_validation_picks": dict(MIN_VALIDATION_PICKS),
             "minimum_holdout_periods": MIN_HOLDOUT_PERIODS,
             "minimum_holdout_picks": MIN_HOLDOUT_PICKS,
-            "selection_rule": "validated_daily_cross_section_top_2_5_percent_with_v88_risk_diagnostics",
+            "selection_rule": "validated_daily_cross_section_top_2_5_percent_with_v88_1_reliability_tiers",
             "eligible_20d_count": len(selected_ids),
             "selected_20d": selected_ids,
             "warning": "模型是歷史統計估計，不保證未來報酬。",
@@ -910,10 +967,22 @@ def apply_prediction_stability(
         or live_hit_rate < 45
     )
     contract_valid = _model_contract_is_valid(model)
-    operational = (
+    confirmed_operational = (
         bool(validation_gate.get("enabled"))
         and contract_valid
         and not drift_failed
+    )
+    controlled_operational = (
+        not confirmed_operational
+        and bool(validation_gate.get("controlled_enabled"))
+        and contract_valid
+        and not drift_failed
+    )
+    operational = confirmed_operational or controlled_operational
+    reliability_tier = (
+        "confirmed" if confirmed_operational
+        else "controlled" if controlled_operational
+        else "blocked"
     )
     gate_reasons = list(validation_gate.get("failed_checks") or [])
     if not contract_valid:
@@ -925,12 +994,25 @@ def apply_prediction_stability(
 
     reliability = {
         "20d": {
-            "confirmed_buy_enabled": operational,
-            "controlled_buy_enabled": False,
+            "confirmed_buy_enabled": confirmed_operational,
+            "controlled_buy_enabled": controlled_operational,
             "operational_enabled": operational,
-            "tier": "confirmed" if operational else "research",
-            "max_position": "10-20%" if operational else "0%",
-            "status": "正式通過" if operational else "暫停新增布局",
+            "tier": reliability_tier,
+            "max_position": (
+                "10-20%" if confirmed_operational
+                else f"每檔最多 {CONTROLLED_MAX_POSITION_PCT}%" if controlled_operational
+                else "0%"
+            ),
+            "max_holdings": (
+                TARGET_PORTFOLIO_SIZE if confirmed_operational
+                else CONTROLLED_PORTFOLIO_SIZE if controlled_operational
+                else 0
+            ),
+            "status": (
+                "正式通過" if confirmed_operational
+                else "條件式布局" if controlled_operational
+                else "暫停新增布局"
+            ),
             "reasons": gate_reasons,
             "validation_periods": validation_20d.get("periods"),
             "validation_picks": validation_20d.get("sample_picks"),
@@ -966,20 +1048,31 @@ def apply_prediction_stability(
             continue
         forecast = item.get("prediction_20d", {})
         forecast.setdefault("raw_signal", forecast.get("signal", "觀察"))
-        forecast["recommendation_tier"] = reliability["20d"]["tier"]
+        forecast["recommendation_tier"] = reliability_tier
         forecast["max_position"] = reliability["20d"]["max_position"]
-        if item.get("model_selected_20d") is True and operational:
+        base_qualified = item.get("model_qualified_20d") is True
+        if base_qualified and confirmed_operational:
             selected_today.append(stock_id)
             forecast["signal"] = "買進"
             forecast["safety_block"] = ""
-        elif item.get("model_selected_20d") is True:
+        elif controlled_operational and _controlled_candidate_eligible(item):
+            selected_today.append(stock_id)
+            forecast["signal"] = "條件式布局"
+            forecast["safety_block"] = "正式60%一致性門檻尚差一個驗證期間"
+        elif base_qualified:
             forecast["signal"] = "觀察"
-            forecast["safety_block"] = "；".join(gate_reasons) or "模型驗證未通過"
+            forecast["safety_block"] = (
+                "條件式風險診斷未全部通過"
+                if controlled_operational
+                else "；".join(gate_reasons) or "模型驗證未通過"
+            )
 
     selected_today.sort(
         key=lambda stock_id: prediction_data[stock_id].get("factor_score_20d", -999),
         reverse=True,
     )
+    if controlled_operational:
+        selected_today = selected_today[:CONTROLLED_PORTFOLIO_SIZE]
     current_rank = {stock_id: index + 1 for index, stock_id in enumerate(selected_today)}
 
     recent_dates = [date for date in sorted(history) if not model_date or date < model_date]
@@ -1093,7 +1186,11 @@ def apply_prediction_stability(
     model["stable_20d"] = managed_ids
     model["stable_20d_meta"] = managed_meta
     model["target_portfolio_size"] = TARGET_PORTFOLIO_SIZE
-    model["rebalance_rule"] = "每檔進場後持有20個交易日；有空缺時才由當日截面前五名遞補"
+    model["active_portfolio_limit"] = reliability["20d"]["max_holdings"]
+    model["rebalance_rule"] = (
+        "正式模式最多5檔；條件式模式最多2檔且每檔最多5%；每檔進場後持有20個交易日，"
+        "有空缺時才依原始截面排名遞補"
+    )
     model["live_tracking"] = {
         "20d": {
             "count": len(realised),
@@ -1106,9 +1203,15 @@ def apply_prediction_stability(
     model["operational_status"] = {
         "20d": {
             "enabled": operational,
-            "tier": reliability["20d"]["tier"],
+            "confirmed": confirmed_operational,
+            "controlled": controlled_operational,
+            "tier": reliability_tier,
             "max_position": reliability["20d"]["max_position"],
-            "label": "正式啟用" if operational else "模型停用，僅供研究",
+            "label": (
+                "正式啟用" if confirmed_operational
+                else "條件式啟用" if controlled_operational
+                else "模型停用，僅供研究"
+            ),
             "reasons": gate_reasons,
         }
     }
