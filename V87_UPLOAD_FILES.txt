@@ -1,7 +1,0 @@
-predictor.py
-app.js
-index.html
-verify_model.py
-MODEL_ARCHITECTURE.md
-README.md
-V87_RELEASE_NOTES.txt
