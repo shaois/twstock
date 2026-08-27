@@ -16,7 +16,7 @@ def load_cache(name):
         return json.load(handle)["data"]
 
 
-class Single20DayContractV881Tests(unittest.TestCase):
+class Single20DayContractV882Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.prices = load_cache("price.json")
@@ -37,7 +37,7 @@ class Single20DayContractV881Tests(unittest.TestCase):
         contract = self.result["model"]["architecture_contract"]
         self.assertEqual(self.result["model"]["name"], predictor.MODEL_NAME)
         self.assertEqual(contract["version"], "20d-relative-strength-v1")
-        self.assertEqual(contract["implementation_version"], "v88.1")
+        self.assertEqual(contract["implementation_version"], "v88.2")
         self.assertEqual(
             contract["objective"],
             "outperform_0050_net_return_over_next_20_trading_sessions",
@@ -164,6 +164,8 @@ class Single20DayContractV881Tests(unittest.TestCase):
                 "average_volume_20_shares": 3_000_000,
                 "average_turnover_5_twd": 100_000_000,
                 "benchmark_momentum_20d": 1.0,
+                "entry_day_return_pct": 0.0,
+                "entry_close_location": 0.5,
             })
             item["history_days"] = 300
         stable = predictor.apply_prediction_stability(
@@ -176,6 +178,35 @@ class Single20DayContractV881Tests(unittest.TestCase):
             == "每檔最多 5%"
             for stock_id in stable["model"]["selected_20d"]
         ))
+
+    def test_entry_guard_blocks_surges_without_changing_rank(self):
+        surge = {
+            "factor_rank_20d": 3,
+            "prediction_20d": {
+                "entry_day_return_pct": 9.97,
+                "entry_close_location": 1.0,
+            },
+        }
+        eligible, reasons = predictor._entry_execution_eligibility(surge)
+        self.assertFalse(eligible)
+        self.assertTrue(reasons)
+        self.assertEqual(surge["factor_rank_20d"], 3)
+
+        strong_close = {
+            "prediction_20d": {
+                "entry_day_return_pct": 5.5,
+                "entry_close_location": 0.96,
+            }
+        }
+        self.assertFalse(predictor._entry_execution_eligibility(strong_close)[0])
+
+        ordinary = {
+            "prediction_20d": {
+                "entry_day_return_pct": 5.5,
+                "entry_close_location": 0.50,
+            }
+        }
+        self.assertTrue(predictor._entry_execution_eligibility(ordinary)[0])
 
     def test_holding_age_uses_actual_trading_calendar(self):
         result = copy.deepcopy(self.result)
@@ -282,7 +313,7 @@ class Single20DayContractV881Tests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
         production = html + script + (ROOT / "main.py").read_text(encoding="utf-8")
-        self.assertIn("v88.1", html)
+        self.assertIn("v88.2", html)
         self.assertIn("runAI20d", script)
         self.assertIn('fetchCache("universe")', script)
         self.assertIn('fetchCache("predictions")', script)
