@@ -1,0 +1,27 @@
+V88.2 - anti-chasing entry execution guard
+
+1. Keeps the V88.1 20-session forecast, 0050 objective, factor weights,
+   original cross-sectional rank, reliability tiers, and holding-period rules.
+2. Adds an entry-only guard. A stock remains in the research rank but changes
+   to wait-for-pullback when its completed base-day return is at least 7%.
+3. The same wait status applies when the base-day return is at least 5% and
+   the close is in the top 5% of that day's high-low range.
+4. The guard can only remove current entry eligibility. It cannot promote a
+   stock, reorder the model, alter its 20-day prediction, or let AI override it.
+5. The UI displays base-day return, close location, entry-block reason, and
+   the maximum entry price that preserves the 0.6% cost plus 2% safety buffer.
+6. A waiting stock has a 0% current allocation and AI must say no chasing.
+
+Point-in-time diagnostic-filter comparison on the bundled cache:
+- Without the entry guard: 22 active periods, +3.93% active-period average,
+  +0.27% alpha including cash periods, 54.5% positive active periods.
+- With the V88.2 guard: 20 active periods, +4.82% active-period average,
+  +0.73% alpha including cash periods, 60.0% positive active periods.
+
+Current bundled-cache verification:
+- 3008 remains rank 3; base-day return +9.97%, close location 100%, waiting.
+- 1303 remains rank 5; base-day return +9.81%, close location 100%, waiting.
+- Current selected portfolio: empty. This is intentional; no stock is forced.
+
+Historical results do not guarantee future returns. Research candidates are
+not investment advice.

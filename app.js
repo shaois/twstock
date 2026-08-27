@@ -1,9 +1,9 @@
 const V88_AI_EXPLANATION_POLICY = "你只能解釋已鎖定的 20 日模型結果，不得改變研究候選資格、可靠度分級、排名、門檻，也不得自行產生買進結論。請明確說明這是研究候選，不保證獲利。";
 "use strict";
 
-const APP_VERSION = "v88.1";
-const MODEL_IMPLEMENTATION_VERSION = "v88.1";
-const MODEL_NAME = "single_horizon_20d_relative_strength_v88_1";
+const APP_VERSION = "v88.2";
+const MODEL_IMPLEMENTATION_VERSION = "v88.2";
+const MODEL_NAME = "single_horizon_20d_relative_strength_v88_2";
 const CONTRACT_VERSION = "20d-relative-strength-v1";
 const MODEL_OBJECTIVE = "outperform_0050_net_return_over_next_20_trading_sessions";
 const BACKEND_URL = "https://twstock-app.onrender.com";
@@ -189,18 +189,21 @@ function renderStockList() {
   byId("stockList").innerHTML = rows.map(({ stockId, item, selected }) => `
     <button class="stock-item ${stockId === state.currentStockId ? "active" : ""}" onclick="showStock('${escapeHtml(stockId)}')">
       <span><span class="s-id">${escapeHtml(stockId)}</span><span class="s-name">${escapeHtml(stockName(stockId))}</span></span>
-      <span style="text-align:right"><span class="model-badge">20日</span><span class="s-name">${selected ? "名單" : `#${number(item.factor_rank_20d, "--")}`}</span></span>
+      <span style="text-align:right"><span class="model-badge">20日</span><span class="s-name">${selected ? "名單" : item.prediction_20d?.entry_status === "wait_pullback" ? "等待" : `#${number(item.factor_rank_20d, "--")}`}</span></span>
     </button>`).join("");
 }
 
 function candidateRowHtml(row, index, official) {
   const forecast = row.item.prediction_20d;
   const controlled = state.model.reliability?.["20d"]?.tier === "controlled";
-  const status = official ? (controlled ? "條件式布局" : "20 日研究候選") : "研究觀察";
+  const waiting = forecast.entry_status === "wait_pullback";
+  const status = official
+    ? (controlled ? "條件式布局" : "20 日研究候選")
+    : waiting ? "等待回測・禁止追價" : "研究觀察";
   return `<tr onclick="showStock('${escapeHtml(row.stockId)}')">
     <td class="td-mono">#${index}</td>
     <td><span class="s-id">${escapeHtml(row.stockId)}</span> ${escapeHtml(stockName(row.stockId))}</td>
-    <td style="color:${official ? (controlled ? "var(--warn)" : "var(--accent)") : "var(--muted)"}">${status}</td>
+    <td style="color:${official || waiting ? "var(--warn)" : "var(--muted)"}">${status}</td>
     <td class="td-mono" style="color:${signedClass(forecast.expected_return)}">${percent(forecast.expected_return)}</td>
     <td class="td-mono" style="color:${signedClass(forecast.expected_alpha)}">${percent(forecast.expected_alpha)}</td>
     <td class="td-mono">${percent(forecast.up_probability, 1)}</td>
@@ -264,7 +267,10 @@ function showStock(stockId) {
   const forecast = item.prediction_20d;
   const selected = item.model_selected_20d === true;
   const controlled = selected && forecast.recommendation_tier === "controlled";
-  const conclusion = selected ? (controlled ? "條件式布局" : "研究候選") : "研究觀察";
+  const waiting = forecast.entry_status === "wait_pullback";
+  const conclusion = selected
+    ? (controlled ? "條件式布局" : "研究候選")
+    : waiting ? "等待回測" : "研究觀察";
   const stable = item.stable_20d || {};
   state.currentStockId = stockId;
   renderStockList();
@@ -280,12 +286,12 @@ function showStock(stockId) {
       <div class="score-card"><div class="val" style="color:${signedClass(forecast.expected_alpha)}">${percent(forecast.expected_alpha)}</div><div class="lbl">預期超越 0050</div></div>
       <div class="score-card"><div class="val" style="color:var(--accent2)">${percent(forecast.up_probability, 1)}</div><div class="lbl">歷史上漲機率</div></div>
       <div class="score-card"><div class="val" style="color:var(--warn)">${number(forecast.confidence)}/100</div><div class="lbl">模型信心</div></div>
-      <div class="score-card"><div class="val" style="color:${selected ? (controlled ? "var(--warn)" : "var(--green)") : "var(--muted)"}">${conclusion}</div><div class="lbl">20 日結論</div></div>
+      <div class="score-card"><div class="val" style="color:${selected ? (controlled ? "var(--warn)" : "var(--green)") : waiting ? "var(--red)" : "var(--muted)"}">${conclusion}</div><div class="lbl">20 日結論</div></div>
     </div>
     <div class="panel" style="margin-bottom:14px;border-color:${selected ? "var(--accent)" : "var(--warn)"}">
       <div class="panel-title">20 日布局資料</div><div class="detail-grid" style="margin:0">
         <div>${metric("模型順位", `#${number(item.factor_rank_20d, "--")}`)}${metric("模型價", money(item.current_price))}${metric("安全緩衝後淨報酬", percent(forecast.expected_net_after_buffer))}${metric("風險報酬比", `${number(forecast.reward_risk_ratio).toFixed(2)} : 1`)}${metric("20 日價格區間", `${money(forecast.range_low_price)} ~ ${money(forecast.range_high_price)}`)}${metric("下行情境", money(forecast.downside_price))}</div>
-        <div>${metric("相似樣本", number(forecast.analogue_count))}${metric("因子分數", number(item.factor_score_20d))}${metric("截面百分位", `${number(item.factor_percentile_20d)}%`)}${metric("20 日日均量", `${Math.round(number(forecast.average_volume_20_shares) / 1000).toLocaleString("zh-TW")} 張`)}${metric("5 日日均成交額", money(forecast.average_turnover_5_twd))}${metric("0050 近20日動能", percent(forecast.benchmark_momentum_20d))}${metric("資金上限", forecast.max_position || "0%")} ${metric("持有進度", selected ? `第 ${number(stable.age_days)} / 20 個交易日` : "未進入研究候選")}</div>
+        <div>${metric("相似樣本", number(forecast.analogue_count))}${metric("因子分數", number(item.factor_score_20d))}${metric("截面百分位", `${number(item.factor_percentile_20d)}%`)}${metric("基準日單日漲幅", percent(forecast.entry_day_return_pct))}${metric("收盤區間位置", `${(number(forecast.entry_close_location) * 100).toFixed(1)}%`)}${metric("可接受最高進場價", money(forecast.maximum_entry_price))}${metric("進場限制", (forecast.entry_execution_reasons || []).join("；") || "未觸發防追高")}${metric("20 日日均量", `${Math.round(number(forecast.average_volume_20_shares) / 1000).toLocaleString("zh-TW")} 張`)}${metric("5 日日均成交額", money(forecast.average_turnover_5_twd))}${metric("0050 近20日動能", percent(forecast.benchmark_momentum_20d))}${metric("資金上限", selected ? (forecast.max_position || "0%") : "0%")} ${metric("持有進度", selected ? `第 ${number(stable.age_days)} / 20 個交易日` : "未進入研究候選")}</div>
       </div>
     </div>
     <div class="ai-panel" id="aiPanel" style="display:none"><div class="ai-header"><div class="panel-title" style="margin:0">AI 解讀</div><span class="ai-badge" id="aiBadge"></span></div><div class="ai-content" id="aiContent"></div></div>`;
@@ -293,6 +299,7 @@ function showStock(stockId) {
 
 function modelDecision(stockId) {
   const item = state.predictions[stockId];
+  if (item?.prediction_20d?.entry_status === "wait_pullback") return "等待回測，禁止追價";
   if (item?.model_selected_20d !== true) return "研究觀察";
   return item.prediction_20d?.recommendation_tier === "controlled"
     ? "20 日條件式布局"
@@ -303,7 +310,7 @@ function aiPrompt(stockId) {
   const item = state.predictions[stockId];
   const forecast = item.prediction_20d;
   const decision = modelDecision(stockId);
-  return `你是台股20個交易日投資模型的解讀助理。唯一週期是20個交易日，唯一比較基準是0050。\n模型已決定「${decision}」，你只能解釋，不可改寫排名、可靠度分級或結論。\n股票：${stockId} ${stockName(stockId)}\n預期20日報酬：${forecast.expected_return}%\n安全緩衝後淨報酬：${forecast.expected_net_after_buffer}%\n預期超額：${forecast.expected_alpha}%\n歷史上漲機率：${forecast.up_probability}%\n風險報酬比：${forecast.reward_risk_ratio}\n價格區間：${forecast.range_low_price}至${forecast.range_high_price}\n下行情境：${forecast.downside_price}\n資金上限：${forecast.max_position || "0%"}\n請用繁體中文，最多160字，依序輸出：\n結論：逐字寫「${decision}」\n核心見解：一個主要報酬來源與一個主要風險\n執行方式：若為條件式布局，必須重申每檔最多5%；若為正式研究候選則說明20日內如何分批；否則說明等待條件\n失效條件：一個可驗證條件`;
+  return `你是台股20個交易日投資模型的解讀助理。唯一週期是20個交易日，唯一比較基準是0050。\n模型已決定「${decision}」，你只能解釋，不可改寫排名、可靠度分級或結論。\n股票：${stockId} ${stockName(stockId)}\n預期20日報酬：${forecast.expected_return}%\n安全緩衝後淨報酬：${forecast.expected_net_after_buffer}%\n預期超額：${forecast.expected_alpha}%\n歷史上漲機率：${forecast.up_probability}%\n風險報酬比：${forecast.reward_risk_ratio}\n價格區間：${forecast.range_low_price}至${forecast.range_high_price}\n下行情境：${forecast.downside_price}\n基準日單日漲幅：${forecast.entry_day_return_pct}%\n可接受最高進場價：${forecast.maximum_entry_price}\n進場限制：${(forecast.entry_execution_reasons || []).join("；") || "無"}\n資金上限：${item.model_selected_20d ? (forecast.max_position || "0%") : "0%"}\n請用繁體中文，最多160字，依序輸出：\n結論：逐字寫「${decision}」\n核心見解：一個主要報酬來源與一個主要風險\n執行方式：若為等待回測，必須明確寫禁止追價；若為條件式布局，必須重申每檔最多5%；否則說明等待條件\n失效條件：一個可驗證條件`;
 }
 
 async function runAI20d(stockId) {

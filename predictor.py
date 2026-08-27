@@ -49,10 +49,13 @@ MIN_AVG_VOLUME_20_SHARES = 2_000_000
 MIN_AVG_TURNOVER_5_TWD = 50_000_000
 MIN_COMPLETE_HISTORY_DAYS = 250
 MIN_BENCHMARK_MOMENTUM_20D_PCT = 0.0
+MAX_ENTRY_DAY_RETURN_PCT = 7.0
+STRONG_CLOSE_DAY_RETURN_PCT = 5.0
+STRONG_CLOSE_LOCATION = 0.95
 TAIPEI_TZ = timezone(timedelta(hours=8))
 MODEL_CONTRACT_VERSION = "20d-relative-strength-v1"
-MODEL_IMPLEMENTATION_VERSION = "v88.1"
-MODEL_NAME = "single_horizon_20d_relative_strength_v88_1"
+MODEL_IMPLEMENTATION_VERSION = "v88.2"
+MODEL_NAME = "single_horizon_20d_relative_strength_v88_2"
 CONTROLLED_PORTFOLIO_SIZE = 2
 CONTROLLED_MAX_POSITION_PCT = 5
 
@@ -98,8 +101,14 @@ def _normalize_price_rows(rows):
         close = _number(row.get("close"))
         if not date or close <= 0:
             continue
+        open_price = _number(row.get("open"), close)
+        high = max(close, open_price, _number(row.get("max"), close))
+        low = min(close, open_price, _number(row.get("min"), close))
         by_date[date] = {
             "date": date,
+            "open": open_price,
+            "high": high,
+            "low": low,
             "close": close,
             "volume": max(0.0, _number(row.get("Trading_Volume"))),
             "turnover": max(0.0, _number(row.get("Trading_money"))),
@@ -121,6 +130,9 @@ def _normalize_price_rows(rows):
         if ratio < 0.55 or ratio > 1.80:
             adjustment *= ratio
             volume_adjustment /= ratio
+        normalized[index - 1]["open"] *= adjustment
+        normalized[index - 1]["high"] *= adjustment
+        normalized[index - 1]["low"] *= adjustment
         normalized[index - 1]["close"] *= adjustment
         normalized[index - 1]["volume"] *= volume_adjustment
     return normalized
@@ -274,10 +286,19 @@ def _entry_metrics(rows, end, market_index):
         return {}
     volumes = [row["volume"] for row in rows]
     turnovers = [row.get("turnover", 0.0) for row in rows]
+    close = rows[end]["close"]
+    previous_close = rows[end - 1]["close"] if end > 0 else close
+    high = rows[end].get("high", close)
+    low = rows[end].get("low", close)
+    close_location = (close - low) / (high - low) if high > low else 0.5
     return {
         "average_volume_20_shares": sum(volumes[end - 19:end + 1]) / 20,
         "average_turnover_5_twd": sum(turnovers[end - 4:end + 1]) / 5,
         "history_days": end + 1,
+        "entry_day_return_pct": (
+            (close / previous_close - 1) * 100 if previous_close > 0 else 0.0
+        ),
+        "entry_close_location": max(0.0, min(1.0, close_location)),
         "benchmark_momentum_20d": _market_return(
             market_index, rows[end - 20]["date"], rows[end]["date"]
         ),
@@ -476,6 +497,7 @@ def _cohort_prediction(cohort, current_price, factor_percentile, validation):
     confidence = max(0, min(100, round(period_consistency)))
     return {
         "expected_return": round(expected_return, 2),
+        "expected_price": round(current_price * (1 + expected_return / 100), 2),
         "expected_alpha": round(expected_alpha, 2),
         "up_probability": round(up_probability * 100, 1),
         "range_low_return": round(q25, 2),
@@ -533,6 +555,17 @@ def _evaluate_candidate(
     forecast["benchmark_momentum_20d"] = round(
         _number(entry_metrics.get("benchmark_momentum_20d")), 2
     )
+    forecast["entry_day_return_pct"] = round(
+        _number(entry_metrics.get("entry_day_return_pct")), 2
+    )
+    forecast["entry_close_location"] = round(
+        _number(entry_metrics.get("entry_close_location")), 3
+    )
+    expected_price = _number(forecast.get("expected_price"))
+    forecast["maximum_entry_price"] = round(
+        expected_price / (1 + (ROUND_TRIP_COST_PCT + SAFETY_BUFFER_PCT) / 100),
+        2,
+    ) if expected_price > 0 else None
     forecast["raw_signal"] = "買進" if qualified else "觀察"
     forecast["signal"] = "買進" if qualified and model_enabled else "觀察"
     forecast["safety_block"] = (
@@ -563,6 +596,24 @@ def _controlled_candidate_eligible(item):
         and _number(forecast.get("benchmark_momentum_20d"), -999)
         >= MIN_BENCHMARK_MOMENTUM_20D_PCT
     )
+
+
+def _entry_execution_eligibility(item):
+    """Block chasing after a completed surge without changing model rank."""
+    forecast = item.get("prediction_20d") or {}
+    day_return = _number(forecast.get("entry_day_return_pct"))
+    close_location = _number(forecast.get("entry_close_location"))
+    reasons = []
+    if day_return >= MAX_ENTRY_DAY_RETURN_PCT:
+        reasons.append(f"基準日單日上漲{day_return:.2f}%，已達防追高門檻")
+    elif (
+        day_return >= STRONG_CLOSE_DAY_RETURN_PCT
+        and close_location >= STRONG_CLOSE_LOCATION
+    ):
+        reasons.append(
+            f"基準日上漲{day_return:.2f}%且收盤位於當日區間頂端"
+        )
+    return not reasons, reasons
 
 
 def _rank_value(prediction, horizon):
@@ -860,9 +911,10 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "run_date_taipei": run_date_taipei,
             "architecture_contract": _architecture_contract(),
             "description": (
-                "每日收盤後以已通過同規則回測的相對強弱核心排名；V88.1新增可靠度"
-                "分級，在正式60%門檻只差一個期間且其他檢查全過時，僅開放最多"
-                "2檔、每檔5%的條件式布局；不改20日模型排名。V88保留的淨報酬"
+                "每日收盤後以已通過同規則回測的相對強弱核心排名；V88.2在V88.1"
+                "可靠度分級之外新增防追高執行層，急漲或強勢收最高只改為等待回測，"
+                "不改20日預測與排名。V88.1的正式60%門檻只差一個期間且其他檢查"
+                "全過時，仍僅開放最多2檔、每檔5%的條件式布局；V88保留的淨報酬"
                 "安全緩衝、風險報酬、流動性、資料完整性與0050動能診斷，但不讓"
                 "未通過封存測試的硬門檻改寫排名。"
             ),
@@ -900,12 +952,15 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
                 "minimum_average_turnover_5_twd": MIN_AVG_TURNOVER_5_TWD,
                 "minimum_complete_history_days": MIN_COMPLETE_HISTORY_DAYS,
                 "minimum_benchmark_momentum_20d_pct": MIN_BENCHMARK_MOMENTUM_20D_PCT,
+                "maximum_entry_day_return_pct": MAX_ENTRY_DAY_RETURN_PCT,
+                "strong_close_day_return_pct": STRONG_CLOSE_DAY_RETURN_PCT,
+                "strong_close_location": STRONG_CLOSE_LOCATION,
             },
             "minimum_validation_periods": MIN_VALIDATION_PERIODS,
             "minimum_validation_picks": dict(MIN_VALIDATION_PICKS),
             "minimum_holdout_periods": MIN_HOLDOUT_PERIODS,
             "minimum_holdout_picks": MIN_HOLDOUT_PICKS,
-            "selection_rule": "validated_daily_cross_section_top_2_5_percent_with_v88_1_reliability_tiers",
+            "selection_rule": "validated_daily_cross_section_top_2_5_percent_with_v88_2_entry_execution_guard",
             "eligible_20d_count": len(selected_ids),
             "selected_20d": selected_ids,
             "warning": "模型是歷史統計估計，不保證未來報酬。",
@@ -1051,21 +1106,33 @@ def apply_prediction_stability(
         forecast["recommendation_tier"] = reliability_tier
         forecast["max_position"] = reliability["20d"]["max_position"]
         base_qualified = item.get("model_qualified_20d") is True
-        if base_qualified and confirmed_operational:
+        entry_eligible, entry_reasons = _entry_execution_eligibility(item)
+        forecast["entry_execution_eligible"] = entry_eligible
+        forecast["entry_execution_reasons"] = entry_reasons
+        forecast["entry_status"] = "ready" if entry_eligible else "wait_pullback"
+        if base_qualified and confirmed_operational and entry_eligible:
             selected_today.append(stock_id)
             forecast["signal"] = "買進"
             forecast["safety_block"] = ""
-        elif controlled_operational and _controlled_candidate_eligible(item):
+        elif (
+            controlled_operational
+            and _controlled_candidate_eligible(item)
+            and entry_eligible
+        ):
             selected_today.append(stock_id)
             forecast["signal"] = "條件式布局"
             forecast["safety_block"] = "正式60%一致性門檻尚差一個驗證期間"
         elif base_qualified:
-            forecast["signal"] = "觀察"
-            forecast["safety_block"] = (
-                "條件式風險診斷未全部通過"
-                if controlled_operational
-                else "；".join(gate_reasons) or "模型驗證未通過"
-            )
+            if not entry_eligible:
+                forecast["signal"] = "等待回測"
+                forecast["safety_block"] = "；".join(entry_reasons)
+            else:
+                forecast["signal"] = "觀察"
+                forecast["safety_block"] = (
+                    "條件式風險診斷未全部通過"
+                    if controlled_operational
+                    else "；".join(gate_reasons) or "模型驗證未通過"
+                )
 
     selected_today.sort(
         key=lambda stock_id: prediction_data[stock_id].get("factor_score_20d", -999),
@@ -1189,7 +1256,7 @@ def apply_prediction_stability(
     model["active_portfolio_limit"] = reliability["20d"]["max_holdings"]
     model["rebalance_rule"] = (
         "正式模式最多5檔；條件式模式最多2檔且每檔最多5%；每檔進場後持有20個交易日，"
-        "有空缺時才依原始截面排名遞補"
+        "基準日急漲或強勢收最高時先等待回測；有空缺時才依原始截面排名遞補"
     )
     model["live_tracking"] = {
         "20d": {
