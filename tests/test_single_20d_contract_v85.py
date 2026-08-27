@@ -16,7 +16,7 @@ def load_cache(name):
         return json.load(handle)["data"]
 
 
-class Single20DayContractV88Tests(unittest.TestCase):
+class Single20DayContractV881Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.prices = load_cache("price.json")
@@ -37,7 +37,7 @@ class Single20DayContractV88Tests(unittest.TestCase):
         contract = self.result["model"]["architecture_contract"]
         self.assertEqual(self.result["model"]["name"], predictor.MODEL_NAME)
         self.assertEqual(contract["version"], "20d-relative-strength-v1")
-        self.assertEqual(contract["implementation_version"], "v88")
+        self.assertEqual(contract["implementation_version"], "v88.1")
         self.assertEqual(
             contract["objective"],
             "outperform_0050_net_return_over_next_20_trading_sessions",
@@ -105,6 +105,77 @@ class Single20DayContractV88Tests(unittest.TestCase):
             self.assertIn("average_volume_20_shares", forecast)
             self.assertIn("average_turnover_5_twd", forecast)
             self.assertIn("benchmark_momentum_20d", forecast)
+
+    def test_controlled_gate_only_allows_one_period_consistency_shortfall(self):
+        development = {
+            "periods": 32,
+            "sample_picks": 160,
+            "average_return": 4.82,
+            "average_alpha": 2.39,
+            "positive_period_rate": 59.4,
+            "positive_periods": 19,
+            "benchmark_positive_period_rate": 56.2,
+        }
+        holdout = {
+            "periods": 8,
+            "sample_picks": 40,
+            "average_return": 10.44,
+            "average_alpha": 3.34,
+            "positive_period_rate": 75.0,
+            "benchmark_positive_period_rate": 62.5,
+        }
+        development["sealed_holdout"] = holdout
+        gate = predictor._validation_gate({"20d": development}, True)
+        self.assertFalse(gate["enabled"])
+        self.assertTrue(gate["controlled_enabled"])
+        self.assertEqual(gate["tier"], "controlled")
+        self.assertEqual(
+            gate["failed_checks"], ["development_period_consistency"]
+        )
+
+        failed_alpha = copy.deepcopy(development)
+        failed_alpha["average_alpha"] = -0.01
+        blocked = predictor._validation_gate({"20d": failed_alpha}, True)
+        self.assertFalse(blocked["controlled_enabled"])
+        self.assertEqual(blocked["tier"], "blocked")
+
+    def test_controlled_mode_caps_new_positions_at_two(self):
+        result = copy.deepcopy(self.result)
+        result["model"]["validation_gate"] = {
+            "enabled": False,
+            "controlled_enabled": True,
+            "failed_checks": ["development_period_consistency"],
+        }
+        ranked = sorted(
+            (
+                (stock_id, item) for stock_id, item in result["data"].items()
+                if item.get("available")
+            ),
+            key=lambda pair: pair[1].get("factor_rank_20d", 9999),
+        )
+        for stock_id, item in ranked:
+            item["model_qualified_20d"] = item.get("factor_rank_20d", 9999) <= 5
+            forecast = item["prediction_20d"]
+            forecast.update({
+                "expected_net_after_buffer": 0.5,
+                "expected_alpha": 1.2,
+                "up_probability": 55.0,
+                "reward_risk_ratio": 1.0,
+                "average_volume_20_shares": 3_000_000,
+                "average_turnover_5_twd": 100_000_000,
+                "benchmark_momentum_20d": 1.0,
+            })
+            item["history_days"] = 300
+        stable = predictor.apply_prediction_stability(
+            result, {}, self.universe, run_date=self.run_date
+        )
+        self.assertEqual(stable["model"]["reliability"]["20d"]["tier"], "controlled")
+        self.assertEqual(len(stable["model"]["selected_20d"]), 2)
+        self.assertTrue(all(
+            stable["data"][stock_id]["prediction_20d"]["max_position"]
+            == "每檔最多 5%"
+            for stock_id in stable["model"]["selected_20d"]
+        ))
 
     def test_holding_age_uses_actual_trading_calendar(self):
         result = copy.deepcopy(self.result)
@@ -211,7 +282,7 @@ class Single20DayContractV88Tests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
         production = html + script + (ROOT / "main.py").read_text(encoding="utf-8")
-        self.assertIn("v88", html)
+        self.assertIn("v88.1", html)
         self.assertIn("runAI20d", script)
         self.assertIn('fetchCache("universe")', script)
         self.assertIn('fetchCache("predictions")', script)
