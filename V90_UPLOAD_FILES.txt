@@ -1,0 +1,19 @@
+Upload these files to the same paths on GitHub:
+
+predictor.py
+update_all.py
+app.js
+index.html
+main.py
+verify_model.py
+README.md
+MODEL_ARCHITECTURE.md
+V90_RELEASE_NOTES.txt
+V90_UPLOAD_FILES.txt
+tests/test_single_20d_contract_v90.py
+
+Delete the obsolete test file if it still exists on GitHub:
+tests/test_single_20d_contract_v89.py
+
+After uploading, manually run refresh-cache until the log says the 200/200
+cycle completed and predictions.json was rebuilt as V90.

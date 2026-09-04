@@ -28,7 +28,7 @@ FEATURE_NAMES = (
     "entry_close_location",
 )
 
-# V89 keeps medium-term relative strength as the main positive signal, while
+# V90 keeps medium-term relative strength as the main positive signal, while
 # penalising one-day acceleration and an overheated close.  These fixed
 # weights were selected on the first 32 non-overlapping periods and accepted
 # only after the final eight sealed periods remained positive versus 0050.
@@ -62,8 +62,8 @@ STRONG_CLOSE_DAY_RETURN_PCT = 5.0
 STRONG_CLOSE_LOCATION = 0.95
 TAIPEI_TZ = timezone(timedelta(hours=8))
 MODEL_CONTRACT_VERSION = "20d-relative-strength-v1"
-MODEL_IMPLEMENTATION_VERSION = "v89"
-MODEL_NAME = "single_horizon_20d_relative_strength_v89"
+MODEL_IMPLEMENTATION_VERSION = "v90"
+MODEL_NAME = "single_horizon_20d_dynamic_probability_v90"
 CONTROLLED_PORTFOLIO_SIZE = 2
 CONTROLLED_MAX_POSITION_PCT = 5
 
@@ -177,7 +177,10 @@ def _architecture_contract():
         "implementation_version": MODEL_IMPLEMENTATION_VERSION,
         "objective": "outperform_0050_net_return_over_next_20_trading_sessions",
         "forecast_horizons": [20],
-        "portfolio_size": TARGET_PORTFOLIO_SIZE,
+        "portfolio_size": None,
+        "ranking_scope": "all_available_stocks",
+        "ranking_refresh": "daily_after_completed_market_data",
+        "ranking_primary_key": "net_profit_probability_20d",
         "holding_period_trading_days": STABLE_HOLD_DAYS,
         "entry_data": "completed_daily_bars_only",
         "intraday_used_for_ranking": False,
@@ -428,7 +431,7 @@ def _factor_percentiles(rows):
 
 
 def _historical_factor_periods(samples, minimum_coverage=180):
-    """Build non-overlapping portfolios with the exact V89 entry guard."""
+    """Build non-overlapping portfolios with the exact V90 entry guard."""
     by_date = defaultdict(list)
     for sample in samples:
         by_date[sample["base_date"]].append(sample)
@@ -466,11 +469,32 @@ def _historical_factor_periods(samples, minimum_coverage=180):
     return periods
 
 
+def _historical_probability_cohort(samples, minimum_coverage=180):
+    """Return full historical cross-sections for all-stock probability calibration."""
+    by_date = defaultdict(list)
+    for sample in samples:
+        by_date[sample["base_date"]].append(sample)
+    dates = sorted(
+        date for date, rows in by_date.items() if len(rows) >= minimum_coverage
+    )
+    cohort = []
+    for date in dates[::20][-40:]:
+        universe = by_date[date]
+        percentiles = _factor_percentiles(universe)
+        for sample in universe:
+            row = dict(sample)
+            row["factor_percentile"] = percentiles.get(sample["stock_id"], 100.0)
+            cohort.append(row)
+    return cohort
+
+
 def _empty_cohort_prediction(current_price):
     return {
         "expected_return": 0.0,
         "expected_alpha": 0.0,
         "up_probability": 0.0,
+        "net_profit_probability": 0.0,
+        "outperform_probability": 0.0,
         "range_low_return": 0.0,
         "range_high_return": 0.0,
         "downside_return": 0.0,
@@ -507,6 +531,12 @@ def _cohort_prediction(cohort, current_price, factor_percentile, validation):
         [1.0 if value > ROUND_TRIP_COST_PCT else 0.0 for value in returns], weights
     )
     up_probability = 0.5 + (raw_probability - 0.5) * FORECAST_CALIBRATION
+    raw_outperform_probability = _weighted_mean(
+        [1.0 if value > ROUND_TRIP_COST_PCT else 0.0 for value in alphas], weights
+    )
+    outperform_probability = (
+        0.5 + (raw_outperform_probability - 0.5) * FORECAST_CALIBRATION
+    )
     q10 = _quantile(returns, 0.10) * FORECAST_CALIBRATION
     q25 = _quantile(returns, 0.25) * FORECAST_CALIBRATION
     q75 = _quantile(returns, 0.75) * FORECAST_CALIBRATION
@@ -524,6 +554,8 @@ def _cohort_prediction(cohort, current_price, factor_percentile, validation):
         "expected_price": round(current_price * (1 + expected_return / 100), 2),
         "expected_alpha": round(expected_alpha, 2),
         "up_probability": round(up_probability * 100, 1),
+        "net_profit_probability": round(up_probability * 100, 1),
+        "outperform_probability": round(outperform_probability * 100, 1),
         "range_low_return": round(q25, 2),
         "range_high_return": round(q75, 2),
         "downside_return": round(q10, 2),
@@ -539,7 +571,7 @@ def _cohort_prediction(cohort, current_price, factor_percentile, validation):
 
 
 def _candidate_eligibility(forecast, factor_percentile, entry_metrics):
-    """Keep the validated V89 top-2.5% rank as model eligibility."""
+    """Keep the validated V90 factor rank as a diagnostic."""
     reasons = []
     if factor_percentile > FACTOR_PREFILTER_PERCENTILE:
         reasons.append(f"截面因子未進前{FACTOR_PREFILTER_PERCENTILE:g}%")
@@ -549,7 +581,7 @@ def _candidate_eligibility(forecast, factor_percentile, entry_metrics):
 def _evaluate_candidate(
     forecast, factor_percentile, entry_metrics, model_enabled=True
 ):
-    """Attach V89 diagnostics without adding unvalidated hard gates."""
+    """Attach V90 diagnostics without hiding stocks behind hard gates."""
     qualified, reasons = _candidate_eligibility(
         forecast, factor_percentile, entry_metrics
     )
@@ -623,7 +655,7 @@ def _controlled_candidate_eligible(item):
 
 
 def _entry_guard_reasons(day_return, close_location):
-    """Return point-in-time V89 execution blocks for an overheated close."""
+    """Return point-in-time V90 execution warnings for an overheated close."""
     day_return = _number(day_return)
     close_location = _number(close_location)
     reasons = []
@@ -870,9 +902,7 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
     validation = _walk_forward_validation(samples)
     gate = _validation_gate(validation, benchmark_ready)
     factor_periods = _historical_factor_periods(samples)
-    historical_cohort = [
-        row for period in factor_periods for row in period["candidates"]
-    ]
+    historical_cohort = _historical_probability_cohort(samples)
     current_states = [
         state for state in current.values()
         if state.get("base_date") == latest_date
@@ -944,11 +974,10 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "run_date_taipei": run_date_taipei,
             "architecture_contract": _architecture_contract(),
             "description": (
-                "V89單一20日模型：以20日及60日相對0050強度為主體，新增單日急漲、"
+                "V90單一20日動態機率模型：以20日及60日相對0050強度為主體，保留單日急漲、"
                 "收盤過熱與月線乖離懲罰，避免漲停股壟斷排名。排名後使用同一防追高"
-                "規則決定立即進場或等待回測；開發32期選定固定權重，最後8期只做"
-                "封存驗收。成交量、淨緩衝與風險報酬保留為揭露欄位，不再以未經封存"
-                "證實的多重硬門檻製造假性零持股。"
+                "規則標示立即觀察或等待回測。每日以最新完整日線重新排列全部可用股票，"
+                "不鎖定持倉、不限制五檔或十檔，交易決定完全交由使用者。"
             ),
             "benchmark": "0050",
             "benchmark_source": "FinMind TaiwanStockPrice",
@@ -964,6 +993,7 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "factor_prefilter_percentile": FACTOR_PREFILTER_PERCENTILE,
             "historical_portfolios": len(factor_periods),
             "historical_cohort_samples": len(historical_cohort),
+            "probability_calibration_scope": "full_historical_cross_sections",
             "training_samples": len(samples),
             "all_labelled_samples": len(samples),
             "calibration_factor": FORECAST_CALIBRATION,
@@ -992,7 +1022,7 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "minimum_validation_picks": dict(MIN_VALIDATION_PICKS),
             "minimum_holdout_periods": MIN_HOLDOUT_PERIODS,
             "minimum_holdout_picks": MIN_HOLDOUT_PICKS,
-            "selection_rule": "v89_overheat_adjusted_relative_strength_top_2_5_percent_with_same_rule_entry_guard",
+            "selection_rule": "v90_daily_all_stock_net_profit_probability_ranking",
             "eligible_20d_count": len(selected_ids),
             "selected_20d": selected_ids,
             "warning": "模型是歷史統計估計，不保證未來報酬。",
@@ -1015,7 +1045,124 @@ def _normalise_prediction_log(existing_log):
     }
 
 
-def apply_prediction_stability(
+def apply_dynamic_probability_ranking(
+    predictions, existing_log, stock_universe=None, run_date=None
+):
+    """Rank every available stock daily without creating a locked portfolio.
+
+    Twenty sessions is the forecast horizon, not a mandatory holding lock.
+    The primary key is the calibrated probability of a positive return after
+    the configured round-trip cost. Expected alpha and return are deterministic
+    tie-breakers. AI remains explanation-only and never enters this function.
+    """
+    history = _normalise_prediction_log(existing_log)
+    model = predictions.setdefault("model", {})
+    prediction_data = predictions.get("data", {})
+    model_date = model.get("latest_date") or ""
+
+    ranked = []
+    for stock_id, item in prediction_data.items():
+        if (
+            not item.get("available")
+            or item.get("as_of_date") != model_date
+            or not item.get("prediction_20d")
+        ):
+            continue
+        forecast = item["prediction_20d"]
+        forecast["net_profit_probability"] = round(
+            _number(forecast.get("net_profit_probability", forecast.get("up_probability"))),
+            1,
+        )
+        forecast["outperform_probability"] = round(
+            _number(forecast.get("outperform_probability")), 1
+        )
+        entry_eligible, entry_reasons = _entry_execution_eligibility(item)
+        forecast["entry_execution_eligible"] = entry_eligible
+        forecast["entry_execution_reasons"] = entry_reasons
+        forecast["entry_status"] = "ready" if entry_eligible else "wait_pullback"
+        forecast["recommendation_tier"] = "research_ranking"
+        forecast["max_position"] = "由使用者自行決定"
+        item["model_selected_20d"] = False
+        item.pop("stable_20d", None)
+        ranked.append((stock_id, item))
+
+    ranked.sort(
+        key=lambda pair: (
+            _number(pair[1]["prediction_20d"].get("net_profit_probability")),
+            _number(pair[1]["prediction_20d"].get("outperform_probability")),
+            _number(pair[1]["prediction_20d"].get("expected_alpha")),
+            _number(pair[1]["prediction_20d"].get("expected_return")),
+            _number(pair[1].get("factor_score_20d"), -999),
+        ),
+        reverse=True,
+    )
+    ranked_ids = []
+    for rank, (stock_id, item) in enumerate(ranked, start=1):
+        item["probability_rank_20d"] = rank
+        item["prediction_20d"]["signal"] = (
+            "等待回測" if item["prediction_20d"]["entry_status"] == "wait_pullback"
+            else "機率排序"
+        )
+        ranked_ids.append(stock_id)
+
+    realised = [
+        row
+        for snapshot in history.values()
+        if snapshot.get("model_name") == MODEL_NAME
+        for row in snapshot.get("20d", [])
+        if row.get("actual_net_return") is not None
+    ]
+    completed_dates = sorted({
+        snapshot.get("date")
+        for snapshot in history.values()
+        if snapshot.get("model_name") == MODEL_NAME
+        and any(row.get("actual_net_return") is not None for row in snapshot.get("20d", []))
+    })
+    model["ranked_20d"] = ranked_ids
+    model["ranked_20d_count"] = len(ranked_ids)
+    model["selected_20d"] = []
+    model["eligible_20d_count"] = len(ranked_ids)
+    model["stable_20d"] = []
+    model["stable_20d_meta"] = {}
+    model["target_portfolio_size"] = None
+    model["active_portfolio_limit"] = None
+    model["ranking_rule"] = (
+        "每日依20日扣除交易成本後獲利機率排序全部可用股票；超越0050機率、"
+        "預期超額與預期報酬依序作為同機率時的排序條件"
+    )
+    model["rebalance_rule"] = "每日更新研究排序；不建立、不延續、不鎖定任何持倉名單"
+    model["reliability"] = {
+        "20d": {
+            "tier": "research_ranking",
+            "status": "每日動態研究排序",
+            "max_position": "由使用者自行決定",
+            "max_holdings": None,
+            "live_completed_cohorts": len(completed_dates),
+            "live_samples": len(realised),
+            "readiness_source": "歷史回測；正式上線績效獨立列示",
+            "live_tracking_role": "只評估預測，不自動產生交易結論",
+        }
+    }
+    model["live_tracking"] = {
+        "20d": {
+            "completed_cohorts": len(completed_dates),
+            "count": len(realised),
+            "status": "累積中" if not completed_dates else "已有成熟實績",
+        }
+    }
+    model["operational_status"] = {
+        "20d": {
+            "enabled": True,
+            "tier": "research_ranking",
+            "label": "全部股票每日動態排序",
+            "reasons": [],
+        }
+    }
+    model["stability_rule"] = "已取消固定持倉；20日僅代表預測與績效評估期限"
+    return predictions
+
+
+def _retired_apply_prediction_stability(
     predictions, existing_log, stock_universe=None, run_date=None
 ):
     """Keep qualified selections stable for one independent 20-day cycle.
@@ -1320,8 +1467,10 @@ def apply_prediction_stability(
     return predictions
 
 
-def update_prediction_log(existing_log, predictions, price_db, run_date=None):
-    """Keep point-in-time recommendations and fill realised 20-day returns later."""
+def update_prediction_log(
+    existing_log, predictions, price_db, benchmark_rows=None, run_date=None
+):
+    """Track every daily probability rank using executable next-session prices."""
     log = _normalise_prediction_log(existing_log)
     model_date = predictions.get("model", {}).get("latest_date")
     prediction_data = predictions.get("data", {})
@@ -1343,10 +1492,9 @@ def update_prediction_log(existing_log, predictions, price_db, run_date=None):
                     for stock_id, item in prediction_data.items()
                     if item.get("available")
                     and item.get("as_of_date") == model_date
-                    and item.get("model_selected_20d") is True
+                    and item.get("as_of_date") == model_date
                 ),
-                key=lambda pair: pair[1].get("factor_score_20d", -999),
-                reverse=True,
+                key=lambda pair: pair[1].get("probability_rank_20d", 9999),
             )
             snapshot[f"{horizon}d"] = [
                 {
@@ -1354,33 +1502,27 @@ def update_prediction_log(existing_log, predictions, price_db, run_date=None):
                     "base_price": item.get("current_price"),
                     "expected_return": item[f"prediction_{horizon}d"].get("expected_return"),
                     "up_probability": item[f"prediction_{horizon}d"].get("up_probability"),
+                    "net_profit_probability": item[f"prediction_{horizon}d"].get("net_profit_probability"),
+                    "outperform_probability": item[f"prediction_{horizon}d"].get("outperform_probability"),
+                    "probability_rank": item.get("probability_rank_20d"),
                     "actual_return": None,
+                    "actual_net_return": None,
+                    "actual_benchmark_return": None,
+                    "actual_alpha": None,
                 }
                 for stock_id, item in ranked
             ]
-        snapshot["stable_20d"] = [
-            {
-                "stock_id": stock_id,
-                "entered_date": predictions.get("model", {})
-                .get("stable_20d_meta", {})
-                .get(stock_id, {})
-                .get("entered_date"),
-                "age_days": predictions.get("model", {})
-                .get("stable_20d_meta", {})
-                .get(stock_id, {})
-                .get("age_days", 0),
-                "observations": predictions.get("model", {})
-                .get("stable_20d_meta", {})
-                .get(stock_id, {})
-                .get("observations", 1),
-            }
-            for stock_id in predictions.get("model", {}).get("stable_20d", [])
-        ]
         log[model_date] = snapshot
 
     normalized = {
         stock_id: _normalize_price_rows(rows)
         for stock_id, rows in _completed_price_db(price_db, run_date).items()
+    }
+    normalized_benchmark = _normalize_price_rows(
+        _completed_price_rows(benchmark_rows or [], run_date)
+    )
+    benchmark_by_date = {
+        row["date"]: index for index, row in enumerate(normalized_benchmark)
     }
     for base_date, snapshot in log.items():
         for horizon in (20,):
@@ -1389,14 +1531,47 @@ def update_prediction_log(existing_log, predictions, price_db, run_date=None):
                 date_index = next((index for index, row in enumerate(rows) if row["date"] == base_date), None)
                 if date_index is None or date_index + horizon >= len(rows):
                     continue
-                base_price = rows[date_index]["close"]
+                entry_index = date_index + 1
+                base_price = rows[entry_index]["open"]
                 future_price = rows[date_index + horizon]["close"]
-                pick["actual_return"] = round((future_price / base_price - 1) * 100, 2) if base_price else None
+                actual_return = (
+                    round((future_price / base_price - 1) * 100, 2)
+                    if base_price else None
+                )
+                pick["entry_date"] = rows[entry_index]["date"]
+                pick["entry_price"] = round(base_price, 2)
+                pick["actual_return"] = actual_return
+                pick["actual_net_return"] = (
+                    round(actual_return - ROUND_TRIP_COST_PCT, 2)
+                    if actual_return is not None else None
+                )
                 pick["evaluated_date"] = rows[date_index + horizon]["date"]
+                benchmark_index = benchmark_by_date.get(base_date)
+                if (
+                    benchmark_index is not None
+                    and benchmark_index + horizon < len(normalized_benchmark)
+                ):
+                    benchmark_entry = normalized_benchmark[benchmark_index + 1]["open"]
+                    benchmark_exit = normalized_benchmark[benchmark_index + horizon]["close"]
+                    benchmark_return = (
+                        round((benchmark_exit / benchmark_entry - 1) * 100, 2)
+                        if benchmark_entry else None
+                    )
+                    pick["actual_benchmark_return"] = benchmark_return
+                    pick["actual_alpha"] = (
+                        round(pick["actual_net_return"] - benchmark_return, 2)
+                        if benchmark_return is not None
+                        and pick["actual_net_return"] is not None
+                        else None
+                    )
 
     recent_dates = sorted(log)[-120:]
     return {date: log[date] for date in recent_dates}
 
 
 # These three functions are the complete production model API.
-__all__ = ["build_predictions", "apply_prediction_stability", "update_prediction_log"]
+__all__ = [
+    "build_predictions",
+    "apply_dynamic_probability_ranking",
+    "update_prediction_log",
+]

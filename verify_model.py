@@ -25,7 +25,9 @@ latest_date = max(
 run_date = (date.fromisoformat(latest_date) + timedelta(days=1)).isoformat()
 
 result = predictor.build_predictions(prices, universe, benchmark, run_date=run_date)
-result = predictor.apply_prediction_stability(result, {}, universe, run_date=run_date)
+result = predictor.apply_dynamic_probability_ranking(
+    result, {}, universe, run_date=run_date
+)
 model = result["model"]
 contract = model["architecture_contract"]
 validation = model["validation"]["20d"]
@@ -35,6 +37,9 @@ assert contract["version"] == predictor.MODEL_CONTRACT_VERSION
 assert contract["implementation_version"] == predictor.MODEL_IMPLEMENTATION_VERSION
 assert contract["forecast_horizons"] == [20]
 assert contract["holding_period_trading_days"] == 20
+assert contract["portfolio_size"] is None
+assert contract["ranking_scope"] == "all_available_stocks"
+assert contract["ranking_primary_key"] == "net_profit_probability_20d"
 assert contract["entry_data"] == "completed_daily_bars_only"
 assert contract["intraday_used_for_ranking"] is False
 assert contract["ai_role"] == "explanation_only"
@@ -46,13 +51,19 @@ assert all(
     for item in result["data"].values()
     for key in item
 )
+available = [item for item in result["data"].values() if item.get("available")]
+assert len(model["ranked_20d"]) == len(available)
+assert sorted(item["probability_rank_20d"] for item in available) == list(
+    range(1, len(available) + 1)
+)
 
 print(json.dumps({
     "model": model["name"],
     "objective": contract["objective"],
     "stocks": result["count"],
-    "raw_selected": model["raw_selected_20d"],
-    "managed_selected": model["selected_20d"],
+    "ranked_count": model["ranked_20d_count"],
+    "top_20_probability_rank": model["ranked_20d"][:20],
+    "fixed_portfolio": model["selected_20d"],
     "validation_periods": validation["periods"],
     "validation_picks": validation["sample_picks"],
     "average_net_return": validation["average_return"],

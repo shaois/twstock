@@ -1,0 +1,19 @@
+V90 - daily 20-session profit-probability ranking
+
+1. Twenty sessions is now only the forecast and evaluation horizon. It no
+   longer locks a five-stock portfolio.
+2. Every stock with complete data is ranked again after each completed daily
+   cache refresh. There is no five- or ten-stock display cap.
+3. Primary rank: probability of a positive 20-session return after the 0.6%
+   round-trip cost. Tie-breakers: probability of beating 0050, expected alpha,
+   expected return, then the deterministic factor score.
+   Probability calibration uses the complete historical cross-section rather
+   than extrapolating the old top-2.5% candidate sample to all 200 stocks.
+4. The existing overheat guard remains visible as an execution warning. It
+   does not remove a stock from the ranking.
+5. AI remains explanation-only and cannot change probabilities or rank.
+6. New live-performance records use the next trading session's open as the
+   executable entry price and the twentieth future session's close as exit.
+7. V89 locked holdings are not carried into V90.
+
+Research use only. Historical results do not guarantee future returns.

@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from predictor import apply_prediction_stability, build_predictions, update_prediction_log
+from predictor import apply_dynamic_probability_ranking, build_predictions, update_prediction_log
 
 
 ROOT = Path(__file__).resolve().parent
@@ -158,7 +158,7 @@ def build_model_outputs(
         benchmark_rows=benchmark_rows,
         run_date=run_date,
     )
-    predictions = apply_prediction_stability(
+    predictions = apply_dynamic_probability_ranking(
         predictions,
         prediction_log,
         stock_universe=universe,
@@ -168,6 +168,7 @@ def build_model_outputs(
         prediction_log,
         predictions,
         price_data,
+        benchmark_rows=benchmark_rows,
         run_date=run_date,
     )
     save_json(PREDICTIONS_PATH, predictions)
