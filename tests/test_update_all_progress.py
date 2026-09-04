@@ -1,6 +1,39 @@
 import unittest
 
-from update_all import resolve_start_index
+from update_all import FINMIND_URL, fetch_price_rows, resolve_start_index
+
+
+class FakeResponse:
+    status_code = 200
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"status": 200, "data": [{"date": "2026-09-03"}]}
+
+
+class RecordingClient:
+    def __init__(self):
+        self.calls = []
+
+    async def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return FakeResponse()
+
+
+class FetchPriceRowsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_finmind_token_is_sent_as_bearer_header(self):
+        client = RecordingClient()
+
+        rows = await fetch_price_rows(client, "2330", "2026-08-25", "secret-token")
+
+        self.assertEqual(rows, [{"date": "2026-09-03"}])
+        self.assertEqual(len(client.calls), 1)
+        url, kwargs = client.calls[0]
+        self.assertEqual(url, FINMIND_URL)
+        self.assertEqual(kwargs["headers"], {"Authorization": "Bearer secret-token"})
+        self.assertNotIn("token", kwargs["params"])
 
 
 class ResolveStartIndexTests(unittest.TestCase):
