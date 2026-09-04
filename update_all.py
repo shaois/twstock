@@ -119,12 +119,12 @@ async def fetch_price_rows(
         "dataset": "TaiwanStockPrice",
         "data_id": stock_id,
         "start_date": start_date,
-        "token": token,
     }
+    headers = {"Authorization": f"Bearer {token}"}
     last_error: Exception | None = None
     for attempt in range(3):
         try:
-            response = await client.get(FINMIND_URL, params=params)
+            response = await client.get(FINMIND_URL, params=params, headers=headers)
             if response.status_code == 402:
                 raise FinMindQuotaError("FinMind quota exhausted")
             response.raise_for_status()
