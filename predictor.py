@@ -26,14 +26,18 @@ FEATURE_NAMES = (
     "drawdown_60d",
     "entry_day_return_pct",
     "entry_close_location",
+    "capital_flow_5d_pct",
+    "capital_flow_20d_pct",
+    "turnover_acceleration_5v20",
 )
 
-# V90 keeps medium-term relative strength as the main positive signal, while
+# V90.1 keeps medium-term relative strength as the main positive signal, while
 # penalising one-day acceleration and an overheated close.  These fixed
 # weights were selected on the first 32 non-overlapping periods and accepted
 # only after the final eight sealed periods remained positive versus 0050.
 FACTOR_WEIGHTS = (
-    0.2, 0.2, 1.0, 0.5, 0.0, -0.25, 0.1, -0.3, 0.1, 0.0, -1.0, -0.5
+    0.2, 0.2, 1.0, 0.5, 0.0, -0.25, 0.1, -0.3, 0.1, 0.0, -1.0, -0.5,
+    0.0, 0.0, 0.0,
 )
 STABLE_HOLD_DAYS = 20
 TARGET_PORTFOLIO_SIZE = 5
@@ -62,8 +66,8 @@ STRONG_CLOSE_DAY_RETURN_PCT = 5.0
 STRONG_CLOSE_LOCATION = 0.95
 TAIPEI_TZ = timezone(timedelta(hours=8))
 MODEL_CONTRACT_VERSION = "20d-relative-strength-v1"
-MODEL_IMPLEMENTATION_VERSION = "v90"
-MODEL_NAME = "single_horizon_20d_dynamic_probability_v90"
+MODEL_IMPLEMENTATION_VERSION = "v90.1"
+MODEL_NAME = "single_horizon_20d_dynamic_probability_capital_flow_v90_1"
 CONTROLLED_PORTFOLIO_SIZE = 2
 CONTROLLED_MAX_POSITION_PCT = 5
 
@@ -256,6 +260,40 @@ def _rsi(values, end, periods=14):
     return 100 - 100 / (1 + average_gain / average_loss)
 
 
+def _capital_flow_metrics(rows, end):
+    """Estimate accumulation/distribution from OHLC and traded money.
+
+    Positive values mean turnover repeatedly closed toward the session high;
+    negative values mean turnover repeatedly closed toward the session low.
+    This is a reproducible price-volume proxy, not broker-level fund identity.
+    """
+    def flow(periods):
+        start = max(0, end - periods + 1)
+        signed_turnover = 0.0
+        total_turnover = 0.0
+        for row in rows[start:end + 1]:
+            high = _number(row.get("high"), row["close"])
+            low = _number(row.get("low"), row["close"])
+            close = _number(row.get("close"))
+            turnover = max(0.0, _number(row.get("turnover")))
+            multiplier = (
+                ((close - low) - (high - close)) / (high - low)
+                if high > low else 0.0
+            )
+            signed_turnover += max(-1.0, min(1.0, multiplier)) * turnover
+            total_turnover += turnover
+        return signed_turnover / total_turnover * 100 if total_turnover else 0.0
+
+    turnovers = [max(0.0, _number(row.get("turnover"))) for row in rows]
+    recent = sum(turnovers[max(0, end - 4):end + 1]) / min(5, end + 1)
+    baseline = sum(turnovers[max(0, end - 19):end + 1]) / min(20, end + 1)
+    return {
+        "capital_flow_5d_pct": flow(5),
+        "capital_flow_20d_pct": flow(20),
+        "turnover_acceleration_5v20": recent / baseline if baseline else 1.0,
+    }
+
+
 def _feature_vector(rows, end, market_index):
     if end < 60:
         return None
@@ -284,6 +322,7 @@ def _feature_vector(rows, end, market_index):
         (price / previous_close - 1) * 100 if previous_close > 0 else 0.0
     )
     close_location = (price - low) / (high - low) if high > low else 0.5
+    capital_flow = _capital_flow_metrics(rows, end)
     return (
         return_20d,
         return_60d,
@@ -297,6 +336,9 @@ def _feature_vector(rows, end, market_index):
         (price / high_60 - 1) * 100 if high_60 else 0.0,
         entry_day_return,
         max(0.0, min(1.0, close_location)),
+        capital_flow["capital_flow_5d_pct"],
+        capital_flow["capital_flow_20d_pct"],
+        capital_flow["turnover_acceleration_5v20"],
     )
 
 
@@ -311,6 +353,7 @@ def _entry_metrics(rows, end, market_index):
     high = rows[end].get("high", close)
     low = rows[end].get("low", close)
     close_location = (close - low) / (high - low) if high > low else 0.5
+    capital_flow = _capital_flow_metrics(rows, end)
     return {
         "average_volume_20_shares": sum(volumes[end - 19:end + 1]) / 20,
         "average_turnover_5_twd": sum(turnovers[end - 4:end + 1]) / 5,
@@ -322,6 +365,7 @@ def _entry_metrics(rows, end, market_index):
         "benchmark_momentum_20d": _market_return(
             market_index, rows[end - 20]["date"], rows[end]["date"]
         ),
+        **capital_flow,
     }
 
 
@@ -419,6 +463,55 @@ def _cross_section_factor_scores(rows):
     }
 
 
+def _cross_section_capital_flow_scores(rows):
+    """Rank reproducible price-volume accumulation relative to the universe."""
+    if not rows:
+        return {}, {}, {}
+    metrics = (
+        "capital_flow_5d_pct",
+        "capital_flow_20d_pct",
+        "turnover_acceleration_5v20",
+    )
+    columns = [
+        [_number(row.get("entry_metrics", {}).get(metric)) for row in rows]
+        for metric in metrics
+    ]
+    centers = [statistics.median(column) for column in columns]
+    scales = [
+        max(_quantile(column, 0.75) - _quantile(column, 0.25), 0.05)
+        for column in columns
+    ]
+    weights = (0.45, 0.35, 0.20)
+    scores = {}
+    for row in rows:
+        values = [
+            _number(row.get("entry_metrics", {}).get(metric))
+            for metric in metrics
+        ]
+        scores[row["stock_id"]] = sum(
+            max(-3.0, min(3.0, (value - centers[index]) / scales[index]))
+            * weights[index]
+            for index, value in enumerate(values)
+        )
+    ranked = sorted(scores.items(), key=lambda pair: pair[1], reverse=True)
+    ranks = {stock_id: index + 1 for index, (stock_id, _) in enumerate(ranked)}
+    breadth = {
+        "positive_5d_pct": round(
+            sum(column > 0 for column in columns[0]) / len(rows) * 100, 1
+        ),
+        "median_5d_pct": round(centers[0], 2),
+        "median_20d_pct": round(centers[1], 2),
+        "median_turnover_acceleration": round(centers[2], 2),
+    }
+    if breadth["positive_5d_pct"] >= 60 and breadth["median_5d_pct"] > 0:
+        breadth["status"] = "市場資金偏流入"
+    elif breadth["positive_5d_pct"] <= 40 and breadth["median_5d_pct"] < 0:
+        breadth["status"] = "市場資金偏流出"
+    else:
+        breadth["status"] = "市場資金分歧"
+    return scores, ranks, breadth
+
+
 def _factor_percentiles(rows):
     """Return a 0-100 cross-sectional percentile for every stock (lower is better)."""
     scores = _cross_section_factor_scores(rows)
@@ -431,7 +524,7 @@ def _factor_percentiles(rows):
 
 
 def _historical_factor_periods(samples, minimum_coverage=180):
-    """Build non-overlapping portfolios with the exact V90 entry guard."""
+    """Build non-overlapping portfolios with the exact V90.1 entry guard."""
     by_date = defaultdict(list)
     for sample in samples:
         by_date[sample["base_date"]].append(sample)
@@ -571,7 +664,7 @@ def _cohort_prediction(cohort, current_price, factor_percentile, validation):
 
 
 def _candidate_eligibility(forecast, factor_percentile, entry_metrics):
-    """Keep the validated V90 factor rank as a diagnostic."""
+    """Keep the validated V90.1 factor rank as a diagnostic."""
     reasons = []
     if factor_percentile > FACTOR_PREFILTER_PERCENTILE:
         reasons.append(f"截面因子未進前{FACTOR_PREFILTER_PERCENTILE:g}%")
@@ -581,7 +674,7 @@ def _candidate_eligibility(forecast, factor_percentile, entry_metrics):
 def _evaluate_candidate(
     forecast, factor_percentile, entry_metrics, model_enabled=True
 ):
-    """Attach V90 diagnostics without hiding stocks behind hard gates."""
+    """Attach V90.1 diagnostics without hiding stocks behind hard gates."""
     qualified, reasons = _candidate_eligibility(
         forecast, factor_percentile, entry_metrics
     )
@@ -616,6 +709,15 @@ def _evaluate_candidate(
     )
     forecast["entry_close_location"] = round(
         _number(entry_metrics.get("entry_close_location")), 3
+    )
+    forecast["capital_flow_5d_pct"] = round(
+        _number(entry_metrics.get("capital_flow_5d_pct")), 2
+    )
+    forecast["capital_flow_20d_pct"] = round(
+        _number(entry_metrics.get("capital_flow_20d_pct")), 2
+    )
+    forecast["turnover_acceleration_5v20"] = round(
+        _number(entry_metrics.get("turnover_acceleration_5v20"), 1.0), 2
     )
     expected_price = _number(forecast.get("expected_price"))
     forecast["maximum_entry_price"] = round(
@@ -655,7 +757,7 @@ def _controlled_candidate_eligible(item):
 
 
 def _entry_guard_reasons(day_return, close_location):
-    """Return point-in-time V90 execution warnings for an overheated close."""
+    """Return point-in-time V90.1 execution warnings for an overheated close."""
     day_return = _number(day_return)
     close_location = _number(close_location)
     reasons = []
@@ -915,6 +1017,9 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             sorted(factor_scores.items(), key=lambda pair: pair[1], reverse=True)
         )
     }
+    capital_flow_scores, capital_flow_ranks, market_capital_flow = (
+        _cross_section_capital_flow_scores(current_states)
+    )
     selected_ids = []
     for stock_id in universe_ids:
         state = current.get(stock_id)
@@ -954,6 +1059,8 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "factor_score_20d": round(factor_scores.get(stock_id, -999), 3),
             "factor_rank_20d": factor_rank.get(stock_id),
             "factor_percentile_20d": round(percentile, 1),
+            "capital_flow_score": round(capital_flow_scores.get(stock_id, 0.0), 3),
+            "capital_flow_rank": capital_flow_ranks.get(stock_id),
             "model_qualified_20d": bool(qualified),
             "model_selected_20d": bool(qualified and gate["enabled"]),
         }
@@ -974,10 +1081,11 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "run_date_taipei": run_date_taipei,
             "architecture_contract": _architecture_contract(),
             "description": (
-                "V90單一20日動態機率模型：以20日及60日相對0050強度為主體，保留單日急漲、"
+                "V90.1單一20日動態機率模型：以20日及60日相對0050強度為主體，保留單日急漲、"
                 "收盤過熱與月線乖離懲罰，避免漲停股壟斷排名。排名後使用同一防追高"
                 "規則標示立即觀察或等待回測。每日以最新完整日線重新排列全部可用股票，"
-                "不鎖定持倉、不限制五檔或十檔，交易決定完全交由使用者。"
+                "並揭露市場與個股量價資金方向；不鎖定持倉、不限制五檔或十檔，"
+                "交易決定完全交由使用者。"
             ),
             "benchmark": "0050",
             "benchmark_source": "FinMind TaiwanStockPrice",
@@ -994,6 +1102,11 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "historical_portfolios": len(factor_periods),
             "historical_cohort_samples": len(historical_cohort),
             "probability_calibration_scope": "full_historical_cross_sections",
+            "market_capital_flow": market_capital_flow,
+            "capital_flow_rule": (
+                "5日與20日收盤位置加權成交金額，加上5日對20日成交額加速度；"
+                "只在主要機率相同時作排序確認"
+            ),
             "training_samples": len(samples),
             "all_labelled_samples": len(samples),
             "calibration_factor": FORECAST_CALIBRATION,
@@ -1022,7 +1135,7 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "minimum_validation_picks": dict(MIN_VALIDATION_PICKS),
             "minimum_holdout_periods": MIN_HOLDOUT_PERIODS,
             "minimum_holdout_picks": MIN_HOLDOUT_PICKS,
-            "selection_rule": "v90_daily_all_stock_net_profit_probability_ranking",
+            "selection_rule": "v90_1_daily_probability_with_capital_flow_tiebreak",
             "eligible_20d_count": len(selected_ids),
             "selected_20d": selected_ids,
             "warning": "模型是歷史統計估計，不保證未來報酬。",
@@ -1090,6 +1203,7 @@ def apply_dynamic_probability_ranking(
         key=lambda pair: (
             _number(pair[1]["prediction_20d"].get("net_profit_probability")),
             _number(pair[1]["prediction_20d"].get("outperform_probability")),
+            _number(pair[1].get("capital_flow_score")),
             _number(pair[1]["prediction_20d"].get("expected_alpha")),
             _number(pair[1]["prediction_20d"].get("expected_return")),
             _number(pair[1].get("factor_score_20d"), -999),
@@ -1128,7 +1242,7 @@ def apply_dynamic_probability_ranking(
     model["active_portfolio_limit"] = None
     model["ranking_rule"] = (
         "每日依20日扣除交易成本後獲利機率排序全部可用股票；超越0050機率、"
-        "預期超額與預期報酬依序作為同機率時的排序條件"
+        "市場資金流分數、預期超額與預期報酬依序作為同機率時的排序條件"
     )
     model["rebalance_rule"] = "每日更新研究排序；不建立、不延續、不鎖定任何持倉名單"
     model["reliability"] = {

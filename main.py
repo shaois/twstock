@@ -19,7 +19,7 @@ CACHE_DIR = ROOT / "cache"
 NVIDIA_API_KEY_ENV = os.environ.get("NVIDIA_API_KEY", "")
 GROQ_API_KEY_ENV = os.environ.get("GROQ_API_KEY", "")
 
-app = FastAPI(title="Taiwan stock 20-day relative-return model", version="85")
+app = FastAPI(title="Taiwan stock 20-day relative-return model", version="90.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -102,4 +102,7 @@ async def app_script() -> FileResponse:
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "model": "single_horizon_20d_dynamic_probability_v90"}
+    return {
+        "status": "ok",
+        "model": "single_horizon_20d_dynamic_probability_capital_flow_v90_1",
+    }

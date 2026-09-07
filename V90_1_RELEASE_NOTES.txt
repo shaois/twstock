@@ -1,0 +1,17 @@
+V90.1 - capital-flow diagnostics and separate controls
+
+1. Adds five-day and twenty-day price-volume capital-flow proxies plus
+   five-versus-twenty-day turnover acceleration for every ranked stock.
+2. Shows market positive-flow breadth, market capital-flow state, individual
+   flow values and a cross-sectional capital-flow rank.
+3. The main rank remains calibrated twenty-session net-profit probability.
+   Capital flow is used after profit and outperform probabilities as a
+   tie-breaker. Direct factor weights were rejected because development-period
+   consistency fell from 62.5% to 59.4% and sealed performance weakened.
+4. Capital flow is derived from completed OHLC and turnover data. It is not
+   represented as actual foreign-investor, fund or dealer trading.
+5. The green control now only reloads and validates cache files. The yellow
+   control separately opens the already-loaded ranking.
+6. AI remains explanation-only and receives the same disclosed flow metrics.
+
+Research use only. Historical results do not guarantee future returns.

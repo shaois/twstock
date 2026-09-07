@@ -1,9 +1,9 @@
-const V90_AI_EXPLANATION_POLICY = "你只能解釋每日更新的 20 日獲利機率排序，不得改變排名、機率、風險資料，也不得自行產生買進結論。請明確說明這是研究排序，不保證獲利。";
+const V90_1_AI_EXPLANATION_POLICY = "你只能解釋每日更新的 20 日獲利機率與資金流輔助排序，不得改變排名、機率、風險資料，也不得自行產生買進結論。請明確說明資金流是日線量價代理值、不是三大法人真實買賣超，並說明這是研究排序，不保證獲利。";
 "use strict";
 
-const APP_VERSION = "v90";
-const MODEL_IMPLEMENTATION_VERSION = "v90";
-const MODEL_NAME = "single_horizon_20d_dynamic_probability_v90";
+const APP_VERSION = "v90.1";
+const MODEL_IMPLEMENTATION_VERSION = "v90.1";
+const MODEL_NAME = "single_horizon_20d_dynamic_probability_capital_flow_v90_1";
 const CONTRACT_VERSION = "20d-relative-strength-v1";
 const MODEL_OBJECTIVE = "outperform_0050_net_return_over_next_20_trading_sessions";
 const BACKEND_URL = "https://twstock-app.onrender.com";
@@ -87,6 +87,22 @@ function initApp() {
   byId("welcome").style.display = "flex";
   byId("screenerResult").style.display = "none";
   byId("stockDetail").style.display = "none";
+  byId("rankingBtn").disabled = true;
+}
+
+function showLoadedSummary() {
+  const flow = state.model.market_capital_flow || {};
+  state.currentStockId = "";
+  byId("screenerResult").style.display = "none";
+  byId("stockDetail").style.display = "none";
+  byId("welcome").style.display = "flex";
+  byId("welcome").innerHTML = `
+    <h2>快取載入完成</h2>
+    <p style="max-width:560px;line-height:1.9">
+      資料日 ${escapeHtml(state.model.latest_date || "--")}，已驗證 ${Object.keys(state.predictions).length}/200 支。<br>
+      市場資金狀態：${escapeHtml(flow.status || "尚無判斷")}；5日正資金流廣度 ${number(flow.positive_5d_pct).toFixed(1)}%。<br>
+      綠色按鈕只重新讀取伺服器快取；黃色按鈕才開啟每日機率排行榜。
+    </p>`;
 }
 
 async function fetchCache(name) {
@@ -114,9 +130,9 @@ function validateModel(universePayload, predictionPayload) {
   if (contract.objective !== MODEL_OBJECTIVE) errors.push("模型目標不是未來 20 日超越 0050");
   if (JSON.stringify(contract.forecast_horizons) !== "[20]") errors.push("仍含有 20 日以外的預測週期");
   if (contract.holding_period_trading_days !== 20) errors.push("持有週期不是 20 個交易日");
-  if (contract.portfolio_size !== null) errors.push("V90 不應限制固定持股數量");
-  if (contract.ranking_scope !== "all_available_stocks") errors.push("V90 未設定全部股票排行");
-  if (contract.ranking_primary_key !== "net_profit_probability_20d") errors.push("V90 排名主鍵不是 20 日淨獲利機率");
+  if (contract.portfolio_size !== null) errors.push("V90.1 不應限制固定持股數量");
+  if (contract.ranking_scope !== "all_available_stocks") errors.push("V90.1 未設定全部股票排行");
+  if (contract.ranking_primary_key !== "net_profit_probability_20d") errors.push("V90.1 排名主鍵不是 20 日淨獲利機率");
   if (contract.entry_data !== "completed_daily_bars_only") errors.push("模型未限定完整日線資料");
   if (contract.intraday_used_for_ranking !== false) errors.push("模型排名混入盤中價格");
   if (contract.ai_can_override_model !== false) errors.push("AI 仍可改寫模型結論");
@@ -152,10 +168,12 @@ async function loadStocks() {
     state.loaded = true;
     updateCacheStatus();
     renderStockList();
-    show20dCandidates();
+    byId("rankingBtn").disabled = false;
+    showLoadedSummary();
     showToast(`已載入 200 支股票，單一 20 日模型 ${APP_VERSION}`);
   } catch (error) {
     state.loaded = false;
+    byId("rankingBtn").disabled = true;
     updateCacheStatus();
     byId("welcome").style.display = "none";
     byId("stockDetail").style.display = "none";
@@ -204,6 +222,8 @@ function candidateRowHtml(row, index) {
     <td class="td-mono" style="color:${signedClass(forecast.expected_alpha)}">${percent(forecast.expected_alpha)}</td>
     <td class="td-mono">${percent(forecast.net_profit_probability ?? forecast.up_probability, 1)}</td>
     <td class="td-mono">${percent(forecast.outperform_probability, 1)}</td>
+    <td class="td-mono" style="color:${signedClass(forecast.capital_flow_5d_pct)}">${percent(forecast.capital_flow_5d_pct, 1)}</td>
+    <td class="td-mono">#${number(row.item.capital_flow_rank, "--")}</td>
     <td class="td-mono">${money(forecast.range_low_price)} ~ ${money(forecast.range_high_price)}</td>
     <td class="td-mono" style="color:var(--red)">${money(forecast.downside_price)}</td>
     <td class="td-mono">${number(forecast.analogue_count)}</td>
@@ -224,19 +244,21 @@ function show20dCandidates() {
 
   const rows = modelRows();
   const validation = state.model.validation?.["20d"] || {};
+  const flow = state.model.market_capital_flow || {};
   const rankingBody = rows.length
     ? rows.map((row, index) => candidateRowHtml(row, index + 1)).join("")
-    : `<tr><td colspan="11" style="padding:18px;color:var(--warn)">目前沒有具備完整資料的股票。</td></tr>`;
+    : `<tr><td colspan="13" style="padding:18px;color:var(--warn)">目前沒有具備完整資料的股票。</td></tr>`;
 
   byId("screenerResult").innerHTML = `
     <div class="screener-panel" style="border-color:var(--accent)">
       <div class="panel-title">20 日獲利機率動態排行榜</div>
       <div style="color:var(--muted);font-size:12px;line-height:1.8;margin-bottom:12px">
         資料日 ${escapeHtml(state.model.latest_date || "--")}；共排序 ${rows.length} 支。20 日是預測期限，不再鎖定持有名單。<br>
-        主要依「扣除 0.6% 交易成本後仍獲利的歷史校準機率」排序；同機率時依超越 0050 機率、預期超額及預期報酬排序。<br>
+        市場資金狀態：${escapeHtml(flow.status || "尚無判斷")}；正資金流廣度 ${number(flow.positive_5d_pct).toFixed(1)}%；5日資金流中位數 ${percent(flow.median_5d_pct, 1)}。<br>
+        主要依淨獲利機率排序；同機率時依超越0050機率、資金流分數、預期超額及預期報酬排序。<br>
         模型只使用完整日線；AI 只解釋結果，不參與排名或替你決定買賣。歷史驗證 ${number(validation.periods)} 期。
       </div>
-      <table><thead><tr><th>機率排名</th><th>股票</th><th>狀態</th><th>預期20日</th><th>預期超額</th><th>淨獲利機率</th><th>超越0050機率</th><th>價格區間</th><th>下行情境</th><th>樣本</th><th>歷史一致性</th></tr></thead><tbody>${rankingBody}</tbody></table>
+      <table><thead><tr><th>機率排名</th><th>股票</th><th>狀態</th><th>預期20日</th><th>預期超額</th><th>淨獲利機率</th><th>超越0050機率</th><th>5日資金流</th><th>資金排行</th><th>價格區間</th><th>下行情境</th><th>樣本</th><th>歷史一致性</th></tr></thead><tbody>${rankingBody}</tbody></table>
     </div>`;
 }
 
@@ -269,8 +291,8 @@ function showStock(stockId) {
     </div>
     <div class="panel" style="margin-bottom:14px;border-color:${waiting ? "var(--warn)" : "var(--accent)"}">
       <div class="panel-title">20 日動態研究資料</div><div class="detail-grid" style="margin:0">
-        <div>${metric("20日獲利機率排名", `#${number(item.probability_rank_20d, "--")}`)}${metric("因子順位", `#${number(item.factor_rank_20d, "--")}`)}${metric("模型價", money(item.current_price))}${metric("安全緩衝後淨報酬", percent(forecast.expected_net_after_buffer))}${metric("風險報酬比", `${number(forecast.reward_risk_ratio).toFixed(2)} : 1`)}${metric("20 日價格區間", `${money(forecast.range_low_price)} ~ ${money(forecast.range_high_price)}`)}${metric("下行情境", money(forecast.downside_price))}</div>
-        <div>${metric("相似樣本", number(forecast.analogue_count))}${metric("歷史一致性", `${number(forecast.confidence)}/100`)}${metric("因子分數", number(item.factor_score_20d))}${metric("截面百分位", `${number(item.factor_percentile_20d)}%`)}${metric("基準日單日漲幅", percent(forecast.entry_day_return_pct))}${metric("收盤區間位置", `${(number(forecast.entry_close_location) * 100).toFixed(1)}%`)}${metric("可接受最高進場價", money(forecast.maximum_entry_price))}${metric("進場限制", (forecast.entry_execution_reasons || []).join("；") || "未觸發防追高")}${metric("20 日日均量", `${Math.round(number(forecast.average_volume_20_shares) / 1000).toLocaleString("zh-TW")} 張`)}${metric("5 日日均成交額", money(forecast.average_turnover_5_twd))}${metric("0050 近20日動能", percent(forecast.benchmark_momentum_20d))}${metric("持有規則", "不鎖定；每日重新排序")}</div>
+        <div>${metric("20日獲利機率排名", `#${number(item.probability_rank_20d, "--")}`)}${metric("資金流排名", `#${number(item.capital_flow_rank, "--")}`)}${metric("因子順位", `#${number(item.factor_rank_20d, "--")}`)}${metric("模型價", money(item.current_price))}${metric("安全緩衝後淨報酬", percent(forecast.expected_net_after_buffer))}${metric("風險報酬比", `${number(forecast.reward_risk_ratio).toFixed(2)} : 1`)}${metric("20 日價格區間", `${money(forecast.range_low_price)} ~ ${money(forecast.range_high_price)}`)}${metric("下行情境", money(forecast.downside_price))}</div>
+        <div>${metric("市場資金狀態", state.model.market_capital_flow?.status || "尚無判斷")}${metric("5 日資金流代理值", percent(forecast.capital_flow_5d_pct, 1))}${metric("20 日資金流代理值", percent(forecast.capital_flow_20d_pct, 1))}${metric("成交額加速度", `${number(forecast.turnover_acceleration_5v20, 1).toFixed(2)} 倍`)}${metric("相似樣本", number(forecast.analogue_count))}${metric("歷史一致性", `${number(forecast.confidence)}/100`)}${metric("因子分數", number(item.factor_score_20d))}${metric("截面百分位", `${number(item.factor_percentile_20d)}%`)}${metric("基準日單日漲幅", percent(forecast.entry_day_return_pct))}${metric("收盤區間位置", `${(number(forecast.entry_close_location) * 100).toFixed(1)}%`)}${metric("可接受最高進場價", money(forecast.maximum_entry_price))}${metric("進場限制", (forecast.entry_execution_reasons || []).join("；") || "未觸發防追高")}${metric("20 日日均量", `${Math.round(number(forecast.average_volume_20_shares) / 1000).toLocaleString("zh-TW")} 張`)}${metric("5 日日均成交額", money(forecast.average_turnover_5_twd))}${metric("0050 近20日動能", percent(forecast.benchmark_momentum_20d))}${metric("持有規則", "不鎖定；每日重新排序")}</div>
       </div>
     </div>
     <div class="ai-panel" id="aiPanel" style="display:none"><div class="ai-header"><div class="panel-title" style="margin:0">AI 解讀</div><span class="ai-badge" id="aiBadge"></span></div><div class="ai-content" id="aiContent"></div></div>`;
@@ -286,7 +308,8 @@ function aiPrompt(stockId) {
   const item = state.predictions[stockId];
   const forecast = item.prediction_20d;
   const decision = modelDecision(stockId);
-  return `你是台股20個交易日機率排序的解讀助理。唯一週期是20個交易日，唯一比較基準是0050。\n模型結果為「${decision}」，你只能解釋，不可改寫排名、機率或替使用者決定買賣。\n股票：${stockId} ${stockName(stockId)}\n20日淨獲利機率：${forecast.net_profit_probability ?? forecast.up_probability}%\n超越0050機率：${forecast.outperform_probability}%\n預期20日報酬：${forecast.expected_return}%\n安全緩衝後淨報酬：${forecast.expected_net_after_buffer}%\n預期超額：${forecast.expected_alpha}%\n風險報酬比：${forecast.reward_risk_ratio}\n價格區間：${forecast.range_low_price}至${forecast.range_high_price}\n下行情境：${forecast.downside_price}\n基準日單日漲幅：${forecast.entry_day_return_pct}%\n可接受最高進場價：${forecast.maximum_entry_price}\n進場限制：${(forecast.entry_execution_reasons || []).join("；") || "無"}\n請用繁體中文，最多160字，依序輸出：\n排序：逐字寫「${decision}」\n核心見解：一個主要報酬來源與一個主要風險\n觀察方式：說明應等待或觀察的量價條件，不得直接下買進指令\n失效條件：一個可驗證條件`;
+  const marketFlow = state.model.market_capital_flow || {};
+  return `你是台股20個交易日機率排序的解讀助理。唯一週期是20個交易日，唯一比較基準是0050。\n模型結果為「${decision}」，你只能解釋，不可改寫排名、機率或替使用者決定買賣。\n股票：${stockId} ${stockName(stockId)}\n20日淨獲利機率：${forecast.net_profit_probability ?? forecast.up_probability}%\n超越0050機率：${forecast.outperform_probability}%\n預期20日報酬：${forecast.expected_return}%\n安全緩衝後淨報酬：${forecast.expected_net_after_buffer}%\n預期超額：${forecast.expected_alpha}%\n風險報酬比：${forecast.reward_risk_ratio}\n市場資金狀態：${marketFlow.status || "尚無判斷"}\n5日正資金流廣度：${marketFlow.positive_5d_pct ?? "--"}%\n個股資金流排名：#${item.capital_flow_rank ?? "--"}\n個股5日資金流代理值：${forecast.capital_flow_5d_pct}%\n個股20日資金流代理值：${forecast.capital_flow_20d_pct}%\n成交額加速度：${forecast.turnover_acceleration_5v20}倍\n價格區間：${forecast.range_low_price}至${forecast.range_high_price}\n下行情境：${forecast.downside_price}\n基準日單日漲幅：${forecast.entry_day_return_pct}%\n可接受最高進場價：${forecast.maximum_entry_price}\n進場限制：${(forecast.entry_execution_reasons || []).join("；") || "無"}\n資金流欄位只是量價推估，不得稱為外資、投信或主力實際買賣超。\n請用繁體中文，最多180字，依序輸出：\n排序：逐字寫「${decision}」\n核心見解：一個主要報酬來源與一個主要風險\n資金方向：解釋市場與個股量價資金流是否同向\n觀察方式：說明應等待或觀察的量價條件，不得直接下買進指令\n失效條件：一個可驗證條件`;
 }
 
 async function runAI20d(stockId) {
@@ -303,7 +326,7 @@ async function runAI20d(stockId) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ api_key: key, body: { model, messages: [
-        { role: "system", content: V90_AI_EXPLANATION_POLICY },
+        { role: "system", content: V90_1_AI_EXPLANATION_POLICY },
         { role: "user", content: aiPrompt(stockId) },
       ], temperature: 0.05, max_tokens: 300 } }),
     });
