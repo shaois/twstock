@@ -46,6 +46,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add cache/price.json cache/benchmark.json cache/predictions.json cache/prediction_log.json cache/progress.json cache/universe.json
+          git add cache/price.json cache/benchmark.json cache/predictions.json cache/prediction_log.json cache/progress.json cache/universe.json cache/research_protocol.json cache/sectors.json cache/institutions.json cache/shadow_log.json
           git diff --staged --quiet || git commit -m "chore: update FinMind cache $(date -u +'%Y-%m-%d %H:%M UTC')"
           git push
