@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -24,7 +24,7 @@ PREDICTIONS_PATH = CACHE_DIR / "predictions.json"
 PREDICTION_LOG_PATH = CACHE_DIR / "prediction_log.json"
 PROGRESS_PATH = CACHE_DIR / "progress.json"
 
-TAIPEI_TZ = ZoneInfo("Asia/Taipei")
+TAIPEI_TZ = timezone(timedelta(hours=8))
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 BATCH_SIZE = 40
 PRICE_HISTORY_LIMIT = 1800
@@ -145,11 +145,55 @@ async def fetch_price_rows(
     raise RuntimeError(f"Failed to fetch {stock_id}: {last_error}")
 
 
+
+def mark_fetched_rows(rows, fetched_at):
+    """Stamp actual fetch time; old intraday cache cannot masquerade as EOD."""
+    return [dict(row, _fetched_at=fetched_at.isoformat()) for row in rows]
+
+
+def completed_model_inputs(price_data, benchmark_rows, universe, now):
+    """Admit same-day rows only after an explicit 18:00 fresh-data check.
+
+    18:00 is a conservative policy buffer, not a claim about FinMind's SLA.
+    Without 90% freshly fetched valid bars and a fresh 0050 bar, fall back.
+    """
+    today = now.date().isoformat()
+
+    def confirmed(row):
+        if str(row.get("date", ""))[:10] != today or now.hour < 18:
+            return False
+        try:
+            stamp = datetime.fromisoformat(row.get("_fetched_at", ""))
+            if stamp.tzinfo is None:
+                return False
+            stamp = stamp.astimezone(TAIPEI_TZ)
+            if stamp.date() != now.date() or stamp.hour < 18 or stamp > now:
+                return False
+            op, cl, hi, lo = (float(row[k]) for k in ("open", "close", "max", "min"))
+            return 0 < lo <= min(op, cl) <= max(op, cl) <= hi and float(row.get("Trading_Volume", 0)) > 0
+        except (ValueError, TypeError, KeyError):
+            return False
+
+    count = sum(any(confirmed(r) for r in price_data.get(sid, [])) for sid in universe)
+    admitted = count >= math.ceil(len(universe)*0.90) and any(confirmed(r) for r in benchmark_rows)
+    cutoff = (now.date() + timedelta(days=1)).isoformat() if admitted else today
+
+    def keep(rows):
+        return [r for r in rows if str(r.get("date", ""))[:10] < today
+                or (admitted and confirmed(r))]
+    return ({sid: keep(price_data.get(sid, [])) for sid in universe}, keep(benchmark_rows), cutoff, {
+        "run_at_taipei": now.isoformat(), "same_day_admitted": admitted,
+        "confirmed_same_day_stocks": count,
+        "policy": "18:00後新抓取有效日線、90%股票與0050共同確認；未確認採前一完成日",
+    })
+
+
 def build_model_outputs(
     price_data: dict[str, list[dict[str, Any]]],
     universe: dict[str, dict[str, str]],
     benchmark_rows: list[dict[str, Any]],
     run_date: str,
+    completion_check: dict | None = None,
 ) -> None:
     prediction_log = load_json(PREDICTION_LOG_PATH, {})
     predictions = build_predictions(
@@ -171,7 +215,9 @@ def build_model_outputs(
         benchmark_rows=benchmark_rows,
         run_date=run_date,
     )
+    predictions["model"]["completion_check"] = completion_check or {}
     save_json(PREDICTIONS_PATH, predictions)
+    print("Model", predictions["model"]["implementation_version"], "data date:", predictions["model"]["latest_date"])
     save_json(PREDICTION_LOG_PATH, prediction_log)
 
 
@@ -205,7 +251,7 @@ async def main() -> None:
                 rows = await fetch_price_rows(
                     client, stock_id, latest_start_date(existing), token
                 )
-                price_data[stock_id] = merge_price_rows(existing, rows)
+                price_data[stock_id] = merge_price_rows(existing, mark_fetched_rows(rows, taipei_now()))
                 next_index = index + 1
         except FinMindQuotaError as exc:
             save_json(PRICE_PATH, {"_saved_at": now.isoformat(), "data": price_data})
@@ -228,7 +274,7 @@ async def main() -> None:
             fetched_benchmark = await fetch_price_rows(
                 client, BENCHMARK_ID, latest_start_date(benchmark_rows), token
             )
-            benchmark_rows = merge_price_rows(benchmark_rows, fetched_benchmark)
+            benchmark_rows = merge_price_rows(benchmark_rows, mark_fetched_rows(fetched_benchmark, taipei_now()))
         except FinMindQuotaError:
             if not benchmark_rows:
                 save_json(PROGRESS_PATH, {"date": today_str, "index": len(stock_ids)})
@@ -236,7 +282,10 @@ async def main() -> None:
             print("Using the existing 0050 benchmark because the quota was reached.")
 
     save_json(BENCHMARK_PATH, {"_saved_at": now.isoformat(), "data": benchmark_rows})
-    build_model_outputs(price_data, universe, benchmark_rows, today_str)
+    inputs, benchmark_input, cutoff, check = completed_model_inputs(
+        price_data, benchmark_rows, universe, taipei_now()
+    )
+    build_model_outputs(inputs, universe, benchmark_input, cutoff, check)
     save_json(PROGRESS_PATH, {"date": today_str, "index": 0})
     print("Cycle complete: 200/200 and the only 20-day model was rebuilt.")
 

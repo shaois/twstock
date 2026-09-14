@@ -95,7 +95,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#00d4aa" stroke-width="1.5" fill="rgba(0,212,170,.08)"/>
       <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    台股選股儀表板 <span class="version-badge">v90.1</span> <span id="cacheStatus" class="cache-status">快取：尚未載入</span>
+    台股選股儀表板 <span class="version-badge">v91</span> <span id="cacheStatus" class="cache-status">快取：尚未載入</span>
   </div>
   <div class="header-right">
     <select class="api-select" id="aiProvider">
@@ -129,7 +129,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
         <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       <h2>台股 20 日獲利模型</h2>
-      <p style="max-width:460px;line-height:1.8">以未來 20 個交易日相對 0050 的淨報酬為唯一預測目標；AI 僅解讀模型結果，不改寫排名。</p>
+      <p style="max-width:460px;line-height:1.8">每日依20日淨獲利估計機率排序，並比較0050淨報酬；研究候選，非投資建議。機率尚未完成獨立校準。</p>
     </div>
     <div id="stockDetail" style="display:none"></div>
     <div id="screenerResult" style="display:none"></div>
@@ -137,6 +137,6 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
 </div>
 <div class="toast" id="toast"><span id="toastMsg"></span></div>
 
-<script src="app.js?v=90.1.1"></script>
+<script src="app.js?v=91"></script>
 </body>
 </html>
