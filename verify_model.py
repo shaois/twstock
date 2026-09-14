@@ -1,4 +1,4 @@
-"""Rebuild and audit V91 using local caches; never overwrite production cache."""
+"""Rebuild and audit V91.1 using local caches; never overwrite production cache."""
 import argparse
 import json
 from datetime import date, timedelta
@@ -17,7 +17,10 @@ def main():
     prices, universe, benchmark = load("price.json"), load("universe.json"), load("benchmark.json")
     latest = max(r["date"] for rows in list(prices.values())+[benchmark] for r in rows if r.get("date"))
     run_date = (date.fromisoformat(latest)+timedelta(days=1)).isoformat()
-    result = p.build_predictions(prices, universe, benchmark, run_date)
+    sector_path = ROOT / "cache" / "sectors.json"
+    sectors = json.loads(sector_path.read_text(encoding="utf-8")).get("data", {}) if sector_path.exists() else {}
+    result = p.build_predictions(prices, universe, benchmark, run_date, sector_data=sectors)
+    result.pop("_frozen_reference_candidate", None)
     model = result["model"]
     assert result["count"] == len(universe) == 200
     assert model["architecture_contract"]["alpha_basis"] == "stock_net_minus_benchmark_net"
@@ -32,8 +35,11 @@ def main():
         "model": model["name"], "cache_data_date": model["latest_date"],
         "cache_only_not_live_data": True, "count": result["count"],
         "ranked": len(available),
+        "sector_coverage": model["sector_coverage"],
         "distinct_downside_estimates": len({r["prediction_20d"]["downside_return"] for r in available}),
         "validation": model["validation"]["20d"],
+        "adaptation": model["adaptation"],
+        "prospective_status": "not_registered_local_development_replay_only",
     }
     for path, payload in ((args.report, report), (args.preview, result)):
         if path:

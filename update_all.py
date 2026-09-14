@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import hashlib
 import json
 import math
 import os
@@ -12,7 +14,9 @@ from typing import Any
 
 import httpx
 
-from predictor import apply_dynamic_probability_ranking, build_predictions, update_prediction_log
+from predictor import MODEL_NAME, apply_dynamic_probability_ranking, build_predictions, update_prediction_log
+from research_protocol import ensure_protocol, freeze_reference, prospective_report
+from rotation import normalize_institutions
 
 
 ROOT = Path(__file__).resolve().parent
@@ -23,6 +27,10 @@ BENCHMARK_PATH = CACHE_DIR / "benchmark.json"
 PREDICTIONS_PATH = CACHE_DIR / "predictions.json"
 PREDICTION_LOG_PATH = CACHE_DIR / "prediction_log.json"
 PROGRESS_PATH = CACHE_DIR / "progress.json"
+RESEARCH_PROTOCOL_PATH = CACHE_DIR / "research_protocol.json"
+SECTORS_PATH = CACHE_DIR / "sectors.json"
+INSTITUTIONS_PATH = CACHE_DIR / "institutions.json"
+SHADOW_LOG_PATH = CACHE_DIR / "shadow_log.json"
 
 TAIPEI_TZ = timezone(timedelta(hours=8))
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
@@ -55,6 +63,58 @@ def save_json(path: Path, payload: Any) -> None:
         encoding="utf-8",
     )
     temp_path.replace(path)
+
+
+def load_audit_json(path):
+    # Corruption must stop the run, not silently erase the prospective record.
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        existing = {}
+    if not isinstance(existing, dict):
+        raise ValueError(f"{path.name} must be an object; do not reset it")
+    return existing
+
+
+def load_protocol(universe, now):
+    existing = load_audit_json(RESEARCH_PROTOCOL_PATH)
+    digest = hashlib.sha256()
+    for name in ("predictor.py", "research_protocol.py", "update_all.py", "rotation.py"):
+        digest.update(name.encode())
+        digest.update((ROOT / name).read_text(encoding="utf-8").replace("\r\n", "\n").encode())
+    sectors = load_json(SECTORS_PATH, {}).get("data", {})
+    digest.update(json.dumps({sid: v.get("industry_category") for sid,v in sectors.items()},
+                             sort_keys=True, ensure_ascii=False).encode())
+    return ensure_protocol(existing, list(universe), digest.hexdigest(), MODEL_NAME, now)
+
+
+async def fetch_aux(client, token, dataset, **params):
+    response = await client.get(FINMIND_URL, headers={"Authorization": f"Bearer {token}"},
+                                params={"dataset": dataset, **params})
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict) or payload.get("status") != 200 or not isinstance(payload.get("data"), list):
+        raise RuntimeError("Auxiliary data unavailable")
+    return payload["data"]
+
+
+async def refresh_sectors(client, token, universe):
+    previous = load_json(SECTORS_PATH, {})
+    try:
+        rows = await fetch_aux(client, token, "TaiwanStockInfo")
+        data = {}
+        for row in sorted((r for r in rows if isinstance(r, dict)), key=lambda r: str(r.get("date", ""))):
+            sid = str(row.get("stock_id", ""))
+            if sid in universe and row.get("industry_category"):
+                data[sid] = {"industry_category": row["industry_category"],
+                             "source_date": row.get("date")}
+        if len(data) < len(universe)*.9:
+            raise ValueError("Insufficient classification coverage")
+        previous = {"observed_at": taipei_now().isoformat(), "source": "FinMind TaiwanStockInfo",
+                    "historical_membership_verified": False, "data": data}
+    except (httpx.HTTPError, ValueError, RuntimeError):
+        print("Industry classification unavailable; retaining existing mapping, unknowns stay unknown.")
+    save_json(SECTORS_PATH, previous)
 
 
 def load_universe() -> dict[str, dict[str, str]]:
@@ -181,7 +241,8 @@ def completed_model_inputs(price_data, benchmark_rows, universe, now):
     def keep(rows):
         return [r for r in rows if str(r.get("date", ""))[:10] < today
                 or (admitted and confirmed(r))]
-    return ({sid: keep(price_data.get(sid, [])) for sid in universe}, keep(benchmark_rows), cutoff, {
+    # Retain former members' cached bars for immutable historical signals.
+    return ({sid: keep(rows) for sid, rows in price_data.items()}, keep(benchmark_rows), cutoff, {
         "run_at_taipei": now.isoformat(), "same_day_admitted": admitted,
         "confirmed_same_day_stocks": count,
         "policy": "18:00後新抓取有效日線、90%股票與0050共同確認；未確認採前一完成日",
@@ -195,19 +256,45 @@ def build_model_outputs(
     run_date: str,
     completion_check: dict | None = None,
 ) -> None:
-    prediction_log = load_json(PREDICTION_LOG_PATH, {})
+    prediction_log = load_audit_json(PREDICTION_LOG_PATH)
+    protocol = load_protocol(universe, taipei_now())
+    experiment = protocol["experiments"][protocol["active_experiment"]]
     predictions = build_predictions(
         price_data,
         stock_universe=universe,
         benchmark_rows=benchmark_rows,
         run_date=run_date,
+        sector_data=load_json(SECTORS_PATH, {}).get("data", {}),
+        institutional_data=load_json(INSTITUTIONS_PATH, {}).get("data", {}),
+        shadow_reference=experiment["frozen_reference"],
     )
+    shadow = predictions.pop("_shadow_predictions", None)
+    candidate = predictions.pop("_frozen_reference_candidate")
+    freeze_reference(protocol, **candidate, frozen_at=taipei_now())
+    model = predictions["model"]
+    model["experiment_id"] = experiment["id"]
+    model["reference_mode"] = "rolling_live"
+    model["universe_history_status"] = "membership_recorded_from_first_observation_only"
+    model["membership_observed_at"] = experiment["membership_observed_at"]
+    # Persist reference first, so a rerun cannot train on new test labels.
+    save_json(RESEARCH_PROTOCOL_PATH, protocol)
     predictions = apply_dynamic_probability_ranking(
         predictions,
         prediction_log,
         stock_universe=universe,
         run_date=run_date,
     )
+    previous = prediction_log.get(model.get("latest_date"))
+    if previous and previous.get("date") == model.get("latest_date"):
+        previous = next((v for d,v in reversed(sorted(prediction_log.items()))
+                         if d < model["latest_date"] and v.get("model_name") == MODEL_NAME), None)
+    elif not previous:
+        previous = next((v for d,v in reversed(sorted(prediction_log.items()))
+                         if d < model.get("latest_date", "") and v.get("model_name") == MODEL_NAME), None)
+    ranks = {v["stock_id"]: v["probability_rank"] for v in (previous or {}).get("20d", [])}
+    for sid, item in predictions["data"].items():
+        if item.get("available"):
+            item["rank_change"] = ranks[sid]-item["probability_rank_20d"] if sid in ranks else None
     prediction_log = update_prediction_log(
         prediction_log,
         predictions,
@@ -216,6 +303,15 @@ def build_model_outputs(
         run_date=run_date,
     )
     predictions["model"]["completion_check"] = completion_check or {}
+    if shadow is None:
+        shadow = copy.deepcopy(predictions)
+    shadow["model"].update(experiment_id=experiment["id"],
+                           reference_mode="frozen_prospective" if experiment["frozen_reference"] else "awaiting_training_data")
+    shadow_log = update_prediction_log(load_audit_json(SHADOW_LOG_PATH), shadow, price_data,
+                                       benchmark_rows=benchmark_rows, run_date=run_date)
+    save_json(SHADOW_LOG_PATH, shadow_log)
+    predictions["model"]["prospective_evaluation"] = prospective_report(shadow_log, experiment)
+    predictions["model"]["prospective_evaluation"]["scope"] = "frozen_shadow_not_rolling_live_performance"
     save_json(PREDICTIONS_PATH, predictions)
     print("Model", predictions["model"]["implementation_version"], "data date:", predictions["model"]["latest_date"])
     save_json(PREDICTION_LOG_PATH, prediction_log)
@@ -229,6 +325,8 @@ async def main() -> None:
     now = taipei_now()
     today_str = now.date().isoformat()
     universe = load_universe()
+    # Even a partial batch records the real membership observation time.
+    save_json(RESEARCH_PROTOCOL_PATH, load_protocol(universe, now))
     stock_ids = list(universe)
     price_payload = load_json(PRICE_PATH, {})
     price_data = price_payload.get("data", {}) if isinstance(price_payload, dict) else {}
@@ -242,6 +340,9 @@ async def main() -> None:
 
     timeout = httpx.Timeout(35.0, connect=15.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
+        institutions = load_json(INSTITUTIONS_PATH, {"data": {}})
+        save_json(SECTORS_PATH, load_json(SECTORS_PATH, {}))
+        save_json(SHADOW_LOG_PATH, load_audit_json(SHADOW_LOG_PATH))
         next_index = start_index
         try:
             for index in range(start_index, end_index):
@@ -253,12 +354,23 @@ async def main() -> None:
                 )
                 price_data[stock_id] = merge_price_rows(existing, mark_fetched_rows(rows, taipei_now()))
                 next_index = index + 1
+                if os.environ.get("FETCH_INSTITUTIONS", "1") == "1":
+                    try:
+                        old_rows = institutions.setdefault("data", {}).get(stock_id, [])
+                        start = (now.date()-timedelta(days=90)).isoformat() if not old_rows else latest_start_date(old_rows)
+                        raw = await fetch_aux(client, token, "TaiwanStockInstitutionalInvestorsBuySell",
+                                              data_id=stock_id, start_date=start)
+                        institutions["data"][stock_id] = merge_price_rows(old_rows, normalize_institutions(raw))
+                    except (httpx.HTTPError, ValueError, RuntimeError):
+                        print(f"{stock_id}: institution data unavailable; price refresh continues.")
         except FinMindQuotaError as exc:
+            save_json(INSTITUTIONS_PATH, institutions)
             save_json(PRICE_PATH, {"_saved_at": now.isoformat(), "data": price_data})
             save_json(PROGRESS_PATH, {"date": today_str, "index": next_index})
             print(f"Quota limit; saved through stock {next_index}. {exc}")
             return
 
+        save_json(INSTITUTIONS_PATH, institutions)
         save_json(PRICE_PATH, {"_saved_at": now.isoformat(), "data": price_data})
 
         if end_index < len(stock_ids):
@@ -267,6 +379,7 @@ async def main() -> None:
             return
 
         benchmark_payload = load_json(BENCHMARK_PATH, {})
+        await refresh_sectors(client, token, universe)
         benchmark_rows = (
             benchmark_payload.get("data", []) if isinstance(benchmark_payload, dict) else []
         )

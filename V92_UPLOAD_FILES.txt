@@ -1,0 +1,52 @@
+V92 一次更新包（整合必要V91/V91.1修正，不需逐版上傳）
+
+上傳／覆蓋根目錄：
+predictor.py
+rotation.py                      新增，必要
+research_protocol.py
+update_all.py
+main.py
+app.js
+index.html
+verify_model.py
+README.md
+MODEL_ARCHITECTURE.md
+V92_UPLOAD_FILES.txt
+V92_RELEASE_NOTES.txt
+
+保持相對路徑：
+.github/workflows/daily-cache.yml
+tests/test_single_20d_contract_v92.py
+tests/test_frontend_v92.cjs
+tests/test_research_protocol.py
+tests/test_rotation_v92.py
+
+共17個檔案。不要將.github/workflows或tests攤平成根目錄。
+
+新測試檔存在後，可移除已取代者（若存在）：
+tests/test_single_20d_contract_v91.py
+tests/test_single_20d_contract_v91_1.py
+tests/test_frontend_v91.cjs
+tests/test_frontend_v91_1.cjs
+tests/test_single_20d_contract_v90_1.py
+不要整個刪除tests；保留test_pages_refresh_trigger.py與test_update_all_progress.py。
+
+保留所有正式cache、requirements.txt、.gitignore及.github/workflows/pages.yml。
+腳本自動新增cache/sectors.json、institutions.json、shadow_log.json。
+保留research_protocol.json及prediction_log.json，不要刪掉重置成績。
+沒有將本機舊行情或測試快取放入更新包。
+
+更新順序：
+1. 一次上傳17個檔案。
+2. 執行refresh-cache到完整200/200。每次40支，可能需五次；多跑不會增加AI呼叫。
+3. 初次法人逐股回補90日。每完整輪約增加200次FinMind法人查詢及1次分類查詢，受原帳號額度限制。
+4. 確認Pages部署成功、顯示v92；按載入快取再開排名。
+5. 類股未知或法人缺資料會明示；檢查cache/sectors.json、institutions.json及Actions訊息，不需先調模型門檻。
+6. Render同步部署main.py；AI仍由使用者自帶Key。
+
+如果要降低FinMind查詢量，可在daily-cache.yml的Fetch FinMind data步驟env新增：
+FETCH_INSTITUTIONS: "0"
+這只停用法人抓取；量價與類股輪動排名仍可使用。
+
+V92的法人資料是抓取、對齊與展示，尚未加入機率訓練；量價及類股輪動已直接參與機率的歷史相似樣本。
+沒有新增付費服務或代替你上傳GitHub。

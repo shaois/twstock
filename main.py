@@ -123,5 +123,5 @@ async def app_script() -> FileResponse:
 async def health() -> dict[str, str]:
     return {
         "status": "ok",
-        "model": "single_horizon_20d_probability_audited_v91",
+        "model": "single_horizon_20d_rotation_v92",
     }

@@ -11,6 +11,9 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import math
 import statistics
+from research_protocol import fit_adaptation, identity_adaptation, calibrated_probability, iter_snapshots
+
+from rotation import attach_rotation, similarity, institution_summary
 
 FEATURE_NAMES = (
     "return_20d", "return_60d", "relative_20d", "relative_60d", "rsi_14",
@@ -28,8 +31,6 @@ STABLE_HOLD_DAYS = 20  # Forecast horizon only; never a locked portfolio.
 ROUND_TRIP_COST_PCT = 0.60
 BENCHMARK_ROUND_TRIP_COST_PCT = 0.60  # Explicit scenario, not an actual ETF fee quote.
 SAFETY_BUFFER_PCT = 2.00
-FORECAST_CALIBRATION = 0.75  # Heuristic shrinkage, not proof of calibration.
-GLOBAL_SHRINKAGE = 0.35
 MIN_COMPLETE_HISTORY_DAYS = 250
 MIN_TRAIN_PERIODS = 12
 MAX_TRAIN_PERIODS = 40
@@ -39,8 +40,8 @@ STRONG_CLOSE_DAY_RETURN_PCT = 5.0
 STRONG_CLOSE_LOCATION = 0.95
 TAIPEI_TZ = timezone(timedelta(hours=8))
 MODEL_CONTRACT_VERSION = "20d-net-executable-v2"
-MODEL_IMPLEMENTATION_VERSION = "v91"
-MODEL_NAME = "single_horizon_20d_probability_audited_v91"
+MODEL_IMPLEMENTATION_VERSION = "v92"
+MODEL_NAME = "single_horizon_20d_rotation_v92"
 
 def _number(value, default=0.0):
     try:
@@ -296,6 +297,9 @@ def _entry_metrics(rows, end, market_index):
     return {
         "average_volume_20_shares": sum(volumes[end - 19:end + 1]) / 20,
         "average_turnover_5_twd": sum(turnovers[end - 4:end + 1]) / 5,
+        "average_turnover_20_twd": sum(turnovers[end - 19:end + 1]) / 20,
+        "volume_5_shares": sum(volumes[end - 4:end + 1]),
+        "last_5_dates": [r["date"] for r in rows[end - 4:end + 1]],
         "history_days": history_days,
         "entry_day_return_pct": (
             (close / previous_close - 1) * 100 if previous_close > 0 else 0.0
@@ -384,11 +388,11 @@ def _cross_section_capital_flow_scores(rows):
         "median_turnover_acceleration": round(centers[2], 2),
     }
     if breadth["positive_5d_pct"] >= 60 and breadth["median_5d_pct"] > 0:
-        breadth["status"] = "市場資金偏流入"
+        breadth["status"] = "股票池量價累積偏正"
     elif breadth["positive_5d_pct"] <= 40 and breadth["median_5d_pct"] < 0:
-        breadth["status"] = "市場資金偏流出"
+        breadth["status"] = "股票池量價累積偏負"
     else:
-        breadth["status"] = "市場資金分歧"
+        breadth["status"] = "股票池量價分歧"
     return scores, ranks, breadth
 
 
@@ -499,6 +503,8 @@ def _historical_cross_sections(samples, minimum_coverage):
     for d, rows in sorted(by_date.items()):
         if len(rows) < minimum_coverage:
             continue
+        if not all("rotation_context" in r for r in rows):
+            attach_rotation(rows, {})
         scores = _cross_section_factor_scores(rows)
         percentiles = _factor_percentiles(rows)
         flow_scores, flow_ranks, _ = _cross_section_capital_flow_scores(rows)
@@ -528,7 +534,7 @@ def _training_cohort(sections, signal_date):
 
 
 def _cohort_prediction(cohort, current_price, factor_percentile, validation=None,
-                       current_volatility=None):
+                       current_volatility=None, adaptation=None, rotation_context=None):
     if not cohort:
         return None
     weights = []
@@ -538,24 +544,25 @@ def _cohort_prediction(cohort, current_price, factor_percentile, validation=None
         if current_volatility is not None:
             ratio = max(0.1, row["features"][7]) / max(0.1, current_volatility)
             weight /= 1.0 + abs(math.log(ratio)) / 0.5
+        weight *= similarity(rotation_context, row.get("rotation_context"))
         weights.append(weight)
     returns = [r["actual_return_20d"] for r in cohort]
     alphas = [r["actual_alpha_20d"] for r in cohort]
     robust_returns = [max(-30.0, min(30.0, x)) for x in returns]
     robust_alphas = [max(-30.0, min(30.0, x)) for x in alphas]
-    expected = (
-        (1 - GLOBAL_SHRINKAGE) * _weighted_mean(robust_returns, weights)
-        + GLOBAL_SHRINKAGE * statistics.median(robust_returns)
-    ) * FORECAST_CALIBRATION
-    alpha = (
-        (1 - GLOBAL_SHRINKAGE) * _weighted_mean(robust_alphas, weights)
-        + GLOBAL_SHRINKAGE * statistics.median(robust_alphas)
-    ) * FORECAST_CALIBRATION
-    profit = _weighted_mean([float(r["actual_net_return_20d"] > 0) for r in cohort], weights)
-    outperform = _weighted_mean([float(a > 0) for a in alphas], weights)
-    # Heuristic shrinkage retained but explicitly labelled uncalibrated.
-    profit = (0.5 + (profit - 0.5) * FORECAST_CALIBRATION) * 100
-    outperform = (0.5 + (outperform - 0.5) * FORECAST_CALIBRATION) * 100
+    adaptation = adaptation or identity_adaptation()
+    local_return = _weighted_mean(robust_returns, weights)
+    prior_return = statistics.median(robust_returns)
+    local_alpha = _weighted_mean(robust_alphas, weights)
+    prior_alpha = statistics.median(robust_alphas)
+    shrink_return = adaptation["return_shrinkage"]
+    shrink_alpha = adaptation["alpha_shrinkage"]
+    expected = (1-shrink_return)*local_return + shrink_return*prior_return
+    alpha = (1-shrink_alpha)*local_alpha + shrink_alpha*prior_alpha
+    raw_profit = _weighted_mean([float(r["actual_net_return_20d"] > 0) for r in cohort], weights)*100
+    raw_outperform = _weighted_mean([float(a > 0) for a in alphas], weights)*100
+    profit = calibrated_probability(raw_profit, adaptation["profit_map"])
+    outperform = calibrated_probability(raw_outperform, adaptation["outperform_map"])
     q10, q25, q75 = [_weighted_quantile(returns, weights, q) for q in (0.10, 0.25, 0.75)]
     downside = abs(min(0.0, q10 - ROUND_TRIP_COST_PCT))
     reward = max(0.0, q75 - ROUND_TRIP_COST_PCT)
@@ -571,7 +578,12 @@ def _cohort_prediction(cohort, current_price, factor_percentile, validation=None
         "net_profit_probability": round(profit, 1),
         "up_probability": round(profit, 1),
         "outperform_probability": round(outperform, 1),
-        "probability_status": "estimate_not_independently_calibrated",
+        "probability_status": adaptation["status"],
+        "raw_net_profit_probability": raw_profit,
+        "raw_outperform_probability": raw_outperform,
+        "local_return": local_return, "prior_return": prior_return,
+        "local_alpha": local_alpha, "prior_alpha": prior_alpha,
+        "return_shrinkage": shrink_return, "alpha_shrinkage": shrink_alpha,
         "range_low_return": round(q25, 2), "range_high_return": round(q75, 2),
         "downside_return": round(q10, 2),
         "range_low_net_return": round(q25 - ROUND_TRIP_COST_PCT, 2),
@@ -593,7 +605,9 @@ def _rank_key(item):
             -f["expected_return"], -item["factor_score_20d"], item["stock_id"])
 
 
-def _rank_states(rows, cohort):
+def _rank_states(rows, cohort, adaptation=None):
+    if not all("rotation_context" in r for r in rows):
+        attach_rotation(rows, {})
     scores = _cross_section_factor_scores(rows)
     percentiles = _factor_percentiles(rows)
     flow_scores, flow_ranks, flow = _cross_section_capital_flow_scores(rows)
@@ -603,7 +617,8 @@ def _rank_states(rows, cohort):
     for row in rows:
         sid = row["stock_id"]
         forecast = _cohort_prediction(cohort, row["price"], percentiles[sid],
-                                      current_volatility=row["features"][7])
+                                      current_volatility=row["features"][7], adaptation=adaptation,
+                                      rotation_context=row.get("rotation_context"))
         if forecast is None:
             continue
         metrics = row["entry_metrics"]
@@ -627,6 +642,7 @@ def _rank_states(rows, cohort):
             "factor_percentile_20d": percentiles[sid],
             "capital_flow_score": round(flow_scores[sid], 6),
             "capital_flow_rank": flow_ranks[sid], "prediction_20d": forecast,
+            "rotation": row.get("rotation", {}),
         })
     ranked.sort(key=_rank_key)
     for index, item in enumerate(ranked, 1):
@@ -669,11 +685,14 @@ def _walk_forward_validation(sections, snapshot_date):
     records, periods = [], []
     candidates = [(d, rows) for d, rows in sections
                   if rows and any(r.get("label_end_date", "9999") <= snapshot_date for r in rows)]
-    for d, rows in candidates[-MAX_REPLAY_PERIODS:]:
+    # Generate the earlier OOF history too: limiting displayed periods must
+    # not reset adaptation warmup and change the historical production rule.
+    for d, rows in candidates:
         cohort = _training_cohort(sections, d)
         if not cohort:
             continue
-        ranked, _ = _rank_states(rows, cohort)
+        adaptation = fit_adaptation(records, d)
+        ranked, _ = _rank_states(rows, cohort, adaptation)
         base_profit = statistics.mean(r["actual_net_return_20d"] > 0 for r in cohort)*100
         base_alpha = statistics.mean(r["actual_alpha_20d"] > 0 for r in cohort)*100
         outcome_by_id = {r["stock_id"]: r for r in rows}
@@ -687,6 +706,13 @@ def _walk_forward_validation(sections, snapshot_date):
             record = {
                 "date": d, "stock_id": item["stock_id"], "rank": item["probability_rank_20d"],
                 "profit": f["net_profit_probability"], "outperform": f["outperform_probability"],
+                "raw_profit": f["raw_net_profit_probability"],
+                "raw_outperform": f["raw_outperform_probability"],
+                "base_raw_profit": base_profit, "base_raw_outperform": base_alpha,
+                "local_return": f["local_return"], "prior_return": f["prior_return"],
+                "local_alpha": f["local_alpha"], "prior_alpha": f["prior_alpha"],
+                "gross_return": outcome["actual_return_20d"],
+                "label_end_date": outcome["label_end_date"],
                 "base_profit": base_profit, "base_outperform": base_alpha,
                 "won": int(outcome["actual_net_return_20d"] > 0),
                 "beat": int(outcome["actual_alpha_20d"] > 0),
@@ -712,8 +738,13 @@ def _walk_forward_validation(sections, snapshot_date):
             "date": d, "training_periods": len({r["base_date"] for r in cohort}),
             "max_training_label_end": max(r["label_end_date"] for r in cohort),
             "ranked": len(ranked), "evaluated": len(scored), "missing": missing,
+            "adaptation": adaptation,
             "quintiles": groups,
         })
+    adaptation_records = records
+    periods = periods[-MAX_REPLAY_PERIODS:]
+    report_dates = {period["date"] for period in periods}
+    records = [record for record in records if record["date"] in report_dates]
     summaries = []
     for q in range(5):
         groups = [p["quintiles"][q] for p in periods if p["quintiles"][q]["net_return"] is not None]
@@ -726,6 +757,9 @@ def _walk_forward_validation(sections, snapshot_date):
         })
     return {
         "periods": len(periods), "sample_picks": len(records),
+        "_adaptation_records": adaptation_records,
+        "raw_profit_calibration": _calibration_report(records, "raw_profit", "won"),
+        "raw_outperform_calibration": _calibration_report(records, "raw_outperform", "beat"),
         "scope": "all_stock_probability_ranking", "status": "research_replay_only",
         "period_details": periods, "quintile_results": summaries,
         "profit_calibration": _calibration_report(records, "profit", "won"),
@@ -738,12 +772,14 @@ def _walk_forward_validation(sections, snapshot_date):
             "歷史資料曾參與改版；時間順序重播不等於未使用的封存測試",
             "股價跳變調整為既有啟發式處理，非完整除權息總報酬資料",
             "歷史成交假設次日開盤可成交；未建模漲跌停無量、滑價與市場衝擊",
-            "35%全域收縮與0.75機率收縮為既有假設，尚待新資料驗證",
+            "收縮比例由較早OOF期間選定、機率由較晚期間校準；前瞻資料另行凍結評估",
         ],
     }
 
 
-def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_date=None):
+def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_date=None,
+                      frozen_reference=None, sector_data=None, institutional_data=None,
+                      shadow_reference=None):
     run_day = _taipei_run_date(run_date)
     universe_ids = sorted(stock_universe or price_db or {})
     completed = _completed_price_db({sid: price_db.get(sid, []) for sid in universe_ids}, run_day)
@@ -763,11 +799,26 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
                      for sid, rows in completed.items()}
         benchmark = [r for r in benchmark if str(r.get("date", ""))[:10] <= latest]
     samples, current = _prepare_samples(completed, latest, benchmark) if latest else ([], {})
+    by_day = defaultdict(list)
+    for sample in samples:
+        by_day[sample["base_date"]].append(sample)
+    for rows in by_day.values():
+        attach_rotation(rows, sector_data or {})
+    rotation_summary = attach_rotation(list(current.values()), sector_data or {})
     minimum_coverage = max(1, math.ceil(len(universe_ids)*0.90))
     sections = _historical_cross_sections(samples, minimum_coverage)
     cohort = _training_cohort(sections, latest)
     validation = _walk_forward_validation(sections, latest)
-    ranked, flow = _rank_states(list(current.values()), cohort)
+    adaptation_records = validation.pop("_adaptation_records")
+    adaptation = fit_adaptation(adaptation_records, latest)
+    validation["adaptation_method"] = "chronological_tune_then_calibrate_then_evaluate"
+    validation["historical_replay_role"] = "development_not_independent_pool_validation"
+    if frozen_reference:
+        if frozen_reference["training_cutoff"] > latest:
+            raise ValueError("Frozen reference cannot predict before its registration data")
+        cohort = frozen_reference["cohort"]
+        adaptation = frozen_reference["adaptation"]
+    ranked, flow = _rank_states(list(current.values()), cohort, adaptation)
     available = {r["stock_id"]: r for r in ranked}
     output = {sid: available.get(sid, {
         "available": False, "reason": "共同日期、250日歷史或至少12期成熟訓練資料不足",
@@ -785,21 +836,52 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "selected_20d": [], "target_portfolio_size": None,
             "ranking_rule": "淨獲利估計機率、超越0050估計機率、資金流、淨超額、報酬、因子分數、股票代碼",
             "validation": {"20d": validation},
-            "probability_status": "estimate_not_independently_calibrated",
+            "probability_status": adaptation["status"],
+            "adaptation": adaptation,
+            "reference_mode": "frozen_prospective" if frozen_reference else "initialization",
             "market_capital_flow": flow,
+            "sector_rotation": rotation_summary,
+            "sector_coverage": sum(r.get("rotation", {}).get("members", 0)>0 for r in current.values()),
+            "rotation_basis": "200支池內量價與成交熱度輪動，非淨資金流入；現行分類回推歷史未經PIT核實",
+            "institutional_role": "外資投信展示與累積，未納入機率訓練",
             "universe_fingerprint": fingerprint,
             "universe_history_status": "current_fixed_membership_not_point_in_time",
             "feature_names": list(FEATURE_NAMES),
             "factor_weights": dict(zip(FEATURE_NAMES, FACTOR_WEIGHTS)),
+            "training_base_profit": statistics.mean(r["actual_net_return_20d"] > 0 for r in cohort)*100 if cohort else 50.0,
+            "training_base_outperform": statistics.mean(r["actual_alpha_20d"] > 0 for r in cohort)*100 if cohort else 50.0,
             "round_trip_cost_pct": ROUND_TRIP_COST_PCT,
             "benchmark_round_trip_cost_pct": BENCHMARK_ROUND_TRIP_COST_PCT,
             "cost_note": "股票與0050均採0.6%來回成本情境，非實際券商費率",
-            "shrinkage_note": "保留既有35%全域中位數與0.75收縮，未宣稱最佳或已校準",
+            "shrinkage_note": "由較早時間外預測誤差選收縮比例，較晚獨立用途期間校準；前瞻測試凍結不回流",
             "live_tracking_role": "forward_results_of_immutable_signal_snapshots",
             "warning": "研究候選，非投資建議；歷史重播不等於策略已獲驗證",
         },
         "data": output, "count": len(output),
+        "_frozen_reference_candidate": {"cohort": cohort, "adaptation": adaptation, "training_cutoff": latest},
     }
+    for sid, item in result["data"].items():
+        if item.get("available"):
+            m = current[sid]["entry_metrics"]
+            item["institutional"] = institution_summary((institutional_data or {}).get(sid, []),
+                                                         m["last_5_dates"], m["volume_5_shares"])
+    if shadow_reference:
+        import copy
+        shadow_rows, _ = _rank_states(list(current.values()), shadow_reference["cohort"],
+                                     shadow_reference["adaptation"])
+        shadow = copy.deepcopy(result)
+        shadow.pop("_frozen_reference_candidate", None)
+        shadow["data"] = {sid: {"available": False} for sid in universe_ids}
+        shadow["data"].update({r["stock_id"]: r for r in shadow_rows})
+        shadow["model"]["adaptation"] = shadow_reference["adaptation"]
+        shadow["model"]["reference_mode"] = "frozen_prospective"
+        shadow["model"]["ranked_20d"] = [r["stock_id"] for r in shadow_rows]
+        shadow["model"]["ranked_20d_count"] = len(shadow_rows)
+        shadow["model"]["training_base_profit"] = statistics.mean(
+            r["actual_net_return_20d"]>0 for r in shadow_reference["cohort"])*100
+        shadow["model"]["training_base_outperform"] = statistics.mean(
+            r["actual_alpha_20d"]>0 for r in shadow_reference["cohort"])*100
+        result["_shadow_predictions"] = shadow
     return result
 
 
@@ -834,16 +916,25 @@ def update_prediction_log(existing_log, predictions, price_db, benchmark_rows=No
         old = log.get(d)
         # Freeze a same-day signal. Keep a legacy snapshot as audit evidence
         # when a new version begins on that date.
-        if not old or old.get("model_name") != MODEL_NAME:
+        if (not old or old.get("model_name") != MODEL_NAME
+                or old.get("experiment_id") != model.get("experiment_id")):
             snapshot = {
                 "date": d, "model_name": MODEL_NAME,
                 "implementation_version": MODEL_IMPLEMENTATION_VERSION,
                 "first_recorded_at": (recorded_at or datetime.now(TAIPEI_TZ)).isoformat(),
                 "universe_fingerprint": model.get("universe_fingerprint"),
+                "universe_members": sorted(predictions.get("data", {})),
+                "experiment_id": model.get("experiment_id"),
+                "reference_mode": model.get("reference_mode"),
+                "adaptation": model.get("adaptation"),
                 "20d": [{
                     "stock_id": sid, "probability_rank": item["probability_rank_20d"],
                     "net_profit_probability": item["prediction_20d"]["net_profit_probability"],
                     "outperform_probability": item["prediction_20d"]["outperform_probability"],
+                    "raw_net_profit_probability": item["prediction_20d"]["raw_net_profit_probability"],
+                    "raw_outperform_probability": item["prediction_20d"]["raw_outperform_probability"],
+                    "training_base_profit": model.get("training_base_profit", 50.0),
+                    "training_base_outperform": model.get("training_base_outperform", 50.0),
                     "expected_return": item["prediction_20d"]["expected_return"],
                     "evaluation_status": "pending",
                 } for sid, item in predictions.get("data", {}).items() if item.get("available")],
@@ -855,10 +946,12 @@ def update_prediction_log(existing_log, predictions, price_db, benchmark_rows=No
     positions = {r["date"]: i for i, r in enumerate(benchmark)}
     stocks = {sid: {r["date"]: r for r in _normalize_price_rows(_completed_price_rows(rows, run_date))}
               for sid, rows in price_db.items()}
-    for signal_date, snapshot in log.items():
+    for signal_date, snapshot in iter_snapshots(log):
         if snapshot.get("model_name") != MODEL_NAME or signal_date not in positions:
             continue  # Never rescore old versions using changed accounting.
         index = positions[signal_date]
+        if index + 20 < len(benchmark):
+            snapshot["scheduled_exit_date"] = benchmark[index + 20]["date"]
         if index + 1 >= len(benchmark):
             continue
         entry_open_at = datetime.fromisoformat(benchmark[index + 1]["date"] + "T09:00:00+08:00")
@@ -881,6 +974,8 @@ def update_prediction_log(existing_log, predictions, price_db, benchmark_rows=No
                 "actual_benchmark_return": round(outcome["benchmark_return_20d"], 2),
                 "actual_benchmark_net_return": round(outcome["benchmark_net_return_20d"], 2),
                 "actual_alpha": round(outcome["actual_alpha_20d"], 2),
+                "actual_won": int(outcome["actual_net_return_20d"] > 0),
+                "actual_beat": int(outcome["actual_alpha_20d"] > 0),
                 "evaluation_status": "completed",
             })
     # Preserve the track record; do not silently truncate early observations.
