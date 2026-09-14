@@ -1,0 +1,85 @@
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+const assert = require("node:assert/strict");
+const root = path.resolve(__dirname, "..");
+const elements = new Map();
+const element = id => {
+  if (!elements.has(id)) elements.set(id, {style: {}, value: "", innerHTML: "", textContent: "",
+    disabled: false, classList: {add(){}, remove(){}, toggle(){}}});
+  return elements.get(id);
+};
+let requests = 0;
+const universe = {data: {}};
+const predictions = {data: {}, model: {
+  name: "single_horizon_20d_rotation_v92", implementation_version: "v92",
+  latest_date: "2026-08-26",
+  architecture_contract: {
+    version: "20d-net-executable-v2",
+    objective: "outperform_0050_net_return_over_next_20_trading_sessions",
+    forecast_horizons: [20], holding_period_trading_days: 20, portfolio_size: null,
+    ranking_scope: "all_available_stocks", ranking_primary_key: "net_profit_probability_20d",
+    entry_data: "completed_daily_bars_only", intraday_used_for_ranking: false,
+    ai_can_override_model: false, legacy_fallback_allowed: false,
+    entry_basis: "next_benchmark_session_open",
+    exit_basis: "signal_plus_20_benchmark_sessions_close",
+    alpha_basis: "stock_net_minus_benchmark_net"
+  },
+  validation: {"20d": {periods: 0}}
+}};
+for (let i=0; i<200; i++) {
+  const sid = String(1000+i);
+  universe.data[sid] = {name: "測試" + i};
+  predictions.data[sid] = {available: true, probability_rank_20d: i+1, current_price: 100,
+    as_of_date: "2026-08-26", capital_flow_rank: i+1,
+    prediction_20d: {
+      expected_net_return: 1, expected_alpha: 0, net_profit_probability: 50,
+      outperform_probability: 50, range_low_net_return: -5, range_high_net_return: 5,
+      downside_net_return: -10, reward_risk_ratio: .5, expected_net_after_buffer: -1,
+      capital_flow_5d_pct: 1, capital_flow_20d_pct: 2, turnover_acceleration_5v20: 1,
+      analogue_count: 4000, effective_sample_size: 500, training_periods: 20,
+      effective_periods: 15, entry_day_return_pct: 1, entry_execution_reasons: []
+    }};
+}
+predictions.data["1199"] = {available: false, reason: "缺少日線"};
+const context = vm.createContext({
+  console, document: {getElementById: element, addEventListener(){}, createElement:()=>element("new"),
+    body: {appendChild(){}}},
+  window: {setTimeout(){}},
+  fetch: async url => {
+    requests++;
+    return {ok:true, json:async()=>url.includes("universe")?universe:predictions};
+  }
+});
+vm.runInContext(fs.readFileSync(path.join(root, "app.js"), "utf8"), context);
+(async () => {
+  vm.runInContext("initApp()", context);
+  assert.equal(element("rankingBtn").disabled, true);
+  await vm.runInContext("loadStocks()", context);
+  assert.equal(requests, 2);
+  assert.equal(element("welcome").style.display, "flex");
+  assert.equal(element("rankingBtn").disabled, false);
+  assert.match(element("cacheStatus").textContent, /199\/200/);
+  vm.runInContext("show20dCandidates()", context);
+  assert.equal(requests, 2, "opening the rank must not fetch again");
+  assert.match(element("screenerResult").innerHTML, /缺少日線/);
+  assert.doesNotMatch(element("screenerResult").innerHTML, /undefined|NaN/);
+  predictions.model.adaptation = {return_shrinkage: 1, alpha_shrinkage: 1,
+    status: "time_split_fitted_pending_prospective_evaluation", tuning_dates: ["2024-01-01"],
+    calibration_dates: ["2024-02-01"]};
+  predictions.model.reference_mode = "frozen_prospective";
+  predictions.model.validation["20d"].profit_calibration = {brier_score: .26, training_base_rate_brier: .25};
+  vm.runInContext("show20dCandidates()", context);
+  assert.match(element("screenerResult").innerHTML, /個股平均報酬差異缺乏支持/);
+  assert.match(element("screenerResult").innerHTML, /未優於簡單基準/);
+  assert.match(element("screenerResult").innerHTML, /行情特徵仍每日更新/);
+  vm.runInContext('showStock("1000")', context);
+  assert.match(element("stockDetail").innerHTML, /次日實際開盤價/);
+  assert.doesNotMatch(element("stockDetail").innerHTML, /undefined|NaN/);
+  predictions.model.implementation_version = "v90.1";
+  await vm.runInContext("loadStocks()", context);
+  assert.equal(element("rankingBtn").disabled, true);
+  assert.match(element("screenerResult").innerHTML, /拒絕載入/);
+  assert.match(element("stockDetail").innerHTML, /類股輪動/);
+  console.log("V92 frontend: load/rank, rotation fields, missing data and version checks passed.");
+})().catch(error => {console.error(error); process.exitCode=1;});
