@@ -96,6 +96,41 @@ vm.runInContext(fs.readFileSync(path.join(root, "app.js"), "utf8"), context);
   vm.runInContext('showStock("1000")', context);
   assert.match(element("stockDetail").innerHTML, /次日實際開盤價/);
   assert.doesNotMatch(element("stockDetail").innerHTML, /undefined|NaN/);
+  element("apiKeyInput").value = "gsk_TEST_SECRET";
+  element("aiProvider").value = "groq";
+  element("aiModel").value = "llama-3.3-70b-versatile";
+  const cacheFetch = context.fetch;
+  const beforeAI = JSON.stringify(predictions.data);
+  context.fetch = async () => ({ok:false, status:404, json:async()=>({detail: {
+    source:"upstream", provider:"Groq", model:"llama-3.3-70b-versatile",
+    code:"model_not_found", message:"Missing model gsk_TEST_SECRET", hint:"檢查模型權限"
+  }})});
+  await vm.runInContext('runAI20d("1000")', context);
+  assert.match(element("aiContent").textContent, /Groq 上游 HTTP 404/);
+  assert.match(element("aiContent").textContent, /model_not_found/);
+  assert.doesNotMatch(element("aiContent").textContent, /gsk_TEST_SECRET|\[object Object\]/);
+  context.fetch = async () => ({ok:false, status:404, json:async()=>({detail:"Not Found"})});
+  await vm.runInContext('runAI20d("1000")', context);
+  assert.match(element("aiContent").textContent, /後端路由不存在/);
+  context.fetch = async () => ({ok:false, status:429, json:async()=>({detail:{
+    source:"upstream", provider:"Groq", retry_after_seconds:60, message:"Rate limit"}})});
+  await vm.runInContext('runAI20d("1000")', context);
+  assert.match(element("aiContent").textContent, /HTTP 429/);
+  assert.match(element("aiContent").textContent, /60 秒/);
+  context.fetch = async () => ({ok:false, status:503, json:async()=>{throw new Error("HTML");}});
+  await vm.runInContext('runAI20d("1000")', context);
+  assert.match(element("aiContent").textContent, /HTTP 503.*未回傳 JSON/);
+  context.fetch = async () => ({ok:false, status:401, json:async()=>({detail:"Old backend error"})});
+  await vm.runInContext('runAI20d("1000")', context);
+  assert.match(element("aiContent").textContent, /HTTP 401：Old backend error/);
+  context.fetch = async () => {throw new Error("Failed to fetch");};
+  await vm.runInContext('runAI20d("1000")', context);
+  assert.match(element("aiContent").textContent, /Failed to fetch/);
+  context.fetch = async () => ({ok:true, status:200, json:async()=>({choices:[{message:{content:"測試解讀"}}]})});
+  await vm.runInContext('runAI20d("1000")', context);
+  assert.match(element("aiContent").textContent, /測試解讀/);
+  assert.equal(JSON.stringify(predictions.data), beforeAI);
+  context.fetch = cacheFetch;
   predictions.model.implementation_version = "v90.1";
   await vm.runInContext("loadStocks()", context);
   assert.equal(element("rankingBtn").disabled, true);
