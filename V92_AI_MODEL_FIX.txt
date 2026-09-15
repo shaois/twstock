@@ -1,0 +1,34 @@
+V92 AI 模型與供應商切換修正 2
+
+上傳並覆蓋 main.py、app.js、index.html。
+測試檔上傳至 tests/：test_ai_errors_v92.py、test_frontend_v92.cjs。
+本說明檔可選擇上傳。
+
+NVIDIA 預設模型：nvidia/nemotron-3.5-lightning-30b-a3b
+NVIDIA API：https://integrate.api.nvidia.com/v1/chat/completions
+Groq 模型：openai/gpt-oss-20b、openai/gpt-oss-120b（仍使用 Groq Key）
+移除舊 Llama 選項及白名單，避免再呼叫已棄用或不可存取的端點。
+供應商切換同步更新選單，清空金鑰並隱藏舊解讀。
+金鑰不保存至 localStorage，不在不同供應商之間共用。
+已知錯用金鑰格式在送出前攔截；不代表完整的金鑰有效性驗證。
+NVIDIA 使用非串流、enable_thinking=false、max_tokens=1024。
+Groq 使用非串流、低推理量與隱藏推理文字、max_completion_tokens=2048。
+無自動更換供應商或模型，不會為測試使用你的真實金鑰。
+包含前次急漲提醒顯示與安全錯誤回報修正；補上410處理提示。
+
+部署：
+1. 上傳GitHub後，確認Render部署包含本次main.py的最新提交。
+2. 開啟 https://twstock-app.onrender.com/health
+   應看到 "ai_model_config":"v92-ai-model-fix-2"。
+3. 網頁Ctrl+F5，選NVIDIA，確認選單顯示Nemotron 3.5 Lightning。
+4. 在程式的密碼欄貼上自己的NVIDIA Key，按AI解讀。
+5. 不需重跑Cache；選股模型、機率與排名未修改。
+
+本機測試使用假金鑰與模擬回應，不代表已驗證你的帳號可用性。
+免費端點仍可能有帳號資格、用量與服務可用性限制。
+若失敗，只分享遮罩後的錯誤，不要分享API Key或Request Payload。
+
+官方參考：
+https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b
+https://console.groq.com/docs/models
+https://console.groq.com/docs/reasoning

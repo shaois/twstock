@@ -40,8 +40,8 @@ def _request_parts(request: dict[str, Any], provider: str) -> tuple[str, dict[st
         raise HTTPException(status_code=400, detail="請提供自己的 API Key")
     body = request.get("body")
     allowed_models = {
-        "groq": {"llama-3.3-70b-versatile", "llama-3.1-8b-instant"},
-        "nvidia": {"meta/llama-3.3-70b-instruct"},
+        "groq": {"openai/gpt-oss-20b", "openai/gpt-oss-120b"},
+        "nvidia": {"nvidia/nemotron-3.5-lightning-30b-a3b"},
     }
     if (not isinstance(body, dict) or not isinstance(body.get("model"), str)
             or body["model"] not in allowed_models[provider]):
@@ -54,11 +54,18 @@ def _request_parts(request: dict[str, Any], provider: str) -> tuple[str, dict[st
         raise HTTPException(status_code=400, detail="Invalid message content")
     if sum(len(m["content"]) for m in messages) > 16000 or len(api_key) > 1024:
         raise HTTPException(status_code=400, detail="Request too large")
-    return api_key.strip(), {
+    if provider == "groq" and api_key.strip().startswith("nvapi-") or provider == "nvidia" and api_key.strip().startswith("gsk_"):
+        raise HTTPException(status_code=400, detail="金鑰與供應商不符，請使用對應服務的 API Key")
+    upstream_body = {
         "model": body["model"],
         "messages": [{"role": m["role"], "content": m["content"]} for m in messages],
-        "temperature": 0.05, "max_tokens": 600,
+        "temperature": 0.05, "stream": False,
     }
+    if provider == "nvidia":
+        upstream_body.update(max_tokens=1024, chat_template_kwargs={"enable_thinking": False})
+    else:
+        upstream_body.update(max_completion_tokens=2048, reasoning_effort="low", reasoning_format="hidden")
+    return api_key.strip(), upstream_body
 
 
 def _upstream_error(response: httpx.Response, provider: str, api_key: str,
@@ -87,6 +94,7 @@ def _upstream_error(response: httpx.Response, provider: str, api_key: str,
         401: "金鑰驗證失敗，請確認使用此服務的有效 API Key。",
         403: "請求權限不足，請檢查帳號與模型使用權限。",
         404: "上游模型或資源不存在或無法存取；不代表 Render 路由不存在。",
+        410: "模型端點已移除或停止服務，請更換模型；重新產生金鑰無法恢復已移除的端點。",
         413: "請求內容過大，需縮短解讀資料。",
         429: "已達請求或 Token 限制，請稍後再試並檢查服務用量限制。",
     }
@@ -106,8 +114,6 @@ def _upstream_error(response: httpx.Response, provider: str, api_key: str,
 @app.post("/api/nvidia")
 async def nvidia_proxy(request: dict[str, Any]) -> Any:
     api_key, body = _request_parts(request, "nvidia")
-    body.setdefault("temperature", 0.05)
-    body.setdefault("max_tokens", 420)
     timeout = httpx.Timeout(120.0, connect=20.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -126,8 +132,6 @@ async def nvidia_proxy(request: dict[str, Any]) -> Any:
 @app.post("/api/groq")
 async def groq_proxy(request: dict[str, Any]) -> Any:
     api_key, body = _request_parts(request, "groq")
-    body.setdefault("temperature", 0.05)
-    body.setdefault("max_tokens", 420)
     # Do not immediately repeat a rate-limited request; let the user see Retry-After.
     retry_statuses = {408, 409, 500, 502, 503, 504}
     timeout = httpx.Timeout(90.0, connect=20.0)
@@ -169,4 +173,5 @@ async def health() -> dict[str, str]:
         "status": "ok",
         "model": "single_horizon_20d_rotation_v92",
         "ai_error_reporting": "v92-ai-fix-1",
+        "ai_model_config": "v92-ai-model-fix-2",
     }

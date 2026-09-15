@@ -8,6 +8,23 @@ const CONTRACT_VERSION = "20d-net-executable-v2";
 const MODEL_OBJECTIVE = "outperform_0050_net_return_over_next_20_trading_sessions";
 const BACKEND_URL = "https://twstock-app.onrender.com";
 const REQUIRED_STOCK_COUNT = 200;
+const AI_MODELS = {
+  nvidia: [{id: "nvidia/nemotron-3.5-lightning-30b-a3b", label: "NVIDIA Nemotron 3.5 Lightning"}],
+  groq: [{id: "openai/gpt-oss-20b", label: "Groq GPT-OSS 20B"},
+         {id: "openai/gpt-oss-120b", label: "Groq GPT-OSS 120B"}],
+};
+let aiRequestGeneration = 0;
+
+function syncAIProvider() {
+  aiRequestGeneration++;
+  const provider = byId("aiProvider").value;
+  const models = AI_MODELS[provider] || [];
+  byId("aiModel").innerHTML = models.map(m => `<option value="${m.id}">${m.label}</option>`).join("");
+  byId("aiModel").value = models[0]?.id || "";
+  byId("apiKeyInput").value = "";
+  byId("apiKeyInput").placeholder = `${provider === "nvidia" ? "NVIDIA" : "Groq"} API Key（僅解讀，不影響排名）`;
+  if (byId("aiPanel")) byId("aiPanel").style.display = "none";
+}
 
 const state = {
   universe: {},
@@ -85,6 +102,8 @@ function updateCacheStatus() {
 }
 
 function initApp() {
+  if (!AI_MODELS[byId("aiProvider").value]) byId("aiProvider").value = "nvidia";
+  syncAIProvider();
   state.loaded = false;
   updateCacheStatus();
   byId("stockCount").textContent = "(0)";
@@ -425,9 +444,14 @@ async function runAI20d(stockId) {
   if (!key) return void showToast("請先輸入 AI API Key");
   const provider = byId("aiProvider").value;
   const selectedModel = byId("aiModel").value;
-  const model = provider === "groq" ? selectedModel : "meta/llama-3.3-70b-instruct";
+  const model = selectedModel;
+  if (!AI_MODELS[provider]?.some(m => m.id === model)) return void showToast("模型與供應商不符，請重新選擇供應商");
+  if ((provider === "nvidia" && key.startsWith("gsk_")) || (provider === "groq" && key.startsWith("nvapi-"))) {
+    return void showToast("金鑰與供應商不符，請輸入對應服務的 API Key");
+  }
+  const requestGeneration = ++aiRequestGeneration;
   byId("aiPanel").style.display = "block";
-  byId("aiBadge").textContent = provider === "groq" ? selectedModel : "NVIDIA 70B";
+  byId("aiBadge").textContent = `${provider === "groq" ? "Groq" : "NVIDIA"} · ${model}`;
   byId("aiContent").textContent = "正在解讀每日更新的 20 日機率排序...";
   try {
     const response = await fetch(`${BACKEND_URL}/api/${provider}`, {
@@ -439,6 +463,7 @@ async function runAI20d(stockId) {
       ], temperature: 0.05, max_tokens: 300 } }),
     });
     const payload = await response.json().catch(() => null);
+    if (requestGeneration !== aiRequestGeneration || state.currentStockId !== stockId) return;
     if (!response.ok) throw new Error(aiErrorMessage(response, payload));
     if (!payload) throw new Error("AI 回應不是有效 JSON，請稍後再試");
     const content = payload.choices?.[0]?.message?.content;
@@ -447,6 +472,7 @@ async function runAI20d(stockId) {
     const normalized = content.replace(/結論\s*[：:]\s*[^\n]*/u, `結論：${decision}`);
     byId("aiContent").textContent = normalized.includes(`結論：${decision}`) ? normalized : `結論：${decision}\n${normalized}`;
   } catch (error) {
+    if (requestGeneration !== aiRequestGeneration || state.currentStockId !== stockId) return;
     const safeError = String(error.message || "連線失敗").split(key).join("[REDACTED]")
       .replace(/Bearer\s+\S+|(?:gsk_|sk-|nvapi-)[A-Za-z0-9_-]+/gi, "[REDACTED]");
     byId("aiContent").textContent = `AI 解讀失敗：${safeError}\n模型原始結論仍為：${modelDecision(stockId)}`;
@@ -458,4 +484,5 @@ window.show20dCandidates = show20dCandidates;
 window.showStock = showStock;
 window.renderStockList = renderStockList;
 window.runAI20d = runAI20d;
+window.syncAIProvider = syncAIProvider;
 document.addEventListener("DOMContentLoaded", initApp);

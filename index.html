@@ -98,13 +98,12 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
     台股選股儀表板 <span class="version-badge">v92</span> <span id="cacheStatus" class="cache-status">快取：尚未載入</span>
   </div>
   <div class="header-right">
-    <select class="api-select" id="aiProvider">
+    <select class="api-select" id="aiProvider" onchange="syncAIProvider()">
       <option value="groq">Groq</option>
-      <option value="nvidia">NVIDIA</option>
+      <option value="nvidia" selected>NVIDIA</option>
     </select>
     <select class="api-select" id="aiModel">
-      <option value="llama-3.3-70b-versatile">Groq 70B</option>
-      <option value="llama-3.1-8b-instant">Groq 8B 快速</option>
+      <option value="nvidia/nemotron-3.5-lightning-30b-a3b">NVIDIA Nemotron 3.5 Lightning</option>
     </select>
     <input class="api-input" id="apiKeyInput" type="password" placeholder="AI API Key（僅解讀 20 日模型）">
     <button class="btn btn-primary" id="loadCacheBtn" onclick="loadStocks()">重新載入快取</button>
@@ -137,6 +136,6 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
 </div>
 <div class="toast" id="toast"><span id="toastMsg"></span></div>
 
-<script src="app.js?v=92-ai-fix-1"></script>
+<script src="app.js?v=92-ai-model-fix-2"></script>
 </body>
 </html>
