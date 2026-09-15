@@ -38,10 +38,15 @@ for (let i=0; i<200; i++) {
       downside_net_return: -10, reward_risk_ratio: .5, expected_net_after_buffer: -1,
       capital_flow_5d_pct: 1, capital_flow_20d_pct: 2, turnover_acceleration_5v20: 1,
       analogue_count: 4000, effective_sample_size: 500, training_periods: 20,
-      effective_periods: 15, entry_day_return_pct: 1, entry_execution_reasons: []
+      effective_periods: 15, entry_day_return_pct: 1, entry_execution_reasons: [],
+      entry_status: "research_only"
     }};
 }
 predictions.data["1199"] = {available: false, reason: "缺少日線"};
+predictions.data["1001"].prediction_20d.entry_status = "wait_pullback";
+predictions.data["1001"].prediction_20d.signal = "等待回測";
+predictions.data["1001"].prediction_20d.entry_execution_reasons = ["訊號日漲幅達7%"];
+delete predictions.data["1002"].prediction_20d.entry_status;
 const context = vm.createContext({
   console, document: {getElementById: element, addEventListener(){}, createElement:()=>element("new"),
     body: {appendChild(){}}},
@@ -64,6 +69,21 @@ vm.runInContext(fs.readFileSync(path.join(root, "app.js"), "utf8"), context);
   assert.equal(requests, 2, "opening the rank must not fetch again");
   assert.match(element("screenerResult").innerHTML, /缺少日線/);
   assert.doesNotMatch(element("screenerResult").innerHTML, /undefined|NaN/);
+  const originalPredictions = JSON.stringify(predictions.data);
+  const originalOrder = vm.runInContext('modelRows().map(row => row.stockId).join(",")', context);
+  assert.match(element("screenerResult").innerHTML, /急漲提醒（非買賣訊號）/);
+  assert.match(element("screenerResult").innerHTML, /未觸發急漲提醒/);
+  assert.match(element("screenerResult").innerHTML, /觸發急漲條件，留意追價風險/);
+  assert.match(element("screenerResult").innerHTML, /急漲提醒資料不足/);
+  assert.doesNotMatch(element("screenerResult").innerHTML, /等待回測|<th>狀態<\/th>/);
+  vm.runInContext('showStock("1001")', context);
+  assert.match(element("stockDetail").innerHTML, /觸發急漲條件，留意追價風險/);
+  assert.match(element("stockDetail").innerHTML, /訊號日漲幅達7%/);
+  const prompt = vm.runInContext('aiPrompt("1001")', context);
+  assert.doesNotMatch(prompt, /等待回測|wait_pullback/);
+  assert.match(prompt, /不提供回測價位/);
+  assert.equal(JSON.stringify(predictions.data), originalPredictions, "display and AI explanation must not mutate cached predictions");
+  assert.equal(vm.runInContext('modelRows().map(row => row.stockId).join(",")', context), originalOrder);
   predictions.model.adaptation = {return_shrinkage: 1, alpha_shrinkage: 1,
     status: "time_split_fitted_pending_prospective_evaluation", tuning_dates: ["2024-01-01"],
     calibration_dates: ["2024-02-01"]};
