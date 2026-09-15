@@ -130,7 +130,10 @@ vm.runInContext(fs.readFileSync(path.join(root, "app.js"), "utf8"), context);
   context.fetch = async () => {throw new Error("Failed to fetch");};
   await vm.runInContext('runAI20d("1000")', context);
   assert.match(element("aiContent").textContent, /Failed to fetch/);
-  context.fetch = async () => ({ok:true, status:200, json:async()=>({choices:[{message:{content:"測試解讀"}}]})});
+  const validAdvice = label => JSON.stringify({decision:"等待", expected_net_return:1,
+    net_profit_probability:50, reasons:[label], risk:"報酬優勢有限", action:"觀察量價支持",
+    invalidation:"量價持續轉弱"});
+  context.fetch = async () => ({ok:true, status:200, json:async()=>({choices:[{finish_reason:"stop",message:{content:validAdvice("測試解讀")}}]})});
   await vm.runInContext('runAI20d("1000")', context);
   assert.match(element("aiContent").textContent, /測試解讀/);
   assert.equal(JSON.stringify(predictions.data), beforeAI);
@@ -143,13 +146,17 @@ vm.runInContext(fs.readFileSync(path.join(root, "app.js"), "utf8"), context);
   let sent;
   context.fetch = async (url, options) => {
     sent = {url, body:JSON.parse(options.body)};
-    return {ok:true, status:200, json:async()=>({choices:[{message:{content:"結論：等待，資金與報酬優勢尚未配合。NVIDIA 測試解讀"}}]})};
+    return {ok:true, status:200, json:async()=>({choices:[{finish_reason:"stop",message:{content:validAdvice("NVIDIA 測試解讀")}}]})};
   };
   await vm.runInContext('runAI20d("1000")', context);
   assert.match(sent.url, /\/api\/nvidia$/);
   assert.equal(sent.body.body.model, "nvidia/nemotron-3.5-lightning-30b-a3b");
   assert.match(element("aiContent").textContent, /NVIDIA 測試解讀/);
-  assert.match(element("aiContent").textContent, /結論：等待，資金與報酬優勢尚未配合/);
+  assert.match(element("aiContent").textContent, /AI建議：等待/);
+  context.fetch = async () => ({ok:true,status:200,json:async()=>({choices:[{message:{content:"可考慮買進，投入5%"}}]})});
+  await vm.runInContext('runAI20d("1000")', context);
+  assert.match(element("aiContent").textContent, /未通過一致性檢查/);
+  assert.doesNotMatch(element("aiContent").textContent, /投入5%|AI建議：可考慮買進/);
   assert.doesNotMatch(element("aiContent").textContent, /結論：20 日/);
   assert.match(sent.body.body.messages[1].content, /模型資料/);
   assert.match(sent.body.body.messages[1].content, /法人資料/);
