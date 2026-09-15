@@ -493,7 +493,7 @@ function aiPrompt(stockId) {
 只輸出JSON物件，不加程式碼圍欄。格式：
 {"decision":"可考慮買進或等待或避開","expected_net_return":原始最終數值或null,"net_profit_probability":原始最終數值或null,"reasons":["理由"],"risk":"風險與矛盾","action":"行動觀察","invalidation":"推翻建議的條件"}
 decision必須是可考慮買進、等待、避開其中一項。reasons為一至三個理由。其餘文字欄位不可留空。
-所有數字僅放在兩個數值欄位，文字只作定性解釋，不寫數字、數字中文寫法、持倉比例、價格、固定停損/加碼/時間門檻；介面會另行呈現正確的模型數字。不可宣称保證獲利。
+文字可引用已提供資料的數字，須說明欄位、單位與期間，不能自行產生持倉比例、固定停損/加碼/時間門檻。淨報酬已扣成本，不再以成本門檻重複扣除。不可宣稱保證獲利。
 負的或缺失的預期淨報酬不支持這個既定二十日方案的買進結論；僅憑過半勝率、法人買超或小額分批，不能把負期望改成正期望。若主張另一種進出場方案，因沒有該方案驗證資料，只能列為待確認條件，不能當成當前買進依據。
 正的預期淨報酬也不是自動買進：須說明個股資料提供的支持、風險及反證。量價代理不得寫成實際淨資金流入或流出。`;
 }
@@ -503,28 +503,41 @@ function validateAIAdvice(content, forecast, finishReason) {
   const reject = reason => ({ok: false, reason});
   if (finishReason && finishReason !== "stop") return reject("回答未完整結束，未採用其建議");
   let advice;
-  try { advice = JSON.parse(content); } catch { return reject("回答不符合結構格式，未採用其建議"); }
+  try { advice = JSON.parse(content.trim().replace(/^\x60\x60\x60(?:json)?\s*/i, "").replace(/\s*\x60\x60\x60$/, "")); } catch { return reject("回答不符合結構格式，未採用其建議"); }
   if (!advice || typeof advice !== "object" || Array.isArray(advice)) return reject("回答格式不正確");
   const fields = ["decision", "expected_net_return", "net_profit_probability", "reasons", "risk", "action", "invalidation"];
   if (Object.keys(advice).length !== fields.length || fields.some(k => !Object.hasOwn(advice, k))) return reject("回答欄位不完整或含額外欄位");
   if (!["可考慮買進", "等待", "避開"].includes(advice.decision)) return reject("建議分類不正確");
   const expected = aiNumber(forecast.expected_net_return);
   const probability = aiNumber(forecast.net_profit_probability);
-  if (advice.expected_net_return !== expected || advice.net_profit_probability !== probability) return reject("AI 引用的淨報酬或機率與模型不符");
+  const warnings = [];
+  let decisionIssue = "";
+  if (advice.expected_net_return !== expected || advice.net_profit_probability !== probability) {
+    decisionIssue = "AI 數值欄位與模型不符，結論待核對；下方模型數據才是原始值";
+    warnings.push({sentence: JSON.stringify({expected_net_return: advice.expected_net_return, net_profit_probability: advice.net_profit_probability}), reason: decisionIssue});
+  }
   if (advice.decision === "可考慮買進" && (expected === null || expected <= 0 || probability === null)) {
-    return reject("買進結論缺乏這個二十日方案的正預期淨報酬或機率資料支持；分批試單不能消除這項矛盾");
+    decisionIssue = "買進結論與非正或缺失的預期淨報酬／機率資料有矛盾，分批試單不能消除；結論待核對";
+    warnings.push({sentence: advice.decision, reason: decisionIssue});
   }
   if (!Array.isArray(advice.reasons) || advice.reasons.length < 1 || advice.reasons.length > 3) return reject("缺少有效分析理由");
   const texts = [...advice.reasons, advice.risk, advice.action, advice.invalidation];
   if (texts.some(t => typeof t !== "string" || !t.trim() || t.length > 1200)) return reject("分析文字缺失或過長");
-  const text = texts.join("\n");
-  // Deliberately keep numerical trading thresholds out of prose; display source numbers separately.
-  if (/[0-9０-９%％]|[零〇一二兩三四五六七八九十百千萬億]+(?:成|元|股|張|倍|個?交易日|天|週|分鐘|小時)|百分之|半倉|滿倉|全倉/.test(text)) {
-    return reject("AI 在文字中加入未核對數字或交易門檻；數值應只由模型資料區呈現");
+  for (const sentence of texts.flatMap(t => t.split(/[。；\n]/)).filter(Boolean)) {
+    const reasons = [];
+    // Mentioning a window (5日) or source number is not itself an error.
+    const numeric = /[0-9０-９]|百分之|[一二兩三四五六七八九十百千]+(?:成|分鐘|小時|元|天|日)|半倉|滿倉|全倉/.test(sentence);
+    if (numeric && /停損|加碼|投入|持倉|部位|目標價|買點|賣點|開盤.{0,12}分鐘/.test(sentence)) reasons.push("可能包含未驗證交易門檻，不是已驗證買賣條件");
+    for (const [label, value] of [["(?:预期|預期)?(?:二十日|20日)?淨報酬", expected], ["(?:淨)?獲利(?:估計)?機率", probability]]) {
+      const match = sentence.match(new RegExp(label + "[^0-9+−\\-]{0,8}([+−\\-]?\\d+(?:\\.\\d+)?)\\s*[%％]"));
+      if (match && (value === null || Math.abs(Number(match[1].replace("−", "-")) - value) > 0.005)) reasons.push("引用的模型數值不符，請以下方原始數據為準");
+    }
+    if (/淨報酬/.test(sentence) && /再扣|扣除成本後|成本門檻|接近成本/.test(sentence)) reasons.push("淨報酬已扣成本，這句可能重複計算成本");
+    if (/保證獲利|穩賺|必賺|無風險/.test(sentence) && !/不保證|不能保證|並非|不是|不代表/.test(sentence)) reasons.push("不當獲利保證，不應採信");
+    if (/(?:量價|代理).{0,35}(?:淨資金流入|淨資金流出|資金淨流入|資金淨流出)/.test(sentence) && !/不代表|不是|並非|不能/.test(sentence)) reasons.push("量價代理不能直接視為實際淨資金流");
+    if (reasons.length) warnings.push({sentence, reason: reasons.join("；")});
   }
-  if (/保證獲利|穩賺|必賺|無風險/.test(text)) return reject("回答包含不當獲利保證");
-  if (/(?:量價|代理)[^。；\n]{0,35}(?:淨資金流入|淨資金流出|資金淨流入|資金淨流出)/.test(text)) return reject("回答可能把量價代理混同實際資金流，未採用其建議");
-  return {ok: true, advice};
+  return {ok: true, advice, warnings, decisionIssue};
 }
 
 function renderAIAdvice(content, item, finishReason) {
@@ -532,7 +545,13 @@ function renderAIAdvice(content, item, finishReason) {
   const facts = `模型數據：預期二十日淨報酬 ${percent(item.prediction_20d?.expected_net_return)}（已扣成本）；淨獲利估計機率 ${percent(item.prediction_20d?.net_profit_probability)}`;
   if (!result.ok) return `AI 回答未通過一致性檢查（不是買進或不買的判斷）\n原因：${result.reason}\n${facts}\n本次回答未作為有效建議顯示。可重新分析；未自動重試或增加 API 呼叫。`;
   const a = result.advice;
-  return `AI 研究建議（資料日：${item.as_of_date}，非即時行情；不更動模型排名）\n${facts}\nAI建議：${a.decision}\n理由：${a.reasons.join("；")}\n風險與反證：${a.risk}\n行動觀察：${a.action}\n改變看法的條件：${a.invalidation}\n已通過格式與部分數據一致性檢查，不代表建議已經回測驗證。`;
+  const annotate = text => {
+    for (const w of result.warnings) if (text.includes(w.sentence)) text = text.replace(w.sentence, `【待核對：${w.reason}】${w.sentence}`);
+    return text;
+  };
+  const decision = result.decisionIssue ? `結論待核對（AI 原答：${a.decision}，未確認為有效建議）\n${result.decisionIssue}` : `AI建議：${a.decision}`;
+  const notice = result.warnings.length ? "部分句子已標示疑慮，保留原文供核對；標示內容不可視為已驗證交易條件。" : "未發現已知格式與部分數值問題；不代表全文已驗證。";
+  return `AI 研究建議（資料日：${item.as_of_date}，非即時行情；不更動模型排名）\n${facts}\n${decision}\n${notice}\n理由：${a.reasons.map(annotate).join("；")}\n風險與反證：${annotate(a.risk)}\n行動觀察：${annotate(a.action)}\n改變看法的條件：${annotate(a.invalidation)}\n此檢查不是完整語意或交易績效驗證。`;
 }
 
 function aiErrorMessage(response, payload) {
