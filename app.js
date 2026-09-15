@@ -482,12 +482,57 @@ function aiPrompt(stockId) {
 - 這是歷史模型估計，尚待前瞻驗證；同日個股不是獨立期間。資料不足降低結論把握，不等於所有股票必須等待。
 - 未提供完整K線、支撐壓力或即時報價；不能編造買點、停損、目標價，不能把收盤價或報酬分位數冒充技術價位。
 
-用繁體中文約350至500字，四段小標，不使用Markdown星號：
+分析要求（最後只輸出下方JSON，不直接輸出文章）：
 1. AI建議：可考慮買進／等待／避開，先直接給答案。根據淨報酬、風險與量價綜合取捨；證據足夠可提出分批試單的研究方案，不要求所有訊號全數轉強，也不強迫買進。
 2. 個股自身變化：分析本股五日與二十日量價代理、五日對二十日成交額倍數，以及法人五日淨買賣超，是否支持本股淨獲利機會。不同觀察窗口不等於完整歷史趨勢；沒有逐日資料就不能宣稱連續改善、轉折或加速。類股資訊僅作環境背景，不比較其他股票、不推薦替代標的。
 3. 行動條件：說人話，交代進場方式、失效與退出觀察條件。沒有價位依據就說缺什麼，不捏造數字，也不恢復手動試算。
 4. 機率與風險：引用本股最終淨獲利機率與預期淨報酬，說明最重要風險與改變建議的條件。等待時提出具體可觀察的改善條件，不只說等確認。
-所有結論以所提供資料日為限。有支持淨獲利機會且值得承擔風險的證據就可建議買進，無須優於其他股票；但僅有非零獲利可能性不等於值得買進。不因2%緩衝或法人未納入訓練直接否決，也不預設必須買進。`;
+所有結論以所提供資料日為限。有支持淨獲利機會且值得承擔風險的證據就可建議買進，無須優於其他股票；但僅有非零獲利可能性不等於值得買進。不因2%緩衝或法人未納入訓練直接否決，也不預設必須買進。
+
+回答契約：
+只輸出JSON物件，不加程式碼圍欄。格式：
+{"decision":"可考慮買進或等待或避開","expected_net_return":原始最終數值或null,"net_profit_probability":原始最終數值或null,"reasons":["理由"],"risk":"風險與矛盾","action":"行動觀察","invalidation":"推翻建議的條件"}
+decision必須是可考慮買進、等待、避開其中一項。reasons為一至三個理由。其餘文字欄位不可留空。
+所有數字僅放在兩個數值欄位，文字只作定性解釋，不寫數字、數字中文寫法、持倉比例、價格、固定停損/加碼/時間門檻；介面會另行呈現正確的模型數字。不可宣称保證獲利。
+負的或缺失的預期淨報酬不支持這個既定二十日方案的買進結論；僅憑過半勝率、法人買超或小額分批，不能把負期望改成正期望。若主張另一種進出場方案，因沒有該方案驗證資料，只能列為待確認條件，不能當成當前買進依據。
+正的預期淨報酬也不是自動買進：須說明個股資料提供的支持、風險及反證。量價代理不得寫成實際淨資金流入或流出。`;
+}
+
+// Output validation is a consistency check, not a profitability backtest.
+function validateAIAdvice(content, forecast, finishReason) {
+  const reject = reason => ({ok: false, reason});
+  if (finishReason && finishReason !== "stop") return reject("回答未完整結束，未採用其建議");
+  let advice;
+  try { advice = JSON.parse(content); } catch { return reject("回答不符合結構格式，未採用其建議"); }
+  if (!advice || typeof advice !== "object" || Array.isArray(advice)) return reject("回答格式不正確");
+  const fields = ["decision", "expected_net_return", "net_profit_probability", "reasons", "risk", "action", "invalidation"];
+  if (Object.keys(advice).length !== fields.length || fields.some(k => !Object.hasOwn(advice, k))) return reject("回答欄位不完整或含額外欄位");
+  if (!["可考慮買進", "等待", "避開"].includes(advice.decision)) return reject("建議分類不正確");
+  const expected = aiNumber(forecast.expected_net_return);
+  const probability = aiNumber(forecast.net_profit_probability);
+  if (advice.expected_net_return !== expected || advice.net_profit_probability !== probability) return reject("AI 引用的淨報酬或機率與模型不符");
+  if (advice.decision === "可考慮買進" && (expected === null || expected <= 0 || probability === null)) {
+    return reject("買進結論缺乏這個二十日方案的正預期淨報酬或機率資料支持；分批試單不能消除這項矛盾");
+  }
+  if (!Array.isArray(advice.reasons) || advice.reasons.length < 1 || advice.reasons.length > 3) return reject("缺少有效分析理由");
+  const texts = [...advice.reasons, advice.risk, advice.action, advice.invalidation];
+  if (texts.some(t => typeof t !== "string" || !t.trim() || t.length > 1200)) return reject("分析文字缺失或過長");
+  const text = texts.join("\n");
+  // Deliberately keep numerical trading thresholds out of prose; display source numbers separately.
+  if (/[0-9０-９%％]|[零〇一二兩三四五六七八九十百千萬億]+(?:成|元|股|張|倍|個?交易日|天|週|分鐘|小時)|百分之|半倉|滿倉|全倉/.test(text)) {
+    return reject("AI 在文字中加入未核對數字或交易門檻；數值應只由模型資料區呈現");
+  }
+  if (/保證獲利|穩賺|必賺|無風險/.test(text)) return reject("回答包含不當獲利保證");
+  if (/(?:量價|代理)[^。；\n]{0,35}(?:淨資金流入|淨資金流出|資金淨流入|資金淨流出)/.test(text)) return reject("回答可能把量價代理混同實際資金流，未採用其建議");
+  return {ok: true, advice};
+}
+
+function renderAIAdvice(content, item, finishReason) {
+  const result = validateAIAdvice(content, item.prediction_20d || {}, finishReason);
+  const facts = `模型數據：預期二十日淨報酬 ${percent(item.prediction_20d?.expected_net_return)}（已扣成本）；淨獲利估計機率 ${percent(item.prediction_20d?.net_profit_probability)}`;
+  if (!result.ok) return `AI 回答未通過一致性檢查（不是買進或不買的判斷）\n原因：${result.reason}\n${facts}\n本次回答未作為有效建議顯示。可重新分析；未自動重試或增加 API 呼叫。`;
+  const a = result.advice;
+  return `AI 研究建議（資料日：${item.as_of_date}，非即時行情；不更動模型排名）\n${facts}\nAI建議：${a.decision}\n理由：${a.reasons.join("；")}\n風險與反證：${a.risk}\n行動觀察：${a.action}\n改變看法的條件：${a.invalidation}\n已通過格式與部分數據一致性檢查，不代表建議已經回測驗證。`;
 }
 
 function aiErrorMessage(response, payload) {
@@ -533,7 +578,7 @@ async function runAI20d(stockId) {
     const content = payload.choices?.[0]?.message?.content;
     if (!content) throw new Error("AI 沒有回傳內容");
     if (typeof content !== "string") throw new Error("AI 回應格式不正確");
-    byId("aiContent").textContent = `AI 研究建議（資料日：${state.predictions[stockId].as_of_date}，非即時行情；不更動模型排名）\n${content}`;
+    byId("aiContent").textContent = renderAIAdvice(content, state.predictions[stockId], payload.choices?.[0]?.finish_reason);
   } catch (error) {
     if (requestGeneration !== aiRequestGeneration || state.currentStockId !== stockId) return;
     const safeError = String(error.message || "連線失敗").split(key).join("[REDACTED]")
