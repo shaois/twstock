@@ -48,6 +48,7 @@ async function prepareTradePlan(stockId) {
     priceContextCache.set(cacheKey, payload.rows);
   }
   const rawPrice = byId("planPrice")?.value?.trim() || "";
+  if (byId("planPrice")?.validity?.badInput) throw new Error("請輸入有效的假設成交價");
   const plan = buildTradePlan(item, priceContextCache.get(cacheKey), rawPrice ? Number(rawPrice) : null);
   tradePlans.set(stockId, plan);
   if (state.currentStockId === stockId && byId("tradePlanResult")) {
@@ -63,7 +64,9 @@ function tradePlanText(p) {
     `參考買區：${validZone ? level(p.entry_low)+" ～ "+level(p.entry_high) : "無符合條件的買區"}\n`+
     `停損參考：${level(p.stop)}；停利參考（歷史壓力）：${level(p.target)}\n`+
     `評估價格：${level(p.evaluated_price)}（${p.price_basis || "資料不足"}）\n`+
-    `此價位到目標的情境淨報酬：${percent(p.target_net_pct)}；到停損：${percent(p.stop_net_pct)}；情境盈虧比：${decimal(p.execution_reward_risk,2)}\n`+
+    `價格評估：${p.price_assessment || "缺少資料，尚無法評估"}\n`+
+    `到固定目標價的算術淨報酬：${percent(p.target_net_pct)}；到原停損價：${percent(p.stop_net_pct)}；情境盈虧比：${p.execution_reward_risk == null ? "不適用" : decimal(p.execution_reward_risk,2)}\n`+
+    `以上為假設價格情境，不是模型預期報酬；原買區、目標及停損不會因輸入價格而自動移動。\n`+
     `原20日淨獲利估計機率：${percent(p.model_probability,1)}；超越0050：${percent(p.model_outperform_probability,1)}\n`+
     `本交易計畫勝率：尚未驗證，不沿用原模型機率。\n`+
     `${p.exit_plan || "無有效交易計畫"}\n${p.invalidation || "資料不足時不產生買進判斷"}\n`+
