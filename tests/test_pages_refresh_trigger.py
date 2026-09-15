@@ -11,7 +11,8 @@ class PagesRefreshTriggerTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         scripts = re.findall(r'<script src="([^"?]+)(?:\?[^\"]*)?"', html)
-        self.assertIn("trade_plan.js", scripts)
+        self.assertNotIn("trade_plan.js", scripts)
+        self.assertNotIn("trade_plan.js", workflow)
         for script in scripts:
             if "://" in script:
                 continue

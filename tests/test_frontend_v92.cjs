@@ -56,9 +56,7 @@ const context = vm.createContext({
     return {ok:true, json:async()=>url.includes("universe")?universe:predictions};
   }
 });
-vm.runInContext(fs.readFileSync(path.join(root, "trade_plan.js"), "utf8"), context);
 vm.runInContext(fs.readFileSync(path.join(root, "app.js"), "utf8"), context);
-vm.runInContext(`priceContextCache.set("1000:2026-08-26:100", Array.from({length:21},(_,i)=>({date:"2026-08-"+String(i+6).padStart(2,"0"),close:100,high:101,low:99})))`, context);
 (async () => {
   vm.runInContext("initApp()", context);
   assert.equal(element("rankingBtn").disabled, true);
@@ -83,7 +81,11 @@ vm.runInContext(`priceContextCache.set("1000:2026-08-26:100", Array.from({length
   assert.match(element("stockDetail").innerHTML, /訊號日漲幅達7%/);
   const prompt = vm.runInContext('aiPrompt("1001")', context);
   assert.doesNotMatch(prompt, /等待回測|wait_pullback/);
-  assert.match(prompt, /不提供回測價位/);
+  assert.match(prompt, /類股輪動/);
+  assert.match(prompt, /法人資料/);
+  assert.match(prompt, /先直接給答案/);
+  assert.doesNotMatch(prompt, /服從交易計畫決策/);
+  assert.doesNotMatch(element("stockDetail").innerHTML, /planPrice|tradePlanResult|計算買賣條件/);
   assert.equal(JSON.stringify(predictions.data), originalPredictions, "display and AI explanation must not mutate cached predictions");
   assert.equal(vm.runInContext('modelRows().map(row => row.stockId).join(",")', context), originalOrder);
   predictions.model.adaptation = {return_shrinkage: 1, alpha_shrinkage: 1,
@@ -141,12 +143,16 @@ vm.runInContext(`priceContextCache.set("1000:2026-08-26:100", Array.from({length
   let sent;
   context.fetch = async (url, options) => {
     sent = {url, body:JSON.parse(options.body)};
-    return {ok:true, status:200, json:async()=>({choices:[{message:{content:"NVIDIA 測試解讀"}}]})};
+    return {ok:true, status:200, json:async()=>({choices:[{message:{content:"結論：等待，資金與報酬優勢尚未配合。NVIDIA 測試解讀"}}]})};
   };
   await vm.runInContext('runAI20d("1000")', context);
   assert.match(sent.url, /\/api\/nvidia$/);
   assert.equal(sent.body.body.model, "nvidia/nemotron-3.5-lightning-30b-a3b");
   assert.match(element("aiContent").textContent, /NVIDIA 測試解讀/);
+  assert.match(element("aiContent").textContent, /結論：等待，資金與報酬優勢尚未配合/);
+  assert.doesNotMatch(element("aiContent").textContent, /結論：20 日/);
+  assert.match(sent.body.body.messages[1].content, /模型資料/);
+  assert.match(sent.body.body.messages[1].content, /法人資料/);
   element("apiKeyInput").value = "gsk_WRONG_PROVIDER";
   sent = null;
   await vm.runInContext('runAI20d("1000")', context);
@@ -159,18 +165,6 @@ vm.runInContext(`priceContextCache.set("1000:2026-08-26:100", Array.from({length
   assert.doesNotMatch(element("aiModel").innerHTML, /NVIDIA|llama/);
   assert.equal(JSON.stringify(predictions.data), beforeAI);
   context.fetch = cacheFetch;
-  element("planPrice").value = "100";
-  await vm.runInContext('refreshTradePlan("1000")', context);
-  const firstPlanText = element("tradePlanResult").textContent;
-  assert.match(firstPlanText, /評估價格：100.00 元/);
-  element("planPrice").value = "10000";
-  await vm.runInContext('refreshTradePlan("1000")', context);
-  assert.match(element("tradePlanResult").textContent, /評估價格：10000.00 元/);
-  assert.match(element("tradePlanResult").textContent, /無淨獲利空間/);
-  assert.notEqual(element("tradePlanResult").textContent, firstPlanText);
-  assert.doesNotMatch(element("tradePlanResult").textContent, /評估價格：無法計算/);
-  assert.equal(JSON.stringify(predictions.data), beforeAI);
-  element("planPrice").value = "";
   predictions.model.implementation_version = "v90.1";
   await vm.runInContext("loadStocks()", context);
   assert.equal(element("rankingBtn").disabled, true);
