@@ -9,9 +9,36 @@ import main
 
 
 class AIErrors(unittest.TestCase):
+    def test_provider_parameters(self):
+        for model in ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]:
+            request = self.request()
+            request["body"]["model"] = model
+            _, body = main._request_parts(request, "groq")
+            self.assertEqual(body["model"], model)
+            self.assertEqual(body["reasoning_format"], "hidden")
+            self.assertNotIn("max_tokens", body)
+            self.assertFalse(body["stream"])
+        request = self.request("nvidia")
+        request["api_key"] = "nvapi-test"
+        _, body = main._request_parts(request, "nvidia")
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertEqual(body["max_tokens"], 1024)
+        self.assertNotIn("reasoning_effort", body)
+
+    def test_old_model_and_wrong_key_rejected(self):
+        request = self.request()
+        request["body"]["model"] = "llama-3.3-70b-versatile"
+        with self.assertRaises(main.HTTPException): main._request_parts(request, "groq")
+        request = self.request("nvidia")
+        with self.assertRaises(main.HTTPException): main._request_parts(request, "nvidia")
+
+    def test_410_hint(self):
+        error, _ = self.invoke(httpx.Response(410, text="Gone"), "nvidia")
+        self.assertIn("更換模型", error.detail["hint"])
+
     def request(self, provider="groq"):
         return {"api_key": "gsk_TESTSECRET123", "body": {
-            "model": "llama-3.3-70b-versatile" if provider == "groq" else "meta/llama-3.3-70b-instruct",
+            "model": "openai/gpt-oss-20b" if provider == "groq" else "nvidia/nemotron-3.5-lightning-30b-a3b",
             "messages": [{"role": "user", "content": "private prompt content"}]}}
 
     def invoke(self, response, provider="groq"):
@@ -24,7 +51,9 @@ class AIErrors(unittest.TestCase):
                 return response
         with patch.object(main.httpx, "AsyncClient", return_value=Client()):
             with self.assertRaises(main.HTTPException) as caught:
-                asyncio.run((main.groq_proxy if provider == "groq" else main.nvidia_proxy)(self.request(provider)))
+                request = self.request(provider)
+                if provider == "nvidia": request["api_key"] = "nvapi-TESTSECRET123"
+                asyncio.run((main.groq_proxy if provider == "groq" else main.nvidia_proxy)(request))
         return caught.exception, len(calls)
 
     def test_model_not_found(self):
