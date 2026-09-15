@@ -34,14 +34,16 @@ const stale = JSON.parse(vm.runInContext('JSON.stringify(aiStockFacts("1"))', ct
 assert.equal(stale.法人資料.同資料日, false);
 assert.equal(stale.法人資料.外資五交易日淨買賣超_股, null);
 const prompt = vm.runInContext('aiPrompt("7")', ctx);
-const peers = JSON.parse(prompt.split("同資料日前五名比較資料：")[1].split("\n")[0]);
-assert.deepEqual(peers.map(p=>p.股票), ["2","3","4","5","6"]);
+assert.doesNotMatch(prompt, /同資料日前五名|同組比較|原機率排名|預期超額淨報酬_pct|超越0050機率_pct/);
+for (const id of ["1","2","3","4","5","6"]) assert.ok(!prompt.includes('"股票":"' + id + '"'));
 assert.match(prompt, /"股票":"7"/);
 assert.doesNotMatch(prompt, /raw_net|raw_outperform|expected_net_after_buffer|53\.27|40\.5/);
 assert.match(prompt, /不是交易成本、預測虧損或買進否決門檻/);
 assert.match(prompt, /null是缺資料/);
 assert.match(prompt, /五交易日合計，單位股/);
-assert.match(prompt, /無法證明存在機會時可全部等待/);
+assert.match(prompt, /沒有逐日資料就不能宣稱連續改善/);
+assert.match(prompt, /無須優於其他股票/);
+assert.match(prompt, /不預設必須買進/);
 assert.ok(prompt.length + vm.runInContext('V91_AI_EXPLANATION_POLICY.length', ctx) < 16000);
 assert.equal(vm.runInContext('JSON.stringify(state.predictions)', ctx), before);
 vm.runInContext('state.predictions["2"].institutional = {};', ctx);
@@ -50,4 +52,4 @@ assert.equal(missing.法人資料.合計淨買賣超占五日成交量_pct, null
 assert.equal(vm.runInContext('aiNumber(0)',ctx),0);
 assert.equal(vm.runInContext('aiNumber("")',ctx),null);
 assert.equal(vm.runInContext('aiNumber(NaN)',ctx),null);
-console.log("AI final facts, units, missing/stale data, peer comparison and immutability passed");
+console.log("AI final facts, units, missing/stale data, single-stock isolation and immutability passed");
