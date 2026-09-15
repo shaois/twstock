@@ -159,6 +159,18 @@ vm.runInContext(`priceContextCache.set("1000:2026-08-26:100", Array.from({length
   assert.doesNotMatch(element("aiModel").innerHTML, /NVIDIA|llama/);
   assert.equal(JSON.stringify(predictions.data), beforeAI);
   context.fetch = cacheFetch;
+  element("planPrice").value = "100";
+  await vm.runInContext('refreshTradePlan("1000")', context);
+  const firstPlanText = element("tradePlanResult").textContent;
+  assert.match(firstPlanText, /評估價格：100.00 元/);
+  element("planPrice").value = "10000";
+  await vm.runInContext('refreshTradePlan("1000")', context);
+  assert.match(element("tradePlanResult").textContent, /評估價格：10000.00 元/);
+  assert.match(element("tradePlanResult").textContent, /無淨獲利空間/);
+  assert.notEqual(element("tradePlanResult").textContent, firstPlanText);
+  assert.doesNotMatch(element("tradePlanResult").textContent, /評估價格：無法計算/);
+  assert.equal(JSON.stringify(predictions.data), beforeAI);
+  element("planPrice").value = "";
   predictions.model.implementation_version = "v90.1";
   await vm.runInContext("loadStocks()", context);
   assert.equal(element("rankingBtn").disabled, true);
