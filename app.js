@@ -425,13 +425,10 @@ function aiStockFacts(stockId) {
   const aligned = Boolean(item.as_of_date) && institution.as_of_date === item.as_of_date;
   return {
     股票: stockId, 名稱: stockName(stockId), 資料日: item.as_of_date,
-    原機率排名: aiNumber(item.probability_rank_20d),
     參考收盤價_元_非即時: aiNumber(item.current_price),
     最終模型資料: {
       預期20日淨報酬_pct_已扣成本: aiNumber(f.expected_net_return),
-      預期超額淨報酬_pct_對0050: aiNumber(f.expected_alpha),
       淨獲利機率_pct: aiNumber(f.net_profit_probability),
-      超越0050機率_pct: aiNumber(f.outperform_probability),
       淨報酬25分位_pct: aiNumber(f.range_low_net_return),
       淨報酬75分位_pct: aiNumber(f.range_high_net_return),
       淨報酬10分位_pct: aiNumber(f.downside_net_return),
@@ -462,8 +459,6 @@ function aiStockFacts(stockId) {
 
 function aiPrompt(stockId) {
   const target = aiStockFacts(stockId);
-  const peers = modelRows().filter(row => row.item.as_of_date === target.資料日)
-    .slice(0, 5).map(row => aiStockFacts(row.stockId));
   const calibration = state.model?.validation?.["20d"]?.profit_calibration || {};
   const validation = {
     前瞻驗證: "尚待累積，機率不是經實盤確認的勝率",
@@ -471,11 +466,10 @@ function aiPrompt(stockId) {
     簡單基準Brier誤差: aiNumber(calibration.training_base_rate_brier),
     比較方式: "模型誤差若高於簡單基準，須明說機率校準未顯示優勢；缺值表示未知"
   };
-  return `分析目標股票，並與同資料日前五名比較，找出相對值得承擔風險的機會，不是逐欄重述。
+  return `只分析目標股票本身是否有值得承擔風險的淨獲利機會，不與其他股票比較、不要求打敗0050，也不用排名決定買賣。
 目標股票模型資料：${JSON.stringify(target)}
-同資料日前五名比較資料：${JSON.stringify(peers)}
 驗證資訊：${JSON.stringify(validation)}
-急漲提醒：${modelDecision(stockId)}
+急漲提醒：${entryAlert(state.predictions[stockId].prediction_20d)}（非買賣訊號）
 
 數據定義（必須遵守）：
 - 數值單位pct是百分比，例如1.03就是+1.03%。最終淨報酬已扣0.6%來回交易成本，不再扣一次。
@@ -490,10 +484,10 @@ function aiPrompt(stockId) {
 
 用繁體中文約350至500字，四段小標，不使用Markdown星號：
 1. AI建議：可考慮買進／等待／避開，先直接給答案。根據淨報酬、風險與量價綜合取捨；證據足夠可提出分批試單的研究方案，不要求所有訊號全數轉強，也不強迫買進。
-2. 同組比較：明確說出相較同日前五名哪一檔更值得優先研究、主要優勢與反證；只比較已提供股票，不改寫原模型排名。若目標不在前五名，仍將它與前五名比較。
+2. 個股自身變化：分析本股五日與二十日量價代理、五日對二十日成交額倍數，以及法人五日淨買賣超，是否支持本股淨獲利機會。不同觀察窗口不等於完整歷史趨勢；沒有逐日資料就不能宣稱連續改善、轉折或加速。類股資訊僅作環境背景，不比較其他股票、不推薦替代標的。
 3. 行動條件：說人話，交代進場方式、失效與退出觀察條件。沒有價位依據就說缺什麼，不捏造數字，也不恢復手動試算。
-4. 機率與風險：引用目標最終淨獲利及超越0050機率，說明最重要風險與改變建議的條件。等待時提出具體可觀察的改善條件，不只說等確認。
-所有結論以所提供資料日為限；無法證明存在機會時可全部等待，但不能單憑2%緩衝或未納入訓練就否決全部。`;
+4. 機率與風險：引用本股最終淨獲利機率與預期淨報酬，說明最重要風險與改變建議的條件。等待時提出具體可觀察的改善條件，不只說等確認。
+所有結論以所提供資料日為限。有支持淨獲利機會且值得承擔風險的證據就可建議買進，無須優於其他股票；但僅有非零獲利可能性不等於值得買進。不因2%緩衝或法人未納入訓練直接否決，也不預設必須買進。`;
 }
 
 function aiErrorMessage(response, payload) {
