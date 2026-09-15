@@ -221,14 +221,20 @@ function renderStockList() {
     </button>`).join("");
 }
 
+function entryAlert(forecast) {
+  if (forecast?.entry_status === "wait_pullback") return "觸發急漲條件，留意追價風險";
+  if (forecast?.entry_status === "research_only") return "未觸發急漲提醒";
+  return "急漲提醒資料不足";
+}
+
 function candidateRowHtml(row, index) {
   const forecast = row.item.prediction_20d;
   const waiting = forecast.entry_status === "wait_pullback";
-  const status = waiting ? "等待回測・避免追價" : "動態機率排序";
+  const status = entryAlert(forecast);
   return `<tr onclick="showStock('${escapeHtml(row.stockId)}')">
     <td class="td-mono">#${index}</td>
     <td><span class="s-id">${escapeHtml(row.stockId)}</span> ${escapeHtml(stockName(row.stockId))}</td>
-    <td style="color:${waiting ? "var(--warn)" : "var(--accent)"}">${status}</td>
+    <td style="color:${waiting ? "var(--warn)" : "var(--muted)"}">${status}</td>
     <td>${escapeHtml(row.item.rotation?.industry || "分類未知")}<br>${escapeHtml(row.item.rotation?.state || "尚無分類資料")}</td>
     <td class="td-mono">${percent(row.item.rotation?.share_change_pp)} 個百分點</td>
     <td class="td-mono" title="${escapeHtml(row.item.institutional?.status || "尚無法人資料")}">${percent(row.item.institutional?.net_volume_pct)}</td>
@@ -271,13 +277,15 @@ function show20dCandidates() {
       <div class="panel-title">20 日獲利機率動態排行榜</div>
       <div style="color:var(--muted);font-size:12px;line-height:1.8;margin-bottom:12px">
         資料日 ${escapeHtml(state.model.latest_date || "--")}；共排序 ${rows.length} 支。20 日是預測期限，不再鎖定持有名單。<br>
+        排序方式：全部股票依20日淨獲利估計機率動態排序。急漲提醒獨立顯示，不改變排名。<br>
+        急漲條件：基準日漲幅≥7%，或漲幅≥5%且收盤位於當日高低價區間最上方5%。未觸發不代表適合買進；本提醒不計算回測價位或進場時機。<br>
         200支股票池量價狀態：${escapeHtml(flow.status || "尚無判斷")}；正資金流廣度 ${number(flow.positive_5d_pct).toFixed(1)}%；5日資金流中位數 ${percent(flow.median_5d_pct, 1)}。<br>
         量價與類股輪動直接參與歷史相似樣本權重，再依20日淨獲利估計機率排序。<br>分類可形成族群的股票 ${number(state.model.sector_coverage)} 支；成交熱度不是淨資金流入，法人資料僅展示與累積，尚未納入機率。<br>
         ${protocolSummary(state.model)}<br>開發用途時間順序重播 ${number(validation.periods)} 期；不能當成發布後獨立績效。<br>
         股票及0050各採0.6%來回成本情境；次一交易日開盤進場，訊號後第20個交易日收盤評估。<br>
         研究候選，非投資建議。股票池歷史成分與完整除權息資料尚待核實。
       </div>
-      <table><thead><tr><th>機率排名</th><th>股票</th><th>狀態</th><th>類股輪動</th><th>成交占比變化</th><th>外資投信淨買／5日量</th><th>排名變動</th><th>預期20日淨報酬</th><th>淨超額</th><th>淨獲利估計機率</th><th>超越0050估計機率</th><th>5日資金流</th><th>資金排行</th><th>淨報酬區間（25–75分位）</th><th>淨報酬10分位</th><th>樣本筆數</th><th>訓練期間／有效期數</th></tr></thead><tbody>${rankingBody}</tbody></table>
+      <table><thead><tr><th>機率排名</th><th>股票</th><th>急漲提醒（非買賣訊號）</th><th>類股輪動</th><th>成交占比變化</th><th>外資投信淨買／5日量</th><th>排名變動</th><th>預期20日淨報酬</th><th>淨超額</th><th>淨獲利估計機率</th><th>超越0050估計機率</th><th>5日資金流</th><th>資金排行</th><th>淨報酬區間（25–75分位）</th><th>淨報酬10分位</th><th>樣本筆數</th><th>訓練期間／有效期數</th></tr></thead><tbody>${rankingBody}</tbody></table>
       <p>${unavailable ? "資料不足未排序：" + unavailable : ""}</p>
       ${prospectiveHtml(state.model)}
       ${validationHtml(validation)}
@@ -372,7 +380,8 @@ function showStock(stockId) {
         ${metric("加權有效樣本（仍有相關性）", f.effective_sample_size)}
         ${metric("歷史期間／有效期數", f.training_periods + "／" + f.effective_periods)}
         ${metric("基準日漲幅", percent(f.entry_day_return_pct))}
-        ${metric("執行提醒", (f.entry_execution_reasons || []).join("；") || "需自行確認實際成交條件")}
+        ${metric("急漲提醒（非買賣訊號）", entryAlert(f))}
+        ${metric("觸發原因", (f.entry_execution_reasons || []).join("；") || "無觸發原因紀錄；需自行確認實際成交條件")}
         ${metric("持有與排序", "20日預測；每日重排，不建立持倉")}</div>
       </div>
       <p>以次日實際開盤價為進場基準；價格尚未確定，因此顯示報酬區間。股票與0050各採0.6%來回成本情境；資金流為量價代理值。</p>
@@ -382,16 +391,18 @@ function showStock(stockId) {
 
 function modelDecision(stockId) {
   const item = state.predictions[stockId];
-  if (item?.prediction_20d?.entry_status === "wait_pullback") return `機率排名 #${number(item.probability_rank_20d, "--")}，等待回測`;
-  return `20 日獲利機率排名 #${number(item?.probability_rank_20d, "--")}`;
+  return `20 日獲利機率排名 #${number(item?.probability_rank_20d, "--")}；${entryAlert(item?.prediction_20d)}（非買賣訊號）`;
 }
 
 function aiPrompt(stockId) {
   const item = state.predictions[stockId];
+  // Retain cached model fields unchanged; omit legacy execution labels from AI input.
+  const { entry_status, signal, ...forecastForExplanation } = item.prediction_20d;
   return `請解釋以下20日研究排序。機率未經獨立校準，不得宣稱已驗證獲利、改排名或自行產生買進指令。唯一比較基準0050；股票與0050各扣0.6%來回成本。次日開盤進場，訊號後第20個交易日收盤評估。資金流是量價代理值，非真實法人買賣超。
 股票：${stockId} ${stockName(stockId)}
 排序：${modelDecision(stockId)}
-模型資料：${JSON.stringify(item.prediction_20d)}
+急漲提醒僅反映基準日急漲條件，不代表買賣訊號，不提供回測價位；未觸發不代表適合買進。
+模型資料：${JSON.stringify(forecastForExplanation)}
 股票池量價狀態：${JSON.stringify(state.model.market_capital_flow)}
 請用繁體中文約180字解釋排序、估計報酬與風險、資金方向、資料限制。`;
 }
