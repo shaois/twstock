@@ -56,7 +56,9 @@ const context = vm.createContext({
     return {ok:true, json:async()=>url.includes("universe")?universe:predictions};
   }
 });
+vm.runInContext(fs.readFileSync(path.join(root, "trade_plan.js"), "utf8"), context);
 vm.runInContext(fs.readFileSync(path.join(root, "app.js"), "utf8"), context);
+vm.runInContext(`priceContextCache.set("1000:2026-08-26:100", Array.from({length:21},(_,i)=>({date:"2026-08-"+String(i+6).padStart(2,"0"),close:100,high:101,low:99})))`, context);
 (async () => {
   vm.runInContext("initApp()", context);
   assert.equal(element("rankingBtn").disabled, true);

@@ -1,0 +1,37 @@
+const assert = require('node:assert/strict');
+const {buildTradePlan} = require('../trade_plan.js');
+const rows = Array.from({length:21}, (_,i)=>({date:`2026-09-${String(i+1).padStart(2,'0')}`,close:100,high:101,low:99}));
+rows[1].high=110; rows[1].low=98;
+const item = {available:true,as_of_date:'2026-09-21',current_price:100,rotation:{share_change_pp:1},prediction_20d:{
+ expected_net_return:4,expected_alpha:2,net_profit_probability:60,outperform_probability:55,
+ capital_flow_5d_pct:3,capital_flow_20d_pct:2,entry_status:'research_only'}};
+const before=JSON.stringify({item,rows});
+let p=buildTradePlan(item, rows);
+assert.match(p.decision,/可考慮買進/);
+assert.equal(p.atr14,2); assert.equal(p.ma20,100);
+assert.equal(p.stop,97.5); assert.equal(p.target,110);
+assert.equal(p.scenario_probability,null);
+assert.equal(p.net_after_buffer,2);
+assert.ok(Math.abs(p.target_net_pct-9.4)<1e-8);
+assert.ok(Math.abs(p.stop_net_pct+3.1)<1e-8);
+assert.equal(JSON.stringify({item,rows}),before);
+assert.match(buildTradePlan(item, rows,102).decision,/等待/);
+assert.match(buildTradePlan(item, rows,90).decision,/不買/);
+assert.match(buildTradePlan(item, rows,-1).decision,/資料不足/);
+assert.match(buildTradePlan(item, rows.slice(1)).decision,/資料不足/);
+assert.match(buildTradePlan({...item,as_of_date:'2026-09-22'},rows).decision,/資料不足/);
+assert.match(buildTradePlan({...item,current_price:999},rows).decision,/資料不足/);
+const weak=structuredClone(item); weak.prediction_20d.expected_net_return=1.03;
+p=buildTradePlan(weak,rows);
+assert.match(p.decision,/不買/); assert.ok(Math.abs(p.net_after_buffer+0.97)<1e-8);
+const flow=structuredClone(item); flow.prediction_20d.capital_flow_5d_pct=-5;
+assert.match(buildTradePlan(flow,rows).reasons.join(),/未轉正/);
+const alpha=structuredClone(item); alpha.prediction_20d.outperform_probability=42.9;
+assert.match(buildTradePlan(alpha,rows).reasons.join(),/0050/);
+const empty=structuredClone(item); delete empty.prediction_20d.net_profit_probability;
+assert.match(buildTradePlan(empty,rows).decision,/資料不足/);
+const narrow=rows.map(r=>({...r,high:101,low:99}));
+assert.match(buildTradePlan(item,narrow).decision,/沒有符合盈虧比/);
+const alert=structuredClone(item);alert.prediction_20d.entry_status='wait_pullback';
+assert.match(buildTradePlan(alert,rows).decision,/等待/);
+console.log('Trade-plan calculations, cost, missing data, gates and immutability passed.');
