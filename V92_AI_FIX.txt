@@ -1,0 +1,21 @@
+V92 AI 錯誤回報修正（包含前次急漲提醒文字修正）
+
+必要上傳並覆蓋：main.py、app.js、index.html
+測試檔上傳至 tests/：test_ai_errors_v92.py、test_frontend_v92.cjs
+本說明檔可選擇上傳。
+
+GitHub Pages 更新不等於 Render 後端更新。
+上傳後請確認 Render 部署了包含本次 main.py 的最新提交；若未自動部署，手動部署最新提交。
+部署後開啟 https://twstock-app.onrender.com/health
+應含有 "ai_error_reporting":"v92-ai-fix-1"，才代表後端更新完成。
+網頁 Ctrl+F5 後再按一次 AI 解讀。
+
+錯誤顯示服務名稱、HTTP 狀態、模型、上游 code/type、遮罩後 message 與處理提示。
+不回傳原始上游 headers/body；遮罩本次金鑰、常見金鑰格式及完整提示文字。
+非 JSON 回應只顯示固定提示。不要分享 Payload 或 API Key。
+Groq 429 不立即連續重試，若有數字 Retry-After 就顯示等待秒數。
+NVIDIA 同步使用相同安全錯誤格式。
+
+不修改模型、排名、機率、Cache 或供應商模型選項；不需重跑 Cache。
+本修正改善診斷，不宣稱已排除你帳號的上游404原因。
+若仍失敗，分享畫面中已遮罩的錯誤分類與原因，才能判斷模型不存在或存取權限等問題。

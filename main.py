@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +61,48 @@ def _request_parts(request: dict[str, Any], provider: str) -> tuple[str, dict[st
     }
 
 
+def _upstream_error(response: httpx.Response, provider: str, api_key: str,
+                    body: dict[str, Any]) -> HTTPException:
+    """Expose only selected error fields, never raw headers/body or credentials."""
+    def clean(value: Any) -> str:
+        if not isinstance(value, str):
+            return ""
+        value = value.replace(api_key, "[REDACTED]")
+        for message in body.get("messages", []):
+            content = message.get("content", "")
+            if content:
+                value = value.replace(content, "[PROMPT REDACTED]")
+        value = re.sub(r"(?i)Bearer\s+\S+|(?:gsk_|sk-|nvapi-)[A-Za-z0-9_-]+", "[REDACTED]", value)
+        value = re.sub(r"(?i)(api[_ -]?key|authorization|token)\s*[=:]\s*[^\s,;]+", r"\1=[REDACTED]", value)
+        return " ".join(value.split())[:500]
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    error = error if isinstance(error, dict) else {}
+    hints = {
+        400: "請求參數或模型設定不被接受，請依錯誤原因檢查。",
+        401: "金鑰驗證失敗，請確認使用此服務的有效 API Key。",
+        403: "請求權限不足，請檢查帳號與模型使用權限。",
+        404: "上游模型或資源不存在或無法存取；不代表 Render 路由不存在。",
+        413: "請求內容過大，需縮短解讀資料。",
+        429: "已達請求或 Token 限制，請稍後再試並檢查服務用量限制。",
+    }
+    detail = {
+        "source": "upstream", "provider": provider,
+        "status": response.status_code, "model": body.get("model"),
+        "code": clean(error.get("code")), "type": clean(error.get("type")),
+        "message": clean(error.get("message")) or "上游未提供可安全顯示的 JSON 錯誤原因。",
+        "hint": hints.get(response.status_code, "上游服務暫時異常，請稍後再試。" if response.status_code >= 500 else "請檢查服務設定及請求內容。"),
+    }
+    retry_after = response.headers.get("retry-after", "")
+    if retry_after.isdigit() and len(retry_after) <= 8:
+        detail["retry_after_seconds"] = int(retry_after)
+    return HTTPException(status_code=response.status_code, detail=detail)
+
+
 @app.post("/api/nvidia")
 async def nvidia_proxy(request: dict[str, Any]) -> Any:
     api_key, body = _request_parts(request, "nvidia")
@@ -76,7 +119,7 @@ async def nvidia_proxy(request: dict[str, Any]) -> Any:
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="NVIDIA connection failed") from exc
     if response.is_error:
-        raise HTTPException(status_code=response.status_code, detail="NVIDIA rejected the request; check your key and quota")
+        raise _upstream_error(response, "NVIDIA", api_key, body)
     return response.json()
 
 
@@ -85,7 +128,8 @@ async def groq_proxy(request: dict[str, Any]) -> Any:
     api_key, body = _request_parts(request, "groq")
     body.setdefault("temperature", 0.05)
     body.setdefault("max_tokens", 420)
-    retry_statuses = {408, 409, 429, 500, 502, 503, 504}
+    # Do not immediately repeat a rate-limited request; let the user see Retry-After.
+    retry_statuses = {408, 409, 500, 502, 503, 504}
     timeout = httpx.Timeout(90.0, connect=20.0)
     last_response: httpx.Response | None = None
     try:
@@ -105,7 +149,7 @@ async def groq_proxy(request: dict[str, Any]) -> Any:
     if last_response is None:
         raise HTTPException(status_code=502, detail="Groq did not respond")
     if last_response.is_error:
-        raise HTTPException(status_code=last_response.status_code, detail="Groq rejected the request; check your key and quota")
+        raise _upstream_error(last_response, "Groq", api_key, body)
     return last_response.json()
 
 
@@ -124,4 +168,5 @@ async def health() -> dict[str, str]:
     return {
         "status": "ok",
         "model": "single_horizon_20d_rotation_v92",
+        "ai_error_reporting": "v92-ai-fix-1",
     }

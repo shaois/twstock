@@ -407,6 +407,19 @@ function aiPrompt(stockId) {
 請用繁體中文約180字解釋排序、估計報酬與風險、資金方向、資料限制。`;
 }
 
+function aiErrorMessage(response, payload) {
+  const detail = payload?.detail;
+  const prefix = `HTTP ${response.status}`;
+  if (detail && typeof detail === "object" && !Array.isArray(detail) && detail.source === "upstream") {
+    return `${detail.provider || "AI"} 上游 ${prefix}；模型：${detail.model || "--"}\n` +
+      `分類：${detail.code || detail.type || "未提供"}\n原因：${detail.message || "未提供"}\n` +
+      `${detail.hint || ""}` + (Number.isFinite(detail.retry_after_seconds) ? `\n建議至少等待 ${detail.retry_after_seconds} 秒再試。` : "");
+  }
+  if (response.status === 404 && detail === "Not Found") return `${prefix}：後端路由不存在，請確認 Render 部署版本與 API 網址。`;
+  if (typeof detail === "string") return `${prefix}：${detail}`;
+  return `${prefix}：${payload ? "後端回應格式不符預期" : "後端未回傳 JSON，請檢查服務狀態與部署"}。`;
+}
+
 async function runAI20d(stockId) {
   const key = byId("apiKeyInput").value.trim();
   if (!key) return void showToast("請先輸入 AI API Key");
@@ -425,15 +438,18 @@ async function runAI20d(stockId) {
         { role: "user", content: aiPrompt(stockId) },
       ], temperature: 0.05, max_tokens: 300 } }),
     });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.detail || payload.error?.message || `HTTP ${response.status}`);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(aiErrorMessage(response, payload));
+    if (!payload) throw new Error("AI 回應不是有效 JSON，請稍後再試");
     const content = payload.choices?.[0]?.message?.content;
     if (!content) throw new Error("AI 沒有回傳內容");
     const decision = modelDecision(stockId);
     const normalized = content.replace(/結論\s*[：:]\s*[^\n]*/u, `結論：${decision}`);
     byId("aiContent").textContent = normalized.includes(`結論：${decision}`) ? normalized : `結論：${decision}\n${normalized}`;
   } catch (error) {
-    byId("aiContent").textContent = `AI 解讀失敗：${error.message}\n模型原始結論仍為：${modelDecision(stockId)}`;
+    const safeError = String(error.message || "連線失敗").split(key).join("[REDACTED]")
+      .replace(/Bearer\s+\S+|(?:gsk_|sk-|nvapi-)[A-Za-z0-9_-]+/gi, "[REDACTED]");
+    byId("aiContent").textContent = `AI 解讀失敗：${safeError}\n模型原始結論仍為：${modelDecision(stockId)}`;
   }
 }
 
