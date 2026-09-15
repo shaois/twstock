@@ -9,6 +9,7 @@ on:
     paths:
       - "index.html"
       - "app.js"
+      - "trade_plan.js"
       - "cache/universe.json"
       - "cache/predictions.json"
       - ".github/workflows/pages.yml"
@@ -39,6 +40,7 @@ jobs:
           mkdir -p _site/cache
           cp index.html _site/index.html
           cp app.js _site/app.js
+          cp trade_plan.js _site/trade_plan.js
           cp cache/universe.json _site/cache/universe.json
           cp cache/predictions.json _site/cache/predictions.json
 
