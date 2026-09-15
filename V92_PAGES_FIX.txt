@@ -1,0 +1,20 @@
+V92 GitHub Pages 部署補丁
+
+原因：pages.yml只複製舊有腳本，新增trade_plan.js沒有進入_site，因此GitHub原始碼有檔案也可能在網站404。
+
+上傳並覆蓋：
+.github/workflows/pages.yml
+tests/test_pages_refresh_trigger.py
+
+附帶trade_plan.js：放在儲存庫根目錄，與app.js同層；若已上傳同版本可不重複。
+本文件可選擇上傳。
+
+此次補丁不替代交易計畫完整更新包；假設已上傳該包的app.js、index.html、main.py等檔案。
+請保留路徑，pages.yml不可放在儲存庫根目錄。
+GitHub網頁操作可進入.github/workflows後上傳pages.yml覆蓋；或開啟該檔使用編輯功能貼上補丁內容。
+
+提交後查看Actions中的Pages部署，等待build與deploy成功。
+若未自動執行，手動執行對應Pages工作流程。
+完成後開啟 https://shaois.github.io/twstock/trade_plan.js
+應看到JavaScript文字而非404；再回到股票頁按Ctrl+F5。
+此補丁僅修GitHub Pages發布，不需重跑Cache、不改選股、不需為此單獨重部署Render。
