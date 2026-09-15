@@ -1,0 +1,30 @@
+V92 移除手動交易計畫，改為AI直接分析
+
+必要上傳並覆蓋：app.js、index.html、main.py、.github/workflows/pages.yml
+測試上傳並覆蓋：tests/test_frontend_v92.cjs、tests/test_pages_refresh_trigger.py
+本說明檔可選擇上傳。
+
+GitHub可刪除的舊功能檔案：
+trade_plan.js
+tests/test_trade_plan.cjs
+tests/test_price_context.py
+這三檔已不被使用；即使暫時保留，也不會再載入或執行。
+舊程式可從先前更新zip或Git提交紀錄恢復。
+
+修改：
+移除假設成交價欄位、計算買賣條件、固定買區/停損/停利與交易計畫否決門檻。
+移除buildTradePlan相依與/api/price-context端點。
+AI按鈕直接呼叫選取供應商，不先執行固定交易規則。
+模型價量、參考價格/資料日、類股輪動、法人彙總、股票池狀態、校準限制均提供給AI。
+AI直接給可考慮買進/等待/避開的研究意見，說明理由、反證、觀察條件及機率限制。
+不再用程式字串覆蓋AI的結論。
+原排名、機率与預測資料不變；AI意見和模型結果分開。
+不提供即時行情、新聞或完整支撐壓力資料；AI不得據空編造具體價格及新方案勝率。
+成本說明：淨報酬已扣0.6%，安全緩衝另扣2%。
+供應商切換、金鑰清空、新模型及安全錯誤回報保留。
+
+部署：
+確認GitHub Pages部署成功，Render部署最新main.py後，網頁Ctrl+F5。
+/health應看到 ai_analysis: direct-data-advice-1。
+輸入對應供應商的Key，按AI操作分析即可，不需要再輸入假設成交價。
+無需重跑Cache。本機測試不使用真實Key，不代表已驗證AI建議的投資績效。

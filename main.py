@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import json
 from pathlib import Path
 from typing import Any
 
@@ -168,27 +167,6 @@ async def app_script() -> FileResponse:
     return FileResponse(ROOT / "app.js", media_type="application/javascript")
 
 
-@app.get("/trade_plan.js")
-async def trade_plan_script() -> FileResponse:
-    return FileResponse(ROOT / "trade_plan.js", media_type="application/javascript")
-
-
-@app.get("/api/price-context/{stock_id}")
-def price_context(stock_id: str, as_of: str) -> Any:
-    if not re.fullmatch(r"\d{4,6}", stock_id) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of):
-        raise HTTPException(400, "Invalid stock/date")
-    try:
-        payload = json.loads((CACHE_DIR / "price.json").read_text(encoding="utf-8"))
-        rows = payload.get("data", {}).get(stock_id, [])
-        rows = sorted([r for r in rows if isinstance(r, dict) and str(r.get("date", "")) <= as_of], key=lambda r:r["date"])[-21:]
-        if len(rows)<21 or rows[-1].get("date") != as_of:
-            raise HTTPException(409, "Render日線未同步至模型資料日，請更新後端快取；不產生買賣價位")
-        return {"as_of": as_of, "rows": [{"date":r["date"], "close":r.get("close"),
-            "high":r.get("high", r.get("max")), "low":r.get("low", r.get("min"))} for r in rows]}
-    except (OSError, ValueError, TypeError, AttributeError):
-        raise HTTPException(503, "交易計畫日線資料暫不可用")
-
-
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {
@@ -196,5 +174,5 @@ async def health() -> dict[str, str]:
         "model": "single_horizon_20d_rotation_v92",
         "ai_error_reporting": "v92-ai-fix-1",
         "ai_model_config": "v92-ai-model-fix-2",
-        "trade_plan": "execution-scenario-1",
+        "ai_analysis": "direct-data-advice-1",
     }
