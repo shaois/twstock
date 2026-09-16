@@ -23,3 +23,17 @@ assert.match(render({...base,decision:'可考慮買進'}),/AI建議：可考慮�
 assert.match(render({...base,decision:'避開'}),/AI建議：避開/);
 assert.doesNotMatch(render({...base,risk:'若未來5日價格跌幅20%則重新判斷[F5]'}),/此期間收盤變化為.*20/);
 console.log('Grouped references, model references, historical price confusion, balanced review and unchanged decisions passed');
+const structured={...base,reasons:[
+ {kind:'支持進場',text:'證據不足',refs:[]},
+ {kind:'反對進場',text:'短期價格走弱',refs:['F5']},
+ {kind:'決定結論',text:'模型與歷史觀察尚未提供足夠支持',refs:['M1','F5']}],
+ risk:{text:'買盤可能持續偏弱',refs:['F2']}};
+out=render(structured);
+assert.match(out,/支持進場：證據不足/);
+assert.match(out,/短期價格走弱\[F5\]/);
+assert.doesNotMatch(out,/未通過一致性檢查|缺少有效事實編號|分析結構不完整/);
+assert.match(render({...structured,risk:{text:'偏弱',refs:['F999']}}),/不存在的資料來源/);
+assert.match(render({...structured,risk:{text:'五日跌1.91%',refs:['F2']}}),/AI重述數字尚未完整核對/);
+assert.match(render({...structured,risk:{text:'偏弱',refs:'F2'}}),/結構化證據欄位不完整/);
+assert.match(out,/需執行每日快取更新/);
+console.log('Structured typed references, missing evidence, invalid fields and estimator migration notice passed');
