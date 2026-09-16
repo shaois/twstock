@@ -469,7 +469,7 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
   };
   return `只分析目標股票本身是否有值得承擔風險的淨獲利機會，不與其他股票比較、不要求打敗0050，也不用排名決定買賣。
 目標股票模型資料：${JSON.stringify(target)}
-個股連續證據（程式已計算）：${JSON.stringify(summarizeAIEvidence(history))}
+個股連續證據與模型引用（程式已計算）：${JSON.stringify(aiReviewEvidence(summarizeAIEvidence(history), state.predictions[stockId].prediction_20d))}
 驗證資訊：${JSON.stringify(validation)}
 急漲提醒：${entryAlert(state.predictions[stockId].prediction_20d)}（非買賣訊號）
 
@@ -478,21 +478,21 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
 - 2%安全緩衝只是額外保守情境，不是交易成本、預測虧損或買進否決門檻；不能把+1.03%說成-0.97%預期虧損。
 - 只引用最終機率，不能使用或猜測原始、校準前機率。勝率與報酬大小分開判讀，勝率不是盈虧比。
 - 預期淨報酬是收縮估計，不是未來必然報酬。報酬全域收縮比例越高，個股報酬越接近歷史全域中位數；它按历史預測誤差選出，不代表已驗證為最佳買賣門檻。null表示比例未知。接近零代表此估計未提供明顯報酬優勢，不能說成確定無獲利機會，也不能擅自取消收縮或改用較樂觀數字。
-- 量價代理與類股成交熱度不是真實淨資金流，負值不能直接說成法人賣超或資金撤出。
+- 量價代理不是股價漲跌幅、成交量增減率或真實淨資金流，不能將五日代理-40%寫成五日股價跌40%或成交量減40%。價格變化只能引用期間收盤變化事實；代理負值不能直接說成法人賣超或資金撤出。
 - 法人是外資與投信五交易日合計，單位股，不是張或單日；正數淨買超，負數淨賣超，零為持平。不能推論每天連買、加速買超。null是缺資料，不是零或利空。
 - 法人尚未納入機率訓練只描述模型使用方式，不是看空理由；可作獨立輔助證據，不能自行增加勝率。
 - 原機率適用次日開盤進場、訊號後第20交易日收盤評估，並非你提出的新進出場方案勝率。
 - 連續證據已由程式彙總成F編號。不得自行再加總、換算成萬/億/張、把五日當成當日、或把負號讀成買超。每個數字以該F項日期、單位與方向為準；法人是淨買賣超，不是總買進或总賣出。
-- reasons每項與risk、action、invalidation須引用相關[F編號]，僅引用存在的項目；引用並不代表新交易條件已驗證。不要重抄法人股數，用編號與定性判讀即可，介面會附程式計算的原始事實。資料不可用時不用編造F引用。
-- 本次提供已計算的期間摘要，不提供原始逐日陣列：不能自行推論未提供的每日連買連賣、轉折日或指定歷史日期價格。
+- reasons每項與risk的事實依據須引用存在的[F編號]或[M編號]；M是模型估計，F是歷史觀察，不能混用。action與invalidation若提出未來條件，須明說是假設的觀察條件，不是已驗證規則，不必為假設編造引用。不要重抄法人股數，用編號與定性判讀即可。沒有支持證據時直說不足。
+- 本次提供已計算的期間摘要，不提供原始逐日陣列：沒有逐日資料就不能宣稱連續改善；不能自行推論未提供的每日連買連賣、轉折日或指定歷史日期價格。
 - 這是歷史模型估計，尚待前瞻驗證；同日個股不是獨立期間。資料不足降低結論把握，不等於所有股票必須等待。
-- 若個股連續證據available=true，可依提供的日期序列分析價格趨勢、成交量、外資與投信買賣的持續性，逐一引用觀察日期，不把不同窗口當作轉折。缺失法人值不得當零，未知中間交易日不得宣稱連續買超。
+- 若個股連續證據available=true，只能分析提供的各期間摘要，不能從重疊窗口證明逐日持續性或轉折。缺失法人值不得當零。
 - 提供的是原始未還原日線，除權息拆併股尚未核實；異常跳空須提出疑慮，不能據此直接推論轉弱或買點。沒有即時報價。
 - 可從已提供序列辨識歷史高低點或價位區間，但須指出日期與價格依據，稱為研究參考而非驗證過的停損或必達目標。沒有對應資料就不提供價位，不能把報酬分位數當技術支撐。
 
 分析要求（最後只輸出下方JSON，不直接輸出文章）：
 1. AI建議：可考慮買進／等待／避開，先直接給答案。根據淨報酬、風險與量價綜合取捨；證據足夠可提出分批試單的研究方案，不要求所有訊號全數轉強，也不強迫買進。
-2. 個股自身變化：優先分析連續日線與法人序列，明確列出支持買進與反對買進的證據並權衡；模型是背景估計，不是另一份獨立證明。若資料不可用，沒有逐日資料就不能宣稱連續改善、轉折或加速。類股資訊僅作環境背景，不比較其他股票、不推薦替代標的。
+2. reasons固定三項，依序以「支持進場：」「反對進場：」「決定結論：」開頭。前兩項分別列本股支持與反對的證據；最後一項解釋哪項證據占優勢、為何足以買進或需要等待/避開。無支持或反對證據可說不足，不得捏造。模型是背景估計，不是另一份獨立證明；不能只重述模型而忽略歷史觀察，也不能為湊買進而忽略反證。類股僅作背景。
 3. 行動條件：說人話，交代進場方式、失效與退出觀察條件。沒有價位依據就說缺什麼，不捏造數字，也不恢復手動試算。
 4. 機率與風險：引用本股最終淨獲利機率與預期淨報酬，說明最重要風險與改變建議的條件。等待時提出具體可觀察的改善條件，不只說等確認。
 所有結論以所提供資料日為限。有支持淨獲利機會且值得承擔風險的證據就可建議買進，無須優於其他股票；但僅有非零獲利可能性不等於值得買進。不因2%緩衝或法人未納入訓練直接否決，也不預設必須買進。
@@ -500,7 +500,7 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
 回答契約：
 只輸出JSON物件，不加程式碼圍欄。格式：
 {"decision":"可考慮買進或等待或避開","expected_net_return":原始最終數值或null,"net_profit_probability":原始最終數值或null,"reasons":["理由"],"risk":"風險與矛盾","action":"行動觀察","invalidation":"推翻建議的條件"}
-decision必須是可考慮買進、等待、避開其中一項。reasons為一至三個理由。其餘文字欄位不可留空。
+decision必須是可考慮買進、等待、避開其中一項。reasons固定為支持進場、反對進場、決定結論三項。其餘文字欄位不可留空。
 文字可引用已提供資料的數字，須說明欄位、日期與單位，不自行產生持倉比例或固定時間門檻。淨報酬已扣成本，不再以成本門檻重複扣除。不可宣稱保證獲利。
 AI任務是進場覆核，不是重複模型門檻。預期淨報酬正負都不是單一買進或等待規則。若模型不支持、但連續價量與法人證據支持進場，可以提出有明確證據的研究建議，必須在risk說明與模型的分歧、新方案未驗證，不能改寫原始機率，也不把負期望改成正期望。不以「少量試單」代替證據。沒有連續證據時，不能宣稱已完成趨勢覆核；給出資料限制與條件式意見。
 正的預期淨報酬也不是自動買進：須說明個股資料提供的支持、風險及反證。量價代理不得寫成實際淨資金流入或流出。`;
@@ -551,16 +551,52 @@ function validateAIAdvice(content, forecast, finishReason) {
   return {ok: true, advice, warnings, decisionIssue};
 }
 
+// Accept bracket variants and grouped references, never arbitrary bare F numbers.
+function aiEvidenceRefs(text) {
+  const refs = [];
+  for (const m of text.matchAll(/[\[（(【]([^\]）)】]+)[\]）)】]/g)) {
+    const body = m[1].trim();
+    if (!/^[FM]\d+(?:\s*[,，、·與和]\s*[FM]\d+)*$/i.test(body)) continue;
+    refs.push(...body.toUpperCase().match(/[FM]\d+/g));
+  }
+  return [...new Set(refs)];
+}
+
+function aiReviewEvidence(evidence, forecast = {}) {
+  return {...evidence, facts:{...(evidence?.facts || {}),
+    M1:`模型預期20日淨報酬 ${percent(forecast.expected_net_return)}，已扣成本；不是歷史股價漲跌幅`,
+    M2:`模型淨獲利估計機率 ${percent(forecast.net_profit_probability)}；不是已驗證的進場勝率`,
+    M3:`報酬全域收縮比例 ${aiNumber(forecast.return_shrinkage) ?? "未知"}；不是買賣門檻`
+  }};
+}
+
 function renderAIAdvice(content, item, finishReason, evidence = null) {
+  evidence = aiReviewEvidence(evidence, item.prediction_20d || {});
   const result = validateAIAdvice(content, item.prediction_20d || {}, finishReason);
   const facts = `模型數據：預期二十日淨報酬 ${percent(item.prediction_20d?.expected_net_return)}（已扣成本）；淨獲利估計機率 ${percent(item.prediction_20d?.net_profit_probability)}`;
   if (!result.ok) return `AI 回答未通過一致性檢查（不是買進或不買的判斷）\n原因：${result.reason}\n${facts}\n本次回答未作為有效建議顯示。可重新分析；未自動重試或增加 API 呼叫。`;
   const a = result.advice;
   if (evidence?.available) {
     for (const text of [...a.reasons, a.risk, a.action, a.invalidation]) {
-      const refs = [...text.matchAll(/\[F(\d+)\]/g)].map(m=>"F"+m[1]);
-      if (!refs.length || refs.some(id=>!Object.hasOwn(evidence.facts,id))) {
+      const refs = aiEvidenceRefs(text);
+      const hypothetical = text === a.action || text === a.invalidation;
+      if ((!refs.length && !hypothetical) || refs.some(id=>!Object.hasOwn(evidence.facts,id))) {
         result.warnings.push({sentence:text,reason:"缺少有效事實編號；此段依據尚未核對"});
+      }
+    }
+    // Narrow, deterministic check of explicit historical price-change claims.
+    // Future thresholds and unsupported language are not silently treated as verified.
+    for (const text of [...a.reasons, a.risk].flatMap(t=>t.split(/[。；]/))) {
+      const re=/(?:最近|近|過去)?(5|五|20|二十)日(?:股價|價格|收盤)(?:變化|漲跌幅|跌幅|漲幅|下跌|上漲|下滑|跌|漲)(?:為|約|達|是)?\s*([+\-−]?\d+(?:\.\d+)?)\s*%/g;
+      for (const m of text.matchAll(re)) {
+        if (/若|如果|未來|假設/.test(text.slice(0,m.index))) continue;
+        const count={五:5,二十:20}[m[1]] || Number(m[1]);
+        const actual=evidence.price_changes?.[count];
+        let claimed=Number(m[2].replace("−","-"));
+        if (/跌|下滑/.test(m[0]) && !/漲跌/.test(m[0])) claimed=-Math.abs(claimed);
+        if (Number.isFinite(actual) && Math.abs(actual-claimed)>0.015) {
+          result.warnings.push({sentence:text,reason:`價格變化不符：此期間收盤變化為${actual.toFixed(2)}%；量價代理不是價格漲跌幅`});
+        }
       }
     }
   }
@@ -571,7 +607,8 @@ function renderAIAdvice(content, item, finishReason, evidence = null) {
   const decision = result.decisionIssue ? `結論待核對（AI 原答：${a.decision}，未確認為有效建議）\n${result.decisionIssue}` : `AI建議：${a.decision}`;
   const divergence = a.decision === "可考慮買進" && (aiNumber(item.prediction_20d?.expected_net_return) === null || item.prediction_20d.expected_net_return <= 0)
     ? "\n模型與AI有分歧：模型沒有正的預期淨報酬支持；AI為另一層研究意見，原機率不代表新進場方案勝率。" : "";
-  const notice = result.warnings.length ? "部分句子已標示疑慮，保留原文供核對；標示內容不可視為已驗證交易條件。" : "未發現已知格式與部分數值問題；不代表全文已驗證。";
+  const balanced = a.reasons.length === 3 && ["支持進場：","反對進場：","決定結論："].every((label,i)=>a.reasons[i].startsWith(label));
+  const notice = (result.warnings.length ? "部分句子已標示疑慮，保留原文供核對；標示內容不可視為已驗證交易條件。" : "未發現已知格式與部分數值問題；不代表全文已驗證。") + (balanced ? "" : "\n分析結構不完整：AI未完整列出支持、反對與決定結論的證據；保留原答，不自動改判。");
   const evidenceText = evidence?.available ? "\n程式計算事實（不是AI生成）：\n" + Object.entries(evidence.facts).map(([id,value])=>`[${id}] ${value}`).join("\n") : "";
   return `AI 個股進場覆核（資料日：${item.as_of_date}，非即時行情；不更動模型排名）\n${facts}\n${decision}${divergence}\n${notice}\n理由：${a.reasons.map(annotate).join("；")}\n風險與反證：${annotate(a.risk)}\n行動觀察：${annotate(a.action)}\n改變看法的條件：${annotate(a.invalidation)}${evidenceText}\n事實編號只核對來源存在，不代表AI推論正確；此檢查不是完整語意或交易績效驗證。`;
 }
@@ -579,7 +616,7 @@ function renderAIAdvice(content, item, finishReason, evidence = null) {
 function summarizeAIEvidence(history) {
   if (!history.available) return {available:false,reason:history.reason};
   const bars=history.bars, institutions=new Map(history.institutions.map(r=>[r[0],r]));
-  const facts={};
+  const facts={}, price_changes={};
   const add=text=>{facts["F"+(Object.keys(facts).length+1)]=text;};
   const fmt=n=>Number.isInteger(n)?String(n):n.toFixed(4).replace(/0+$/,"").replace(/\.$/,"");
   const net=n=>n===null?"缺資料（不是零）":n>0?`淨買超 ${fmt(n)} 股`:n<0?`淨賣超 ${fmt(-n)} 股`:"淨額 0 股（持平）";
@@ -595,13 +632,14 @@ function summarizeAIEvidence(history) {
     add(`${count===1?"當日":"最近"+count+"根已提供日線期間"}（${range}）：外資${net(sums[0])}；投信${net(sums[1])}；兩者合計${net(combined)}。缺任一日不計合計`);
     const before=bars[bars.length-count-1];
     const change=before?((last[4]/before[4]-1)*100):null;
+    price_changes[count]=change;
     const high=window.reduce((a,b)=>b[2]>a[2]?b:a), low=window.reduce((a,b)=>b[3]<a[3]?b:a);
     add(`最近${count}根日線（${range}）：收盤變化${change===null?"缺前期基準":fmt(change)+"%（基準"+before[0]+"收盤"+fmt(before[4])+"元）"}；區間最高 ${fmt(high[2])} 元（${high[0]}），最低 ${fmt(low[3])} 元（${low[0]}）；平均成交量 ${fmt(window.reduce((s,b)=>s+b[5],0)/count)} 股`);
   }
   const high=bars.reduce((a,b)=>b[2]>a[2]?b:a),low=bars.reduce((a,b)=>b[3]<a[3]?b:a);
   add(`完整${bars.length}根日線（${bars[0][0]} 至 ${last[0]}）：首末收盤變化 ${fmt((last[4]/bars[0][4]-1)*100)}%；最高 ${fmt(high[2])} 元（${high[0]}），最低 ${fmt(low[3])} 元（${low[0]}）。最高最低先後不等於完整趨勢`);
   add("所有價格未還原，除權息與拆併股未核實；期間按已提供日線取樣，未核實交易日缺漏；股數不可當成金額");
-  return {available:true,facts};
+  return {available:true,facts,price_changes};
 }
 
 async function loadAIHistory(stockId, item) {
