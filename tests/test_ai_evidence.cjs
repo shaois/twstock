@@ -1,0 +1,28 @@
+const fs=require("node:fs"),vm=require("node:vm"),assert=require("node:assert/strict");
+const ctx=vm.createContext({document:{addEventListener(){}},window:{}});
+vm.runInContext(fs.readFileSync(require("node:path").join(__dirname,"../app.js"),"utf8"),ctx);
+ctx.h={available:true,bars:Array.from({length:21},(_,i)=>["2026-08-"+String(i+1).padStart(2,"0"),18,19,17,18,1000]),
+ institutions:Array.from({length:20},(_,i)=>["2026-08-"+String(i+2).padStart(2,"0"),0,0])};
+ctx.h.institutions[15][1]=43742113;
+ctx.h.institutions[19][1]=-13984751;
+ctx.h.institutions[15][2]=-47000;
+ctx.h.institutions[19][2]=-63000;
+const get=()=>JSON.parse(vm.runInContext("JSON.stringify(summarizeAIEvidence(h))",ctx));
+const e=get();
+assert.match(e.facts.F2,/當日.*淨賣超 13984751 股.*淨賣超 63000 股/);
+assert.match(e.facts.F4,/最近5根.*淨買超 29757362 股.*淨賣超 110000 股.*淨買超 29647362 股/);
+assert.match(e.facts.F5,/收盤變化0%/);
+ctx.h.institutions[18][1]=null;
+assert.match(get().facts.F4,/外資缺資料（不是零）/);
+assert.match(get().facts.F4,/兩者合計缺資料/);
+ctx.h.bars=ctx.h.bars.slice(-1);
+assert.match(get().facts.F4,/樣本不足/);
+ctx.e=e;
+ctx.item={as_of_date:"2026-08-21",prediction_20d:{expected_net_return:1,net_profit_probability:55}};
+ctx.a=JSON.stringify({decision:"等待",expected_net_return:1,net_profit_probability:55,
+ reasons:["當日法人偏賣[F2]"],risk:"單日不能代表全期[F4]",action:"觀察反證[F99]",invalidation:"買盤改變"});
+const out=vm.runInContext('renderAIAdvice(a,item,"stop",e)',ctx);
+assert.match(out,/缺少有效事實編號/);
+assert.match(out,/程式計算事實/);
+assert.match(out,/13984751/);
+console.log("Institution sign, period, units, missing coverage and evidence references passed");
