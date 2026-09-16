@@ -548,13 +548,13 @@ def _cohort_prediction(cohort, current_price, factor_percentile, validation=None
         weights.append(weight)
     returns = [r["actual_return_20d"] for r in cohort]
     alphas = [r["actual_alpha_20d"] for r in cohort]
-    robust_returns = [max(-30.0, min(30.0, x)) for x in returns]
-    robust_alphas = [max(-30.0, min(30.0, x)) for x in alphas]
     adaptation = adaptation or identity_adaptation()
-    local_return = _weighted_mean(robust_returns, weights)
-    prior_return = statistics.median(robust_returns)
-    local_alpha = _weighted_mean(robust_alphas, weights)
-    prior_alpha = statistics.median(robust_alphas)
+    # Expected return targets the arithmetic mean, not the median selected by
+    # absolute-error loss. Do not silently truncate tail payoffs in this target.
+    local_return = _weighted_mean(returns, weights)
+    prior_return = statistics.mean(returns)
+    local_alpha = _weighted_mean(alphas, weights)
+    prior_alpha = statistics.mean(alphas)
     shrink_return = adaptation["return_shrinkage"]
     shrink_alpha = adaptation["alpha_shrinkage"]
     expected = (1-shrink_return)*local_return + shrink_return*prior_return
@@ -584,6 +584,7 @@ def _cohort_prediction(cohort, current_price, factor_percentile, validation=None
         "local_return": local_return, "prior_return": prior_return,
         "local_alpha": local_alpha, "prior_alpha": prior_alpha,
         "return_shrinkage": shrink_return, "alpha_shrinkage": shrink_alpha,
+        "return_estimator": "arithmetic_mean_shrinkage_period_balanced_MSE",
         "range_low_return": round(q25, 2), "range_high_return": round(q75, 2),
         "downside_return": round(q10, 2),
         "range_low_net_return": round(q25 - ROUND_TRIP_COST_PCT, 2),
@@ -710,6 +711,7 @@ def _walk_forward_validation(sections, snapshot_date):
                 "raw_outperform": f["raw_outperform_probability"],
                 "base_raw_profit": base_profit, "base_raw_outperform": base_alpha,
                 "local_return": f["local_return"], "prior_return": f["prior_return"],
+                "predicted_gross_return": f["expected_return"],
                 "local_alpha": f["local_alpha"], "prior_alpha": f["prior_alpha"],
                 "gross_return": outcome["actual_return_20d"],
                 "label_end_date": outcome["label_end_date"],
@@ -755,8 +757,26 @@ def _walk_forward_validation(sections, snapshot_date):
             "positive_period_pct": round(statistics.mean(g["net_return"] > 0 for g in groups)*100, 1) if groups else None,
             "worst_net_return": round(min(g["net_return"] for g in groups), 2) if groups else None,
         })
+    return_errors = defaultdict(list)
+    for r in records:
+        return_errors[r["date"]].append(r)
+    def period_error(key, square):
+        if not return_errors:
+            return None
+        return round(statistics.mean(statistics.mean(
+            (r[key]-r["gross_return"])**2 if square else abs(r[key]-r["gross_return"])
+            for r in group) for group in return_errors.values()), 6)
     return {
         "periods": len(periods), "sample_picks": len(records),
+        "return_error_diagnostic": {
+            "scope": "chronological_replay_not_untouched_holdout",
+            "periods": len(return_errors),
+            "model_mse": period_error("predicted_gross_return", True),
+            "model_mae": period_error("predicted_gross_return", False),
+            "prior_mean_mse": period_error("prior_return", True),
+            "local_mean_mse": period_error("local_return", True),
+            "note": "各期等權，未證明交易獲利能力；不以這份報告再選參數",
+        },
         "_adaptation_records": adaptation_records,
         "raw_profit_calibration": _calibration_report(records, "raw_profit", "won"),
         "raw_outperform_calibration": _calibration_report(records, "raw_outperform", "beat"),

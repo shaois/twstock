@@ -64,6 +64,36 @@ def identity_adaptation():
     }
 
 
+def _guarded_platt(records, probability, outcome):
+    """Choose identity or a fitted map using later, purged mature periods.
+
+    Guard periods are model-selection data, never advertised as test results.
+    The existing subsequent rolling evaluation remains the out-of-time test.
+    """
+    dates = sorted({r["date"] for r in records})
+    split = len(dates)//2
+    guard_dates = dates[split:]
+    fit = [r for r in records if r["date"] in dates[:split]
+           and r["label_end_date"] < guard_dates[0]] if guard_dates else []
+    guard = [r for r in records if r["date"] in guard_dates]
+    identity = {"slope": 1.0, "intercept": 0.0, "status": "guard_identity"}
+    if len({r["date"] for r in fit}) < 2 or len(guard_dates) < 2:
+        return {**identity, "selection_reason": "insufficient_purged_guard_periods"}
+    candidate = _fit_platt(fit, probability, outcome)
+    raw_loss = _mean_by_period(guard, lambda r: (r[probability]/100-r[outcome])**2)
+    fitted_loss = _mean_by_period(guard, lambda r:
+        (calibrated_probability(r[probability], candidate)/100-r[outcome])**2)
+    baseline = _mean_by_period(fit, lambda r: r[outcome])
+    baseline_loss = _mean_by_period(guard, lambda r: (baseline-r[outcome])**2)
+    # No refitting on guard outcomes after choosing the map.
+    selected = candidate if fitted_loss < raw_loss - 1e-12 else identity
+    return {**selected, "fit_dates": sorted({r["date"] for r in fit}),
+            "guard_dates": guard_dates, "guard_raw_brier": raw_loss,
+            "guard_fitted_brier": fitted_loss, "guard_baseline_brier": baseline_loss,
+            "selection_reason": "lower_guard_brier_than_raw" if selected is candidate else "no_guard_improvement",
+            "guard_is_validation_not_test": True}
+
+
 def fit_adaptation(records, signal_date):
     mature = [r for r in records if r.get("label_end_date", "9999") < signal_date]
     dates = sorted({r["date"] for r in mature})[-16:]
@@ -82,7 +112,7 @@ def fit_adaptation(records, signal_date):
     def choose(local_key, prior_key, actual_key):
         losses = {
             weight: _mean_by_period(tune, lambda r:
-                abs((1-weight)*r[local_key]+weight*r[prior_key]-r[actual_key]))
+                ((1-weight)*r[local_key]+weight*r[prior_key]-r[actual_key])**2)
             for weight in SHRINKAGE_CANDIDATES
         }
         selected = min(losses, key=lambda w: (losses[w], w))
@@ -91,20 +121,20 @@ def fit_adaptation(records, signal_date):
     alpha_weight, alpha_losses = choose("local_alpha", "prior_alpha", "alpha")
     return {
         "return_shrinkage": return_weight, "alpha_shrinkage": alpha_weight,
-        "return_tuning_mae": return_losses, "alpha_tuning_mae": alpha_losses,
-        "profit_map": _fit_platt(calibrate, "raw_profit", "won"),
-        "outperform_map": _fit_platt(calibrate, "raw_outperform", "beat"),
+        "return_tuning_mse": return_losses, "alpha_tuning_mse": alpha_losses,
+        "profit_map": _guarded_platt(calibrate, "raw_profit", "won"),
+        "outperform_map": _guarded_platt(calibrate, "raw_outperform", "beat"),
         "status": "time_split_fitted_pending_prospective_evaluation",
         "tuning_dates": sorted({r["date"] for r in tune}),
         "calibration_dates": calibration_dates,
         "max_label_end": max(r["label_end_date"] for r in tune+calibrate),
-        "selection_metric": "period_balanced_MAE",
-        "probability_method": "monotone_regularized_Platt_period_balanced",
+        "selection_metric": "period_balanced_MSE",
+        "probability_method": "monotone_Platt_with_purged_chronological_guard",
     }
 
 
 def calibrated_probability(raw_percent, mapping):
-    if mapping.get("status") in {"warmup", "one_class_identity"}:
+    if mapping.get("status") in {"warmup", "one_class_identity", "guard_identity"}:
         return raw_percent
     return _sigmoid(mapping["slope"]*_logit(raw_percent/100)+mapping["intercept"])*100
 

@@ -477,7 +477,7 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
 - 數值單位pct是百分比，例如1.03就是+1.03%。最終淨報酬已扣0.6%來回交易成本，不再扣一次。
 - 2%安全緩衝只是額外保守情境，不是交易成本、預測虧損或買進否決門檻；不能把+1.03%說成-0.97%預期虧損。
 - 只引用最終機率，不能使用或猜測原始、校準前機率。勝率與報酬大小分開判讀，勝率不是盈虧比。
-- 預期淨報酬是收縮估計，不是未來必然報酬。報酬全域收縮比例越高，個股報酬越接近歷史全域中位數；它按历史預測誤差選出，不代表已驗證為最佳買賣門檻。null表示比例未知。接近零代表此估計未提供明顯報酬優勢，不能說成確定無獲利機會，也不能擅自取消收縮或改用較樂觀數字。
+- 預期淨報酬是收縮估計，不是未來必然報酬。收縮是估計方法，不會降低股票實際波動或證明風險可控；不能列為支持進場的證據。新模型以平均報酬及平方誤差選收縮，舊快取則可能仍是中位數版本；以M3版本資訊為準。null表示未知。接近零代表此估計未提供明顯報酬優勢，不能說成確定無獲利機會。
 - 量價代理不是股價漲跌幅、成交量增減率或真實淨資金流，不能將五日代理-40%寫成五日股價跌40%或成交量減40%。價格變化只能引用期間收盤變化事實；代理負值不能直接說成法人賣超或資金撤出。
 - 法人是外資與投信五交易日合計，單位股，不是張或單日；正數淨買超，負數淨賣超，零為持平。不能推論每天連買、加速買超。null是缺資料，不是零或利空。
 - 法人尚未納入機率訓練只描述模型使用方式，不是看空理由；可作獨立輔助證據，不能自行增加勝率。
@@ -492,16 +492,16 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
 
 分析要求（最後只輸出下方JSON，不直接輸出文章）：
 1. AI建議：可考慮買進／等待／避開，先直接給答案。根據淨報酬、風險與量價綜合取捨；證據足夠可提出分批試單的研究方案，不要求所有訊號全數轉強，也不強迫買進。
-2. reasons固定三項，依序以「支持進場：」「反對進場：」「決定結論：」開頭。前兩項分別列本股支持與反對的證據；最後一項解釋哪項證據占優勢、為何足以買進或需要等待/避開。無支持或反對證據可說不足，不得捏造。模型是背景估計，不是另一份獨立證明；不能只重述模型而忽略歷史觀察，也不能為湊買進而忽略反證。類股僅作背景。
+2. reasons固定三項物件，kind依序為支持進場、反對進場、決定結論。前兩項分別列本股支持與反對的證據；最後一項解釋哪項證據占優勢、為何足以買進或需要等待/避開。無支持或反對證據可說不足，不得捏造。模型是背景估計，不是另一份獨立證明；不能只重述模型而忽略歷史觀察，也不能為湊買進而忽略反證。類股僅作背景。
 3. 行動條件：說人話，交代進場方式、失效與退出觀察條件。沒有價位依據就說缺什麼，不捏造數字，也不恢復手動試算。
 4. 機率與風險：引用本股最終淨獲利機率與預期淨報酬，說明最重要風險與改變建議的條件。等待時提出具體可觀察的改善條件，不只說等確認。
 所有結論以所提供資料日為限。有支持淨獲利機會且值得承擔風險的證據就可建議買進，無須優於其他股票；但僅有非零獲利可能性不等於值得買進。不因2%緩衝或法人未納入訓練直接否決，也不預設必須買進。
 
 回答契約：
 只輸出JSON物件，不加程式碼圍欄。格式：
-{"decision":"可考慮買進或等待或避開","expected_net_return":原始最終數值或null,"net_profit_probability":原始最終數值或null,"reasons":["理由"],"risk":"風險與矛盾","action":"行動觀察","invalidation":"推翻建議的條件"}
-decision必須是可考慮買進、等待、避開其中一項。reasons固定為支持進場、反對進場、決定結論三項。其餘文字欄位不可留空。
-文字可引用已提供資料的數字，須說明欄位、日期與單位，不自行產生持倉比例或固定時間門檻。淨報酬已扣成本，不再以成本門檻重複扣除。不可宣稱保證獲利。
+{"decision":"可考慮買進或等待或避開","expected_net_return":原始最終數值或null,"net_profit_probability":原始最終數值或null,"reasons":[{"kind":"支持進場","text":"定性分析","refs":["F4","M2"]},{"kind":"反對進場","text":"定性分析","refs":["F2"]},{"kind":"決定結論","text":"說明何項證據占優勢","refs":["F2","F4"]}],"risk":{"text":"風險與矛盾","refs":["M1"]},"action":"未來觀察条件","invalidation":"推翻建議的條件"}
+decision必須是可考慮買進、等待、避開其中一項。reasons固定為支持進場、反對進場、決定結論三項物件；risk也是物件，refs為存在的來源編號陣列，不把編號寫在text。範例編號不是指定答案，須自行選正確來源。無支持證據可用空refs並直說證據不足。程式負責呈現引用的原始日期、期間、欄位及數值，text只做定性分析，不重抄數字或換算單位。各文字欄位不可留空。
+數字及日期由程式來源卡呈現，分析文字不自行換算、不自行產生持倉比例或固定時間門檻。淨報酬已扣成本，不再以成本門檻重複扣除。不可宣稱保證獲利。
 AI任務是進場覆核，不是重複模型門檻。預期淨報酬正負都不是單一買進或等待規則。若模型不支持、但連續價量與法人證據支持進場，可以提出有明確證據的研究建議，必須在risk說明與模型的分歧、新方案未驗證，不能改寫原始機率，也不把負期望改成正期望。不以「少量試單」代替證據。沒有連續證據時，不能宣稱已完成趨勢覆核；給出資料限制與條件式意見。
 正的預期淨報酬也不是自動買進：須說明個股資料提供的支持、風險及反證。量價代理不得寫成實際淨資金流入或流出。`;
 }
@@ -516,6 +516,19 @@ function validateAIAdvice(content, forecast, finishReason) {
   const fields = ["decision", "expected_net_return", "net_profit_probability", "reasons", "risk", "action", "invalidation"];
   if (Object.keys(advice).length !== fields.length || fields.some(k => !Object.hasOwn(advice, k))) return reject("回答欄位不完整或含額外欄位");
   if (!["可考慮買進", "等待", "避開"].includes(advice.decision)) return reject("建議分類不正確");
+  let structuredReferences = null;
+  if (Array.isArray(advice.reasons) && advice.reasons.some(r => r && typeof r === "object")) {
+    const labels = ["支持進場", "反對進場", "決定結論"];
+    const valid = (r, kind) => r && typeof r === "object" && !Array.isArray(r) &&
+      Object.keys(r).sort().join(",") === (kind ? "kind,refs,text" : "refs,text") &&
+      (!kind || r.kind === kind) && typeof r.text === "string" && r.text.trim() &&
+      Array.isArray(r.refs) && r.refs.length <= 12 && r.refs.every(id=>typeof id === "string" && /^[FM]\d+$/.test(id));
+    if (advice.reasons.length !== 3 || advice.reasons.some((r,i)=>!valid(r,labels[i])) || !valid(advice.risk)) return reject("結構化證據欄位不完整");
+    structuredReferences = [...advice.reasons, advice.risk].map(r=>({text:r.text,refs:[...r.refs]}));
+    const display = r => `${r.kind ? r.kind+"：" : ""}${r.text}${r.refs.map(id=>`[${id}]`).join("")}`;
+    advice.reasons = advice.reasons.map(display);
+    advice.risk = display(advice.risk);
+  }
   const expected = aiNumber(forecast.expected_net_return);
   const probability = aiNumber(forecast.net_profit_probability);
   const warnings = [];
@@ -548,7 +561,7 @@ function validateAIAdvice(content, forecast, finishReason) {
     if (/(?:量價|代理).{0,35}(?:淨資金流入|淨資金流出|資金淨流入|資金淨流出)/.test(sentence) && !/不代表|不是|並非|不能/.test(sentence)) reasons.push("量價代理不能直接視為實際淨資金流");
     if (reasons.length) warnings.push({sentence, reason: reasons.join("；")});
   }
-  return {ok: true, advice, warnings, decisionIssue};
+  return {ok: true, advice, warnings, decisionIssue, structuredReferences};
 }
 
 // Accept bracket variants and grouped references, never arbitrary bare F numbers.
@@ -566,7 +579,8 @@ function aiReviewEvidence(evidence, forecast = {}) {
   return {...evidence, facts:{...(evidence?.facts || {}),
     M1:`模型預期20日淨報酬 ${percent(forecast.expected_net_return)}，已扣成本；不是歷史股價漲跌幅`,
     M2:`模型淨獲利估計機率 ${percent(forecast.net_profit_probability)}；不是已驗證的進場勝率`,
-    M3:`報酬全域收縮比例 ${aiNumber(forecast.return_shrinkage) ?? "未知"}；不是買賣門檻`
+    M3:`報酬全域收縮比例 ${aiNumber(forecast.return_shrinkage) ?? "未知"}；估計方法 ${forecast.return_estimator || "舊版或未知，非新版平均報酬估計"}；不是風險降低、買進證據或買賣門檻`,
+    M4:`五日量價代理 ${percent(forecast.capital_flow_5d_pct)}；二十日量價代理 ${percent(forecast.capital_flow_20d_pct)}；不是價格漲跌幅、成交量增減率或實際淨資金流`
   }};
 }
 
@@ -576,11 +590,20 @@ function renderAIAdvice(content, item, finishReason, evidence = null) {
   const facts = `模型數據：預期二十日淨報酬 ${percent(item.prediction_20d?.expected_net_return)}（已扣成本）；淨獲利估計機率 ${percent(item.prediction_20d?.net_profit_probability)}`;
   if (!result.ok) return `AI 回答未通過一致性檢查（不是買進或不買的判斷）\n原因：${result.reason}\n${facts}\n本次回答未作為有效建議顯示。可重新分析；未自動重試或增加 API 呼叫。`;
   const a = result.advice;
+  const estimatorNotice = item.prediction_20d?.return_estimator === "arithmetic_mean_shrinkage_period_balanced_MSE"
+    ? "報酬模型：平均報酬／MSE版，尚待前瞻驗證。"
+    : "報酬模型：舊版或未標記；更新前端不會重算模型，需執行每日快取更新。";
+  if (result.structuredReferences) {
+    for (const r of result.structuredReferences) {
+      if (r.refs.some(id=>!Object.hasOwn(evidence.facts,id))) result.warnings.push({sentence:r.text,reason:"引用不存在的資料來源"});
+      if (/\d|[０-９]|百分之/.test(r.text)) result.warnings.push({sentence:r.text,reason:"AI重述數字尚未完整核對；請以程式來源卡為準"});
+    }
+  }
   if (evidence?.available) {
     for (const text of [...a.reasons, a.risk, a.action, a.invalidation]) {
       const refs = aiEvidenceRefs(text);
       const hypothetical = text === a.action || text === a.invalidation;
-      if ((!refs.length && !hypothetical) || refs.some(id=>!Object.hasOwn(evidence.facts,id))) {
+      if ((!refs.length && !hypothetical && !/證據不足|無支持證據|無反對證據/.test(text)) || refs.some(id=>!Object.hasOwn(evidence.facts,id))) {
         result.warnings.push({sentence:text,reason:"缺少有效事實編號；此段依據尚未核對"});
       }
     }
@@ -608,8 +631,8 @@ function renderAIAdvice(content, item, finishReason, evidence = null) {
   const divergence = a.decision === "可考慮買進" && (aiNumber(item.prediction_20d?.expected_net_return) === null || item.prediction_20d.expected_net_return <= 0)
     ? "\n模型與AI有分歧：模型沒有正的預期淨報酬支持；AI為另一層研究意見，原機率不代表新進場方案勝率。" : "";
   const balanced = a.reasons.length === 3 && ["支持進場：","反對進場：","決定結論："].every((label,i)=>a.reasons[i].startsWith(label));
-  const notice = (result.warnings.length ? "部分句子已標示疑慮，保留原文供核對；標示內容不可視為已驗證交易條件。" : "未發現已知格式與部分數值問題；不代表全文已驗證。") + (balanced ? "" : "\n分析結構不完整：AI未完整列出支持、反對與決定結論的證據；保留原答，不自動改判。");
-  const evidenceText = evidence?.available ? "\n程式計算事實（不是AI生成）：\n" + Object.entries(evidence.facts).map(([id,value])=>`[${id}] ${value}`).join("\n") : "";
+  const notice = estimatorNotice + "\n" + (result.warnings.length ? "部分句子已標示疑慮，保留原文供核對；標示內容不可視為已驗證交易條件。" : "未發現已知格式與部分數值問題；不代表全文已驗證。") + (balanced ? "" : "\n分析結構不完整：AI未完整列出支持、反對與決定結論的證據；保留原答，不自動改判。");
+  const evidenceText = "\n程式計算事實（不是AI生成）：\n" + Object.entries(evidence.facts).map(([id,value])=>`[${id}] ${value}`).join("\n");
   return `AI 個股進場覆核（資料日：${item.as_of_date}，非即時行情；不更動模型排名）\n${facts}\n${decision}${divergence}\n${notice}\n理由：${a.reasons.map(annotate).join("；")}\n風險與反證：${annotate(a.risk)}\n行動觀察：${annotate(a.action)}\n改變看法的條件：${annotate(a.invalidation)}${evidenceText}\n事實編號只核對來源存在，不代表AI推論正確；此檢查不是完整語意或交易績效驗證。`;
 }
 
