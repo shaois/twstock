@@ -56,3 +56,23 @@ assert.match(partial,/跌2%停損/);
 assert.match(partial,/本股量價與法人買盤提供支持/);
 assert.doesNotMatch(partial,/未通過一致性檢查/);
 console.log("Normal numeric references, fenced JSON, sentence warnings and preserved analysis passed");
+for (const text of [
+  "淨獲利機率雖高於50%，但報酬優勢有限",
+  "若未來淨獲利機率跌破50%，重新評估",
+  "淨獲利機率低於60%，不等於不能獲利",
+  "如果淨獲利機率為50%，需要重新評估",
+  "若未來預期淨報酬為-2%，需要重新評估",
+  "預期淨報酬高於0%，但優勢薄弱",
+  "淨獲利機率為53.3%"
+]) {
+  assert.equal(check({...base,reasons:[text]}).warnings.length,0,text);
+}
+for (const text of [
+  "目前淨獲利機率為50%",
+  "預期淨報酬是-2%",
+  "若量價改善可研究，目前淨獲利機率為50%",
+  "淨獲利機率為53.3%，但目前淨獲利機率為50%"
+]) {
+  assert.ok(check({...base,reasons:[text]}).warnings.length,text);
+}
+console.log("Comparison and hypothetical values no longer treated as current-value assertions");
