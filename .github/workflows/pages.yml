@@ -9,6 +9,9 @@ on:
     paths:
       - "index.html"
       - "app.js"
+      - "build_ai_context.py"
+      - "cache/price.json"
+      - "cache/institutions.json"
       - "cache/universe.json"
       - "cache/predictions.json"
       - ".github/workflows/pages.yml"
@@ -41,6 +44,7 @@ jobs:
           cp app.js _site/app.js
           cp cache/universe.json _site/cache/universe.json
           cp cache/predictions.json _site/cache/predictions.json
+          python3 build_ai_context.py
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v4
