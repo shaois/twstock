@@ -469,7 +469,7 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
   };
   return `只分析目標股票本身是否有值得承擔風險的淨獲利機會，不與其他股票比較、不要求打敗0050，也不用排名決定買賣。
 目標股票模型資料：${JSON.stringify(target)}
-個股連續證據：${JSON.stringify(history)}
+個股連續證據（程式已計算）：${JSON.stringify(summarizeAIEvidence(history))}
 驗證資訊：${JSON.stringify(validation)}
 急漲提醒：${entryAlert(state.predictions[stockId].prediction_20d)}（非買賣訊號）
 
@@ -482,6 +482,9 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
 - 法人是外資與投信五交易日合計，單位股，不是張或單日；正數淨買超，負數淨賣超，零為持平。不能推論每天連買、加速買超。null是缺資料，不是零或利空。
 - 法人尚未納入機率訓練只描述模型使用方式，不是看空理由；可作獨立輔助證據，不能自行增加勝率。
 - 原機率適用次日開盤進場、訊號後第20交易日收盤評估，並非你提出的新進出場方案勝率。
+- 連續證據已由程式彙總成F編號。不得自行再加總、換算成萬/億/張、把五日當成當日、或把負號讀成買超。每個數字以該F項日期、單位與方向為準；法人是淨買賣超，不是總買進或总賣出。
+- reasons每項與risk、action、invalidation須引用相關[F編號]，僅引用存在的項目；引用並不代表新交易條件已驗證。不要重抄法人股數，用編號與定性判讀即可，介面會附程式計算的原始事實。資料不可用時不用編造F引用。
+- 本次提供已計算的期間摘要，不提供原始逐日陣列：不能自行推論未提供的每日連買連賣、轉折日或指定歷史日期價格。
 - 這是歷史模型估計，尚待前瞻驗證；同日個股不是獨立期間。資料不足降低結論把握，不等於所有股票必須等待。
 - 若個股連續證據available=true，可依提供的日期序列分析價格趨勢、成交量、外資與投信買賣的持續性，逐一引用觀察日期，不把不同窗口當作轉折。缺失法人值不得當零，未知中間交易日不得宣稱連續買超。
 - 提供的是原始未還原日線，除權息拆併股尚未核實；異常跳空須提出疑慮，不能據此直接推論轉弱或買點。沒有即時報價。
@@ -548,11 +551,19 @@ function validateAIAdvice(content, forecast, finishReason) {
   return {ok: true, advice, warnings, decisionIssue};
 }
 
-function renderAIAdvice(content, item, finishReason) {
+function renderAIAdvice(content, item, finishReason, evidence = null) {
   const result = validateAIAdvice(content, item.prediction_20d || {}, finishReason);
   const facts = `模型數據：預期二十日淨報酬 ${percent(item.prediction_20d?.expected_net_return)}（已扣成本）；淨獲利估計機率 ${percent(item.prediction_20d?.net_profit_probability)}`;
   if (!result.ok) return `AI 回答未通過一致性檢查（不是買進或不買的判斷）\n原因：${result.reason}\n${facts}\n本次回答未作為有效建議顯示。可重新分析；未自動重試或增加 API 呼叫。`;
   const a = result.advice;
+  if (evidence?.available) {
+    for (const text of [...a.reasons, a.risk, a.action, a.invalidation]) {
+      const refs = [...text.matchAll(/\[F(\d+)\]/g)].map(m=>"F"+m[1]);
+      if (!refs.length || refs.some(id=>!Object.hasOwn(evidence.facts,id))) {
+        result.warnings.push({sentence:text,reason:"缺少有效事實編號；此段依據尚未核對"});
+      }
+    }
+  }
   const annotate = text => {
     for (const w of result.warnings) if (text.includes(w.sentence)) text = text.replace(w.sentence, `【待核對：${w.reason}】${w.sentence}`);
     return text;
@@ -561,7 +572,36 @@ function renderAIAdvice(content, item, finishReason) {
   const divergence = a.decision === "可考慮買進" && (aiNumber(item.prediction_20d?.expected_net_return) === null || item.prediction_20d.expected_net_return <= 0)
     ? "\n模型與AI有分歧：模型沒有正的預期淨報酬支持；AI為另一層研究意見，原機率不代表新進場方案勝率。" : "";
   const notice = result.warnings.length ? "部分句子已標示疑慮，保留原文供核對；標示內容不可視為已驗證交易條件。" : "未發現已知格式與部分數值問題；不代表全文已驗證。";
-  return `AI 個股進場覆核（資料日：${item.as_of_date}，非即時行情；不更動模型排名）\n${facts}\n${decision}${divergence}\n${notice}\n理由：${a.reasons.map(annotate).join("；")}\n風險與反證：${annotate(a.risk)}\n行動觀察：${annotate(a.action)}\n改變看法的條件：${annotate(a.invalidation)}\n此檢查不是完整語意或交易績效驗證。`;
+  const evidenceText = evidence?.available ? "\n程式計算事實（不是AI生成）：\n" + Object.entries(evidence.facts).map(([id,value])=>`[${id}] ${value}`).join("\n") : "";
+  return `AI 個股進場覆核（資料日：${item.as_of_date}，非即時行情；不更動模型排名）\n${facts}\n${decision}${divergence}\n${notice}\n理由：${a.reasons.map(annotate).join("；")}\n風險與反證：${annotate(a.risk)}\n行動觀察：${annotate(a.action)}\n改變看法的條件：${annotate(a.invalidation)}${evidenceText}\n事實編號只核對來源存在，不代表AI推論正確；此檢查不是完整語意或交易績效驗證。`;
+}
+
+function summarizeAIEvidence(history) {
+  if (!history.available) return {available:false,reason:history.reason};
+  const bars=history.bars, institutions=new Map(history.institutions.map(r=>[r[0],r]));
+  const facts={};
+  const add=text=>{facts["F"+(Object.keys(facts).length+1)]=text;};
+  const fmt=n=>Number.isInteger(n)?String(n):n.toFixed(4).replace(/0+$/,"").replace(/\.$/,"");
+  const net=n=>n===null?"缺資料（不是零）":n>0?`淨買超 ${fmt(n)} 股`:n<0?`淨賣超 ${fmt(-n)} 股`:"淨額 0 股（持平）";
+  const last=bars[bars.length-1];
+  add(`${last[0]} 收盤 ${fmt(last[4])} 元；當日成交量 ${fmt(last[5])} 股`);
+  for (const count of [1,5,20]) {
+    const window=bars.slice(-count);
+    const range=window.length?`${window[0][0]} 至 ${last[0]}`:"無日期";
+    if (window.length<count) {add(`最近${count}根日線／法人：樣本不足`);continue;}
+    const rows=window.map(b=>institutions.get(b[0]));
+    const sums=[1,2].map(i=>rows.every(r=>r && Number.isFinite(r[i]))?rows.reduce((s,r)=>s+r[i],0):null);
+    const combined=sums.every(n=>n!==null)?sums[0]+sums[1]:null;
+    add(`${count===1?"當日":"最近"+count+"根已提供日線期間"}（${range}）：外資${net(sums[0])}；投信${net(sums[1])}；兩者合計${net(combined)}。缺任一日不計合計`);
+    const before=bars[bars.length-count-1];
+    const change=before?((last[4]/before[4]-1)*100):null;
+    const high=window.reduce((a,b)=>b[2]>a[2]?b:a), low=window.reduce((a,b)=>b[3]<a[3]?b:a);
+    add(`最近${count}根日線（${range}）：收盤變化${change===null?"缺前期基準":fmt(change)+"%（基準"+before[0]+"收盤"+fmt(before[4])+"元）"}；區間最高 ${fmt(high[2])} 元（${high[0]}），最低 ${fmt(low[3])} 元（${low[0]}）；平均成交量 ${fmt(window.reduce((s,b)=>s+b[5],0)/count)} 股`);
+  }
+  const high=bars.reduce((a,b)=>b[2]>a[2]?b:a),low=bars.reduce((a,b)=>b[3]<a[3]?b:a);
+  add(`完整${bars.length}根日線（${bars[0][0]} 至 ${last[0]}）：首末收盤變化 ${fmt((last[4]/bars[0][4]-1)*100)}%；最高 ${fmt(high[2])} 元（${high[0]}），最低 ${fmt(low[3])} 元（${low[0]}）。最高最低先後不等於完整趨勢`);
+  add("所有價格未還原，除權息與拆併股未核實；期間按已提供日線取樣，未核實交易日缺漏；股數不可當成金額");
+  return {available:true,facts};
 }
 
 async function loadAIHistory(stockId, item) {
@@ -638,7 +678,7 @@ async function runAI20d(stockId) {
     if (typeof content !== "string") throw new Error("AI 回應格式不正確");
     byId("aiContent").textContent = (history.available
       ? `覆核資料：${history.bars.length}根日線；法人${history.institutions.filter(r=>r[1]!==null && r[2]!==null).length}日完整紀錄（最多20日）。\n`
-      : `資料限制：${history.reason}\n`) + renderAIAdvice(content, state.predictions[stockId], payload.choices?.[0]?.finish_reason);
+      : `資料限制：${history.reason}\n`) + renderAIAdvice(content, state.predictions[stockId], payload.choices?.[0]?.finish_reason, summarizeAIEvidence(history));
   } catch (error) {
     if (requestGeneration !== aiRequestGeneration || state.currentStockId !== stockId) return;
     const safeError = String(error.message || "連線失敗").split(key).join("[REDACTED]")
