@@ -427,6 +427,7 @@ function aiStockFacts(stockId) {
     股票: stockId, 名稱: stockName(stockId), 資料日: item.as_of_date,
     參考收盤價_元_非即時: aiNumber(item.current_price),
     最終模型資料: {
+      報酬全域收縮比例: aiNumber(f.return_shrinkage),
       預期20日淨報酬_pct_已扣成本: aiNumber(f.expected_net_return),
       淨獲利機率_pct: aiNumber(f.net_profit_probability),
       淨報酬25分位_pct: aiNumber(f.range_low_net_return),
@@ -475,6 +476,7 @@ function aiPrompt(stockId) {
 - 數值單位pct是百分比，例如1.03就是+1.03%。最終淨報酬已扣0.6%來回交易成本，不再扣一次。
 - 2%安全緩衝只是額外保守情境，不是交易成本、預測虧損或買進否決門檻；不能把+1.03%說成-0.97%預期虧損。
 - 只引用最終機率，不能使用或猜測原始、校準前機率。勝率與報酬大小分開判讀，勝率不是盈虧比。
+- 預期淨報酬是收縮估計，不是未來必然報酬。報酬全域收縮比例越高，個股報酬越接近歷史全域中位數；它按历史預測誤差選出，不代表已驗證為最佳買賣門檻。null表示比例未知。接近零代表此估計未提供明顯報酬優勢，不能說成確定無獲利機會，也不能擅自取消收縮或改用較樂觀數字。
 - 量價代理與類股成交熱度不是真實淨資金流，負值不能直接說成法人賣超或資金撤出。
 - 法人是外資與投信五交易日合計，單位股，不是張或單日；正數淨買超，負數淨賣超，零為持平。不能推論每天連買、加速買超。null是缺資料，不是零或利空。
 - 法人尚未納入機率訓練只描述模型使用方式，不是看空理由；可作獨立輔助證據，不能自行增加勝率。
@@ -529,8 +531,15 @@ function validateAIAdvice(content, forecast, finishReason) {
     const numeric = /[0-9０-９]|百分之|[一二兩三四五六七八九十百千]+(?:成|分鐘|小時|元|天|日)|半倉|滿倉|全倉/.test(sentence);
     if (numeric && /停損|加碼|投入|持倉|部位|目標價|買點|賣點|開盤.{0,12}分鐘/.test(sentence)) reasons.push("可能包含未驗證交易門檻，不是已驗證買賣條件");
     for (const [label, value] of [["(?:预期|預期)?(?:二十日|20日)?淨報酬", expected], ["(?:淨)?獲利(?:估計)?機率", probability]]) {
-      const match = sentence.match(new RegExp(label + "[^0-9+−\\-]{0,8}([+−\\-]?\\d+(?:\\.\\d+)?)\\s*[%％]"));
-      if (match && (value === null || Math.abs(Number(match[1].replace("−", "-")) - value) > 0.005)) reasons.push("引用的模型數值不符，請以下方原始數據為準");
+      // Check explicit current-value assertions only, not comparisons or future conditions.
+      const assertions = sentence.matchAll(new RegExp(label + "\\s*(?:為|是|等於|[:：=])?\\s*([+−\\-]?\\d+(?:\\.\\d+)?)\\s*[%％]", "g"));
+      for (const match of assertions) {
+        const prefix = sentence.slice(0, match.index).split(/[，,：:]/).pop();
+        if (/若|如果|假如|假設|一旦|未來|將來|明日|預設|門檻|至少|至多|高於|低於|跌破|升至/.test(prefix)) continue;
+        if (value === null || Math.abs(Number(match[1].replace("−", "-")) - value) > 0.005) {
+          reasons.push("引用的模型數值不符，請以下方原始數據為準");
+        }
+      }
     }
     if (/淨報酬/.test(sentence) && /再扣|扣除成本後|成本門檻|接近成本/.test(sentence)) reasons.push("淨報酬已扣成本，這句可能重複計算成本");
     if (/保證獲利|穩賺|必賺|無風險/.test(sentence) && !/不保證|不能保證|並非|不是|不代表/.test(sentence)) reasons.push("不當獲利保證，不應採信");
