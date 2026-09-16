@@ -458,7 +458,7 @@ function aiStockFacts(stockId) {
   };
 }
 
-function aiPrompt(stockId) {
+function aiPrompt(stockId, history = {available:false, reason:"尚未取得連續資料"}) {
   const target = aiStockFacts(stockId);
   const calibration = state.model?.validation?.["20d"]?.profit_calibration || {};
   const validation = {
@@ -469,6 +469,7 @@ function aiPrompt(stockId) {
   };
   return `只分析目標股票本身是否有值得承擔風險的淨獲利機會，不與其他股票比較、不要求打敗0050，也不用排名決定買賣。
 目標股票模型資料：${JSON.stringify(target)}
+個股連續證據：${JSON.stringify(history)}
 驗證資訊：${JSON.stringify(validation)}
 急漲提醒：${entryAlert(state.predictions[stockId].prediction_20d)}（非買賣訊號）
 
@@ -482,11 +483,13 @@ function aiPrompt(stockId) {
 - 法人尚未納入機率訓練只描述模型使用方式，不是看空理由；可作獨立輔助證據，不能自行增加勝率。
 - 原機率適用次日開盤進場、訊號後第20交易日收盤評估，並非你提出的新進出場方案勝率。
 - 這是歷史模型估計，尚待前瞻驗證；同日個股不是獨立期間。資料不足降低結論把握，不等於所有股票必須等待。
-- 未提供完整K線、支撐壓力或即時報價；不能編造買點、停損、目標價，不能把收盤價或報酬分位數冒充技術價位。
+- 若個股連續證據available=true，可依提供的日期序列分析價格趨勢、成交量、外資與投信買賣的持續性，逐一引用觀察日期，不把不同窗口當作轉折。缺失法人值不得當零，未知中間交易日不得宣稱連續買超。
+- 提供的是原始未還原日線，除權息拆併股尚未核實；異常跳空須提出疑慮，不能據此直接推論轉弱或買點。沒有即時報價。
+- 可從已提供序列辨識歷史高低點或價位區間，但須指出日期與價格依據，稱為研究參考而非驗證過的停損或必達目標。沒有對應資料就不提供價位，不能把報酬分位數當技術支撐。
 
 分析要求（最後只輸出下方JSON，不直接輸出文章）：
 1. AI建議：可考慮買進／等待／避開，先直接給答案。根據淨報酬、風險與量價綜合取捨；證據足夠可提出分批試單的研究方案，不要求所有訊號全數轉強，也不強迫買進。
-2. 個股自身變化：分析本股五日與二十日量價代理、五日對二十日成交額倍數，以及法人五日淨買賣超，是否支持本股淨獲利機會。不同觀察窗口不等於完整歷史趨勢；沒有逐日資料就不能宣稱連續改善、轉折或加速。類股資訊僅作環境背景，不比較其他股票、不推薦替代標的。
+2. 個股自身變化：優先分析連續日線與法人序列，明確列出支持買進與反對買進的證據並權衡；模型是背景估計，不是另一份獨立證明。若資料不可用，沒有逐日資料就不能宣稱連續改善、轉折或加速。類股資訊僅作環境背景，不比較其他股票、不推薦替代標的。
 3. 行動條件：說人話，交代進場方式、失效與退出觀察條件。沒有價位依據就說缺什麼，不捏造數字，也不恢復手動試算。
 4. 機率與風險：引用本股最終淨獲利機率與預期淨報酬，說明最重要風險與改變建議的條件。等待時提出具體可觀察的改善條件，不只說等確認。
 所有結論以所提供資料日為限。有支持淨獲利機會且值得承擔風險的證據就可建議買進，無須優於其他股票；但僅有非零獲利可能性不等於值得買進。不因2%緩衝或法人未納入訓練直接否決，也不預設必須買進。
@@ -495,8 +498,8 @@ function aiPrompt(stockId) {
 只輸出JSON物件，不加程式碼圍欄。格式：
 {"decision":"可考慮買進或等待或避開","expected_net_return":原始最終數值或null,"net_profit_probability":原始最終數值或null,"reasons":["理由"],"risk":"風險與矛盾","action":"行動觀察","invalidation":"推翻建議的條件"}
 decision必須是可考慮買進、等待、避開其中一項。reasons為一至三個理由。其餘文字欄位不可留空。
-文字可引用已提供資料的數字，須說明欄位、單位與期間，不能自行產生持倉比例、固定停損/加碼/時間門檻。淨報酬已扣成本，不再以成本門檻重複扣除。不可宣稱保證獲利。
-負的或缺失的預期淨報酬不支持這個既定二十日方案的買進結論；僅憑過半勝率、法人買超或小額分批，不能把負期望改成正期望。若主張另一種進出場方案，因沒有該方案驗證資料，只能列為待確認條件，不能當成當前買進依據。
+文字可引用已提供資料的數字，須說明欄位、日期與單位，不自行產生持倉比例或固定時間門檻。淨報酬已扣成本，不再以成本門檻重複扣除。不可宣稱保證獲利。
+AI任務是進場覆核，不是重複模型門檻。預期淨報酬正負都不是單一買進或等待規則。若模型不支持、但連續價量與法人證據支持進場，可以提出有明確證據的研究建議，必須在risk說明與模型的分歧、新方案未驗證，不能改寫原始機率，也不把負期望改成正期望。不以「少量試單」代替證據。沒有連續證據時，不能宣稱已完成趨勢覆核；給出資料限制與條件式意見。
 正的預期淨報酬也不是自動買進：須說明個股資料提供的支持、風險及反證。量價代理不得寫成實際淨資金流入或流出。`;
 }
 
@@ -517,10 +520,6 @@ function validateAIAdvice(content, forecast, finishReason) {
   if (advice.expected_net_return !== expected || advice.net_profit_probability !== probability) {
     decisionIssue = "AI 數值欄位與模型不符，結論待核對；下方模型數據才是原始值";
     warnings.push({sentence: JSON.stringify({expected_net_return: advice.expected_net_return, net_profit_probability: advice.net_profit_probability}), reason: decisionIssue});
-  }
-  if (advice.decision === "可考慮買進" && (expected === null || expected <= 0 || probability === null)) {
-    decisionIssue = "買進結論與非正或缺失的預期淨報酬／機率資料有矛盾，分批試單不能消除；結論待核對";
-    warnings.push({sentence: advice.decision, reason: decisionIssue});
   }
   if (!Array.isArray(advice.reasons) || advice.reasons.length < 1 || advice.reasons.length > 3) return reject("缺少有效分析理由");
   const texts = [...advice.reasons, advice.risk, advice.action, advice.invalidation];
@@ -559,8 +558,35 @@ function renderAIAdvice(content, item, finishReason) {
     return text;
   };
   const decision = result.decisionIssue ? `結論待核對（AI 原答：${a.decision}，未確認為有效建議）\n${result.decisionIssue}` : `AI建議：${a.decision}`;
+  const divergence = a.decision === "可考慮買進" && (aiNumber(item.prediction_20d?.expected_net_return) === null || item.prediction_20d.expected_net_return <= 0)
+    ? "\n模型與AI有分歧：模型沒有正的預期淨報酬支持；AI為另一層研究意見，原機率不代表新進場方案勝率。" : "";
   const notice = result.warnings.length ? "部分句子已標示疑慮，保留原文供核對；標示內容不可視為已驗證交易條件。" : "未發現已知格式與部分數值問題；不代表全文已驗證。";
-  return `AI 研究建議（資料日：${item.as_of_date}，非即時行情；不更動模型排名）\n${facts}\n${decision}\n${notice}\n理由：${a.reasons.map(annotate).join("；")}\n風險與反證：${annotate(a.risk)}\n行動觀察：${annotate(a.action)}\n改變看法的條件：${annotate(a.invalidation)}\n此檢查不是完整語意或交易績效驗證。`;
+  return `AI 個股進場覆核（資料日：${item.as_of_date}，非即時行情；不更動模型排名）\n${facts}\n${decision}${divergence}\n${notice}\n理由：${a.reasons.map(annotate).join("；")}\n風險與反證：${annotate(a.risk)}\n行動觀察：${annotate(a.action)}\n改變看法的條件：${annotate(a.invalidation)}\n此檢查不是完整語意或交易績效驗證。`;
+}
+
+async function loadAIHistory(stockId, item) {
+  try {
+    const response = await fetch(`cache/ai-context/${encodeURIComponent(stockId)}.json?date=${encodeURIComponent(item.as_of_date)}`, {cache:"no-store", signal:AbortSignal.timeout(15000)});
+    if (!response.ok) throw new Error("unavailable");
+    const h = await response.json();
+    if (h.version !== 1 || h.stock_id !== stockId || h.as_of_date !== item.as_of_date || h.aligned !== true ||
+        !Array.isArray(h.bars) || !h.bars.length || h.bars.length > 60 ||
+        !Array.isArray(h.institutions) || h.institutions.length > 20) throw new Error("mismatch");
+    if (h.bars.some((b,i) => !Array.isArray(b) || b.length !== 6 || typeof b[0] !== "string" ||
+        b[0] > item.as_of_date || (i && b[0] <= h.bars[i-1][0]) ||
+        b.slice(1).some(n => !Number.isFinite(n)) || Math.min(...b.slice(1,5)) <= 0 ||
+        b[5] < 0 || b[3] > Math.min(b[1],b[4]) || b[2] < Math.max(b[1],b[4]))) throw new Error("bars");
+    const last = h.bars[h.bars.length-1];
+    if (last[0] !== item.as_of_date || Math.abs(last[4]-item.current_price) > 0.001) throw new Error("stale");
+    if (h.institutions.some((r,i) => !Array.isArray(r) || r.length !== 3 ||
+        !h.bars.some(b=>b[0]===r[0]) || (i && r[0]<=h.institutions[i-1][0]) ||
+        r.slice(1).some(n=>n!==null && !Number.isFinite(n)))) throw new Error("institutions");
+    return {available:true, bars:h.bars, bar_columns:["date","open","high","low","close","volume_shares"],
+      institutions:h.institutions, institution_columns:["date","foreign_net_shares","trust_net_shares"],
+      price_basis:"原始未還原日線，除權息未核實；法人缺值不是零，非即時行情"};
+  } catch {
+    return {available:false, reason:"連續資料缺失、過期或不匹配；僅能分析彙總，不能宣稱完成趨勢覆核"};
+  }
 }
 
 function aiErrorMessage(response, payload) {
@@ -591,12 +617,16 @@ async function runAI20d(stockId) {
   byId("aiBadge").textContent = `${provider === "groq" ? "Groq" : "NVIDIA"} · ${model}`;
   byId("aiContent").textContent = "AI 正在分析模型、資金與風險，形成研究建議...";
   try {
+    const history = await loadAIHistory(stockId, state.predictions[stockId]);
+    if (requestGeneration !== aiRequestGeneration || state.currentStockId !== stockId) return;
+    const prompt = aiPrompt(stockId, history);
+    if (prompt.length + V91_AI_EXPLANATION_POLICY.length > 16000) throw new Error("連續資料超過分析長度限制，未送出AI請求");
     const response = await fetch(`${BACKEND_URL}/api/${provider}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ api_key: key, body: { model, messages: [
         { role: "system", content: V91_AI_EXPLANATION_POLICY },
-        { role: "user", content: aiPrompt(stockId) },
+        { role: "user", content: prompt },
       ], temperature: 0.05, max_tokens: 1024 } }),
     });
     const payload = await response.json().catch(() => null);
@@ -606,7 +636,9 @@ async function runAI20d(stockId) {
     const content = payload.choices?.[0]?.message?.content;
     if (!content) throw new Error("AI 沒有回傳內容");
     if (typeof content !== "string") throw new Error("AI 回應格式不正確");
-    byId("aiContent").textContent = renderAIAdvice(content, state.predictions[stockId], payload.choices?.[0]?.finish_reason);
+    byId("aiContent").textContent = (history.available
+      ? `覆核資料：${history.bars.length}根日線；法人${history.institutions.filter(r=>r[1]!==null && r[2]!==null).length}日完整紀錄（最多20日）。\n`
+      : `資料限制：${history.reason}\n`) + renderAIAdvice(content, state.predictions[stockId], payload.choices?.[0]?.finish_reason);
   } catch (error) {
     if (requestGeneration !== aiRequestGeneration || state.currentStockId !== stockId) return;
     const safeError = String(error.message || "連線失敗").split(key).join("[REDACTED]")
