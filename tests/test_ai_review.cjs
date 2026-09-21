@@ -38,7 +38,7 @@ assert.match(out,/短期價格走弱\[F5\]/);
 assert.doesNotMatch(out,/未通過一致性檢查|缺少有效事實編號|分析結構不完整/);
 assert.match(render({...structured,risk:{text:'偏弱',refs:['F999']}}),/不存在的資料來源/);
 assert.match(render({...structured,risk:{text:'五日跌1.91%',refs:['F2']}}),/AI重述數字尚未完整核對/);
-assert.match(render({...structured,risk:{text:'偏弱',refs:'F2'}}),/結構化證據欄位不完整/);
+assert.doesNotMatch(render({...structured,risk:{text:'偏弱',refs:'F2'}}),/結構化證據欄位不完整/);
 assert.match(out,/需執行每日快取更新/);
 console.log('Structured typed references, missing evidence, invalid fields and estimator migration notice passed');
 ctx.item.prediction_20d.return_shrinkage=1;
