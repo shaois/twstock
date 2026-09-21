@@ -37,3 +37,9 @@ assert.match(render({...structured,risk:{text:'五日跌1.91%',refs:['F2']}}),/A
 assert.match(render({...structured,risk:{text:'偏弱',refs:'F2'}}),/結構化證據欄位不完整/);
 assert.match(out,/需執行每日快取更新/);
 console.log('Structured typed references, missing evidence, invalid fields and estimator migration notice passed');
+ctx.item.prediction_20d.return_shrinkage=1;
+ctx.item.prediction_20d.return_estimator='arithmetic_mean_shrinkage_period_balanced_MSE';
+assert.match(render(structured),/全域共同基準，不是該股獨有報酬優勢/);
+assert.match(vm.runInContext('aiReviewEvidence(e,item.prediction_20d).facts.M1',ctx),/沒有個股報酬區辨力/);
+assert.match(render({...structured,decision:'可考慮買進'}),/AI建議：可考慮買進/);
+assert.match(render({...structured,risk:{text:'量價代理顯示資金流出',refs:['M4']}}),/量價代理不能直接視為實際淨資金流/);
