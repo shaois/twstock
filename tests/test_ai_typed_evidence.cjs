@@ -39,6 +39,25 @@ assert.match(render({...a,risk:{...repeated.risk,text:'法人五日合計買超'
 assert.match(render({...a,risk:{...repeated.risk,text:'量價代理顯示資金流出'}}),/覆核未通過/);
 assert.match(render(withClaim({...claim,ref:'F999'})),/引用不是可核對法人來源/);
 assert.match(render({...a,reasons:[a.reasons[0],{...a.reasons[1],institution_claims:[]},a.reasons[2]]}),/法人分析缺少/);
+// Reported five-stock shapes: paragraph-level refs apply to every sentence.
+const paragraph={text:'法人五日合計賣超。法人二十日合計買超，兩個期間不同。',refs:[],institution_claims:[claim,{sessions:20,actor:'combined',direction:'buy',ref:'F6'}]};
+const paragraphOut=render({...a,risk:paragraph});
+assert.match(paragraphOut,/AI建議：等待/);
+assert.doesNotMatch(paragraphOut,/法人引用來源與聲稱期間不一致|法人方向缺少/);
+assert.match(render({...a,risk:{...paragraph,text:'法人五日合計買超。法人二十日合計買超。'}}),/覆核未通過/);
+for(const text of ['若法人持續買超，需重新評估','模型估計不確定；若外資持續賣超，預期可能落空','未來法人方向改變時再覆核']) {
+ for(const decision of ['等待','可考慮買進','避開']) {
+  const out=render({...a,decision,risk:{text,refs:['M1'],institution_claims:[]}});
+  assert.match(out,new RegExp('AI建議：'+decision));
+  assert.doesNotMatch(out,/法人分析缺少/);
+ }
+}
+// A future clause must not hide preceding or separately stated historical facts.
+assert.match(render({...a,risk:{text:'法人五日合計買超，若趨勢改變則覆核',refs:['F4'],institution_claims:[claim]}}),/覆核未通過/);
+assert.match(render({...a,risk:{text:'若趨勢改變則覆核。但目前法人五日合計買超',refs:['F4'],institution_claims:[claim]}}),/覆核未通過/);
+assert.match(render({...a,risk:{text:'法人最近五日賣超。若轉買超則覆核',refs:['F4'],institution_claims:[]}}),/法人分析缺少/);
+assert.match(render({...a,risk:{text:'量價代理顯示資金流入',refs:['M4'],institution_claims:[]}}),/覆核未通過/);
+assert.match(render({...a,risk:{text:'五日量價代理為負，需另確認價格與成交活動',refs:['M4'],institution_claims:[]}}),/AI建議：等待/);
 c.e.institution_facts.F4.combined=null;
 const withoutOther={...withClaim({...claim,direction:'unknown'}),reasons:[a.reasons[0],{...a.reasons[1],institution_claims:[{...claim,direction:'unknown'}]}, {kind:'決定結論',text:'資料不足',refs:['M1'],institution_claims:[]}]};
 assert.match(render(withoutOther),/AI建議：等待/);
