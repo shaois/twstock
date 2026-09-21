@@ -506,6 +506,8 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
 decision必須是可考慮買進、等待、避開其中一項。reasons固定為支持進場、反對進場、決定結論三項物件；risk也是物件，refs為存在的來源編號陣列，不把編號寫在text。範例編號不是指定答案，須自行選正確來源。無支持證據可用空refs並直說證據不足。程式負責呈現引用的原始日期、期間、欄位及數值，text只做定性分析，不重抄數字或換算單位。各文字欄位不可留空。
 數字及日期由程式來源卡呈現，分析文字不自行換算、不自行產生持倉比例或固定時間門檻。淨報酬已扣成本，不再以成本門檻重複扣除。不可宣稱保證獲利。
 AI任務是進場覆核，不是重複模型門檻。預期淨報酬正負都不是單一買進或等待規則。若模型不支持、但連續價量與法人證據支持進場，可以提出有明確證據的研究建議，必須在risk說明與模型的分歧、新方案未驗證，不能改寫原始機率，也不把負期望改成正期望。不以「少量試單」代替證據。沒有連續證據時，不能宣稱已完成趨勢覆核；給出資料限制與條件式意見。
+純假設風險（例如「若未來法人轉為賣超，需重新評估」）不是歷史事實，institution_claims可為[]，不可捏造未來證據。歷史法人陳述仍須填claims；同一項refs與claims.ref適用於該項全部句子，不得借用其他項目的來源。請把歷史事實和假設條件分句寫清楚。
+量價代理僅描述指標正負，例如「五日量價代理為負，價格與成交活動需另行確認」；不要改寫成「資金流出／流入」。法人淨買賣股數也不是全市場淨資金流。
 正的預期淨報酬也不是自動買進：須說明個股資料提供的支持、風險及反證。收縮比例為1時，報酬只是全域共同基準，不能列為該股獨有買進優勢，也不因此強制等待。量價代理不得寫成實際淨資金流入或流出。`;
 }
 
@@ -623,10 +625,17 @@ function aiReviewEvidence(evidence, forecast = {}, sector = {}) {
 
 // Check explicit institutional direction against numeric, period-specific facts.
 // Ambiguous claims are unverified rather than guessed from a convenient window.
-function checkAIInstitutionClaims(text, evidence) {
+function aiHistoricalClauses(text) {
+  // A conditional applies only to its remaining sentence, not earlier facts.
+  return text.split(/[。；]/).flatMap(sentence => {
+    const parts=sentence.split(/(?=但目前|但最近|然而目前|實際上)/);
+    return parts.map(part=>part.split(/若|假設|如果|未來/)[0]).filter(s=>s.trim());
+  });
+}
+
+function checkAIInstitutionClaims(text, evidence, itemRefs = null) {
   const issues=[];
-  for (const clause of text.split(/[。；]/)) {
-    if (/若|假設|如果|未來/.test(clause)) continue;
+  for (const clause of aiHistoricalClauses(text)) {
     const claims=[...clause.matchAll(/(外資與投信|外資及投信|外資投信|兩者合計|法人|外資|投信)[^，。；]{0,45}?(買超|賣超|持平)/g)];
     for (const claim of claims) {
       const actor=/合計|法人|與|及|外資投信/.test(claim[1])?'combined':claim[1]==='外資'?'foreign':'trust';
@@ -637,7 +646,7 @@ function checkAIInstitutionClaims(text, evidence) {
       const prefix=(/模型|預測|報酬|外資|投信|法人|合計/.test(lead)?'':lead)+claim[0];
       const periods=[...prefix.matchAll(/(20|二十|5|五|1|一)日/g)].map(m=>({二十:20,五:5,一:1}[m[1]]||Number(m[1])));
       if (/當日|單日|今日/.test(prefix)) periods.push(1);
-      const refs=aiEvidenceRefs(clause).map(id=>evidence.institution_facts?.[id]).filter(Boolean);
+      const refs=(itemRefs || aiEvidenceRefs(clause)).map(id=>evidence.institution_facts?.[id]).filter(Boolean);
       if (periods.length && periods.some(n=>!refs.some(f=>f.sessions===n))) {
         issues.push({sentence:clause,reason:'法人引用來源與聲稱期間不一致'});
       }
@@ -666,12 +675,11 @@ function renderAIAdvice(content, item, finishReason, evidence = null) {
       // Claims already carry explicit references; refs need not duplicate them.
       // Repeated prose is permitted, but identifiable contradictions still fail.
       const referenceIds=[...new Set([...r.refs,...r.claims.map(c=>c.ref)])];
-      const prose=r.text+referenceIds.map(id=>`[${id}]`).join('');
-      for(const issue of checkAIInstitutionClaims(prose,evidence)) {
+      for(const issue of checkAIInstitutionClaims(r.text,evidence,referenceIds)) {
         result.warnings.push({sentence:r.text,reason:issue.reason,
           severity:/矛盾/.test(issue.reason)?'error':'notice'});
       }
-      if(/外資|投信|法人/.test(r.text) && !r.claims.length) result.warnings.push({sentence:r.text,reason:'法人分析缺少institution_claims明確證據'});
+      if(aiHistoricalClauses(r.text).some(t=>/外資|投信|法人/.test(t)) && !r.claims.length) result.warnings.push({sentence:r.text,reason:'法人分析缺少institution_claims明確證據'});
       for(const [j,c] of r.claims.entries()) {
         const f=evidence.institution_facts?.[c.ref];
         let issue='';
