@@ -516,16 +516,34 @@ function validateAIAdvice(content, forecast, finishReason) {
   try { advice = JSON.parse(content.trim().replace(/^\x60\x60\x60(?:json)?\s*/i, "").replace(/\s*\x60\x60\x60$/, "")); } catch { return reject("回答不符合結構格式，未採用其建議"); }
   if (!advice || typeof advice !== "object" || Array.isArray(advice)) return reject("回答格式不正確");
   const fields = ["decision", "expected_net_return", "net_profit_probability", "reasons", "risk", "action", "invalidation"];
-  if (Object.keys(advice).length !== fields.length || fields.some(k => !Object.hasOwn(advice, k))) return reject("回答欄位不完整或含額外欄位");
+  const missing=fields.filter(k=>!Object.hasOwn(advice,k)), extra=Object.keys(advice).filter(k=>!fields.includes(k));
+  if (missing.length || extra.length) return reject(`回答欄位不完整或含額外欄位：缺少 ${missing.join(", ") || "無"}；額外 ${extra.join(", ") || "無"}`);
   if (!["可考慮買進", "等待", "避開"].includes(advice.decision)) return reject("建議分類不正確");
   let structuredReferences = null;
   if (Array.isArray(advice.reasons) && advice.reasons.some(r => r && typeof r === "object")) {
     const labels = ["支持進場", "反對進場", "決定結論"];
-    const valid = (r, kind) => r && typeof r === "object" && !Array.isArray(r) &&
-      Object.keys(r).sort().join(",") === (kind ? "kind,refs,text" : "refs,text") &&
-      (!kind || r.kind === kind) && typeof r.text === "string" && r.text.trim() &&
-      Array.isArray(r.refs) && r.refs.length <= 12 && r.refs.every(id=>typeof id === "string" && /^[FM]\d+$/.test(id));
-    if (advice.reasons.length !== 3 || advice.reasons.some((r,i)=>!valid(r,labels[i])) || !valid(advice.risk)) return reject("結構化證據欄位不完整");
+    const errors=[];
+    const normalize = (r, kind, path) => {
+      if (!r || typeof r!=="object" || Array.isArray(r)) {errors.push(`${path}：須為物件`);return;}
+      const keys=kind ? ["kind","refs","text"] : ["refs","text"];
+      for(const k of keys) if(!Object.hasOwn(r,k)) errors.push(`${path}.${k}：缺少欄位`);
+      for(const k of Object.keys(r)) if(!keys.includes(k)) errors.push(`${path}.${k}：非契約欄位`);
+      if(kind && typeof r.kind==='string') r.kind=r.kind.trim().replace(/[：:]$/, '');
+      if(kind && r.kind!==kind) errors.push(`${path}.kind：須為${kind}`);
+      if(typeof r.text!=='string' || !r.text.trim()) errors.push(`${path}.text：須為非空文字`);
+      // Only normalize explicit IDs; never invent missing refs or extract guesses.
+      if(typeof r.refs==='string' && /^\s*\[?[FMfm]\d+\]?\s*$/.test(r.refs)) r.refs=[r.refs];
+      if(Array.isArray(r.refs)) r.refs=r.refs.map(id=>typeof id==='string'?id.trim().replace(/^\[([FMfm]\d+)\]$/, '$1').toUpperCase():id);
+      if(!Array.isArray(r.refs)) errors.push(`${path}.refs：須為來源編號陣列`);
+      else if(r.refs.length>12 || r.refs.some(id=>typeof id!=='string' || !/^[FM]\d+$/.test(id))) errors.push(`${path}.refs：最多12個F/M來源編號`);
+    };
+    if(advice.reasons.length!==3) errors.push('reasons：須恰有3項');
+    advice.reasons.forEach((r,i)=>normalize(r,labels[i] || '未知類型',`reasons[${i}]`));
+    if(typeof advice.risk==='string' && aiEvidenceRefs(advice.risk).length) {
+      advice.risk={text:advice.risk,refs:aiEvidenceRefs(advice.risk)};
+    }
+    normalize(advice.risk,null,'risk');
+    if(errors.length) return reject(`結構化證據欄位不完整：${errors.join('；')}`);
     structuredReferences = [...advice.reasons, advice.risk].map(r=>({text:r.text,refs:[...r.refs]}));
     const display = r => `${r.kind ? r.kind+"：" : ""}${r.text}${r.refs.map(id=>`[${id}]`).join("")}`;
     advice.reasons = advice.reasons.map(display);
@@ -558,7 +576,7 @@ function validateAIAdvice(content, forecast, finishReason) {
         }
       }
     }
-    if (/淨報酬/.test(sentence) && /再扣|扣除成本後|成本門檻|接近成本/.test(sentence)) reasons.push("淨報酬已扣成本，這句可能重複計算成本");
+    if (/淨報酬/.test(sentence) && /再扣|成本門檻|接近成本/.test(sentence) && !/不再扣|無須再扣|不能再扣|不可再扣/.test(sentence)) reasons.push("淨報酬已扣成本，這句可能重複計算成本");
     if (/保證獲利|穩賺|必賺|無風險/.test(sentence) && !/不保證|不能保證|並非|不是|不代表/.test(sentence)) reasons.push("不當獲利保證，不應採信");
     if (/(?:量價|代理).{0,35}(?:資金(?:淨)?流[入出]|淨資金流[入出]|資金撤出)/.test(sentence) && !/不代表|不是|並非|不能/.test(sentence)) reasons.push("量價代理不能直接視為實際淨資金流");
     if (reasons.length) warnings.push({sentence, reason: reasons.join("；")});
@@ -596,7 +614,10 @@ function checkAIInstitutionClaims(text, evidence) {
     for (const claim of claims) {
       const actor=/合計|法人|與|及|外資投信/.test(claim[1])?'combined':claim[1]==='外資'?'foreign':'trust';
       const direction=claim[2]==='買超'?1:claim[2]==='賣超'?-1:0;
-      const prefix=clause.slice(0,claim.index+claim[0].length);
+      // Limit period scope to this claim and its immediate comma-delimited lead-in.
+      // Exclude model horizons and previous actors, not just earlier sentences.
+      const lead=clause.slice(0,claim.index).split(/[，,：:]/).pop();
+      const prefix=(/模型|預測|報酬|外資|投信|法人|合計/.test(lead)?'':lead)+claim[0];
       const periods=[...prefix.matchAll(/(20|二十|5|五|1|一)日/g)].map(m=>({二十:20,五:5,一:1}[m[1]]||Number(m[1])));
       if (/當日|單日|今日/.test(prefix)) periods.push(1);
       const refs=aiEvidenceRefs(clause).map(id=>evidence.institution_facts?.[id]).filter(Boolean);
@@ -618,7 +639,7 @@ function renderAIAdvice(content, item, finishReason, evidence = null) {
   evidence = aiReviewEvidence(evidence, item.prediction_20d || {});
   const result = validateAIAdvice(content, item.prediction_20d || {}, finishReason);
   const facts = `模型數據：預期二十日淨報酬 ${percent(item.prediction_20d?.expected_net_return)}（已扣成本）；淨獲利估計機率 ${percent(item.prediction_20d?.net_profit_probability)}`;
-  if (!result.ok) return `AI 回答未通過一致性檢查（不是買進或不買的判斷）\n原因：${result.reason}\n${facts}\n本次回答未作為有效建議顯示。可重新分析；未自動重試或增加 API 呼叫。`;
+  if (!result.ok) return `AI 回答未通過一致性檢查（不是買進或不買的判斷）\n原因：${result.reason}\n${facts}\n本次回答未作為有效建議顯示。未自動重試或增加 API 呼叫。\n原始AI回答（僅供診斷，非有效建議；純文字顯示）：\n${typeof content==='string'?content.slice(0,24000):String(content)}${typeof content==='string' && content.length>24000?'\n（顯示上限24000字，後段已截斷）':''}`;
   const a = result.advice;
   for (const text of [...a.reasons,a.risk]) result.warnings.push(...checkAIInstitutionClaims(text,evidence));
   const estimatorNotice = item.prediction_20d?.return_estimator === "arithmetic_mean_shrinkage_period_balanced_MSE"
@@ -659,7 +680,10 @@ function renderAIAdvice(content, item, finishReason, evidence = null) {
     return text;
   };
   const balanced = a.reasons.length === 3 && ["支持進場：","反對進場：","決定結論："].every((label,i)=>a.reasons[i].startsWith(label));
-  const blocked = Boolean(result.decisionIssue || result.warnings.length || !balanced);
+  // Unverified numeric restatement / proposed thresholds are notices, not
+  // demonstrated contradictions. Keep hard evidence failures blocking.
+  const softWarning = w => ["AI重述數字尚未完整核對；請以程式來源卡為準", "可能包含未驗證交易門檻，不是已驗證買賣條件"].includes(w.reason);
+  const blocked = Boolean(result.decisionIssue || result.warnings.some(w=>!softWarning(w)) || !balanced);
   const decision = blocked ? `覆核未通過（不是等待、買進或避開的判斷）\nAI 原答僅供稽核：${a.decision}；不得視為有效建議。${result.decisionIssue || ""}` : `AI建議：${a.decision}`;
   const divergence = a.decision === "可考慮買進" && (aiNumber(item.prediction_20d?.expected_net_return) === null || item.prediction_20d.expected_net_return <= 0)
     ? "\n模型與AI有分歧：模型沒有正的預期淨報酬支持；AI為另一層研究意見，原機率不代表新進場方案勝率。" : "";
