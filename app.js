@@ -481,7 +481,7 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
 - 預期淨報酬是收縮估計，不是未來必然報酬。收縮是估計方法，不會降低股票實際波動或證明風險可控；不能列為支持進場的證據。新模型以平均報酬及平方誤差選收縮，舊快取則可能仍是中位數版本；以M3版本資訊為準。null表示未知。接近零代表此估計未提供明顯報酬優勢，不能說成確定無獲利機會。
 - 量價代理不是股價漲跌幅、成交量增減率或真實淨資金流，不能將五日代理-40%寫成五日股價跌40%或成交量減40%。價格變化只能引用期間收盤變化事實；代理負值不能直接說成法人賣超或資金撤出。
 - 法人是外資與投信五交易日合計，單位股，不是張或單日；正數淨買超，負數淨賣超，零為持平。不能推論每天連買、加速買超。null是缺資料，不是零或利空。
-- 法人方向以institution_facts的foreign（外資）、trust（投信）、combined（兩者合計）核對；各F編號有獨立sessions期間，不能拿當日代替五日或二十日。主體、方向與來源只填下方institution_claims，不能把外資方向套用到合計。方向、期間或來源矛盾會使整份覆核失效。
+- 法人方向以institution_facts的foreign（外資）、trust（投信）、combined（兩者合計）核對；各F編號有獨立sessions期間，不能拿當日代替五日或二十日。主體、方向與來源填下方institution_claims；文字可簡短重述但須一致，不能把外資方向套用到合計。方向、期間或來源矛盾會使整份覆核失效。
 - 法人尚未納入機率訓練只描述模型使用方式，不是看空理由；可作獨立輔助證據，不能自行增加勝率。
 - 原機率適用次日開盤進場、訊號後第20交易日收盤評估，並非你提出的新進出場方案勝率。
 - 連續證據已由程式彙總成F編號。不得自行再加總、換算成萬/億/張、把五日當成當日、或把負號讀成買超。每個數字以該F項日期、單位與方向為準；法人是淨買賣超，不是總買進或总賣出。
@@ -502,7 +502,7 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
 回答契約：
 只輸出JSON物件，不加程式碼圍欄。格式：
 {"decision":"可考慮買進或等待或避開","expected_net_return":原始最終數值或null,"net_profit_probability":原始最終數值或null,"reasons":[{"kind":"支持進場","text":"定性分析","refs":["M2"],"institution_claims":[]},{"kind":"反對進場","text":"定性分析","refs":["M1"],"institution_claims":[]},{"kind":"決定結論","text":"說明何項證據占優勢","refs":["M1","M2"],"institution_claims":[]}],"risk":{"text":"風險與矛盾","refs":["M1"],"institution_claims":[]},"action":"未來觀察条件","invalidation":"推翻建議的條件"}
-法人核對新契約：reasons各項及risk都填institution_claims陣列。不引用法人時為[]；若用法人作依據，每項寫成{"sessions":5,"actor":"combined","direction":"sell","ref":"F4"}。這只是格式例，方向必須查institution_facts，不可照抄。sessions僅1/5/20；actor僅foreign/trust/combined；direction僅buy/sell/flat/unknown，缺值必須unknown。ref須是對應期間法人來源且列入同項refs。text只解釋意義與權衡，不寫買超/賣超/持平，主體期間方向由程式按claims呈現及核對，不從整段文字猜測。類股資料引用F10（正式類股輪動來源），不能用類股代替個股報酬，也不能把類股相對報酬說成個股報酬。
+法人核對新契約：reasons各項及risk都填institution_claims陣列。不引用法人時為[]；若用法人作依據，每項寫成{"sessions":5,"actor":"combined","direction":"sell","ref":"F4"}。這只是格式例，方向必須查institution_facts，不可照抄。sessions僅1/5/20；actor僅foreign/trust/combined；direction僅buy/sell/flat/unknown，缺值必須unknown。ref須是對應期間法人來源，不必在同項refs重複填寫。text以意義與權衡為主，可簡短重述方向但須與資料一致、說清期間及主體。主體期間方向由程式按claims逐欄核對；模糊文字仍需人工核對，不能視為語義已驗證。類股資料引用F10（正式類股輪動來源），不能用類股代替個股報酬，也不能把類股相對報酬說成個股報酬。
 decision必須是可考慮買進、等待、避開其中一項。reasons固定為支持進場、反對進場、決定結論三項物件；risk也是物件，refs為存在的來源編號陣列，不把編號寫在text。範例編號不是指定答案，須自行選正確來源。無支持證據可用空refs並直說證據不足。程式負責呈現引用的原始日期、期間、欄位及數值，text只做定性分析，不重抄數字或換算單位。各文字欄位不可留空。
 數字及日期由程式來源卡呈現，分析文字不自行換算、不自行產生持倉比例或固定時間門檻。淨報酬已扣成本，不再以成本門檻重複扣除。不可宣稱保證獲利。
 AI任務是進場覆核，不是重複模型門檻。預期淨報酬正負都不是單一買進或等待規則。若模型不支持、但連續價量與法人證據支持進場，可以提出有明確證據的研究建議，必須在risk說明與模型的分歧、新方案未驗證，不能改寫原始機率，也不把負期望改成正期望。不以「少量試單」代替證據。沒有連續證據時，不能宣稱已完成趨勢覆核；給出資料限制與條件式意見。
@@ -644,6 +644,8 @@ function checkAIInstitutionClaims(text, evidence) {
       const selected=periods.length ? [...new Set(periods)].map(n=>Object.values(evidence.institution_facts||{}).find(f=>f.sessions===n)) : refs;
       if (!selected.length || selected.some(f=>!f || f[actor]===null || !Number.isFinite(f[actor]))) {
         issues.push({sentence:clause,reason:'法人方向缺少可核對的期間與完整數據'});
+      } else if (!periods.length && new Set(selected.map(f=>Math.sign(f[actor]))).size>1) {
+        issues.push({sentence:clause,reason:'法人文字未指明期間，所引期間方向不同，需人工核對'});
       } else if (selected.some(f=>Math.sign(f[actor])!==direction)) {
         issues.push({sentence:clause,reason:'法人買賣方向與指定期間的程式事實矛盾'});
       }
@@ -661,15 +663,19 @@ function renderAIAdvice(content, item, finishReason, evidence = null) {
   for (const [i,text] of [...a.reasons,a.risk].entries()) {
     const r=result.structuredReferences?.[i];
     if(r && r.claims!==undefined) {
-      // Typed facts are checked exactly. Free text must not make a second,
-      // possibly contradictory directional claim beside the canonical statement.
-      if(/買超|賣超|持平/.test(r.text)) result.warnings.push({sentence:r.text,reason:'法人方向請只填institution_claims，文字不得重述方向'});
+      // Claims already carry explicit references; refs need not duplicate them.
+      // Repeated prose is permitted, but identifiable contradictions still fail.
+      const referenceIds=[...new Set([...r.refs,...r.claims.map(c=>c.ref)])];
+      const prose=r.text+referenceIds.map(id=>`[${id}]`).join('');
+      for(const issue of checkAIInstitutionClaims(prose,evidence)) {
+        result.warnings.push({sentence:r.text,reason:issue.reason,
+          severity:/矛盾/.test(issue.reason)?'error':'notice'});
+      }
       if(/外資|投信|法人/.test(r.text) && !r.claims.length) result.warnings.push({sentence:r.text,reason:'法人分析缺少institution_claims明確證據'});
       for(const [j,c] of r.claims.entries()) {
         const f=evidence.institution_facts?.[c.ref];
         let issue='';
-        if(!r.refs.includes(c.ref)) issue='ref未列入該項refs';
-        else if(!f) issue='引用不是可核對法人來源';
+        if(!f) issue='引用不是可核對法人來源';
         else if(f.sessions!==c.sessions) issue=`期間矛盾：來源為${f.sessions}日`;
         else {
           const n=f[c.actor];
@@ -690,8 +696,9 @@ function renderAIAdvice(content, item, finishReason, evidence = null) {
     }
   }
   if (evidence?.available) {
-    for (const text of [...a.reasons, a.risk, a.action, a.invalidation]) {
-      const refs = aiEvidenceRefs(text);
+    for (const [i,text] of [...a.reasons, a.risk, a.action, a.invalidation].entries()) {
+      const r=result.structuredReferences?.[i];
+      const refs = r ? [...new Set([...r.refs,...(r.claims||[]).map(c=>c.ref)])] : aiEvidenceRefs(text);
       const hypothetical = text === a.action || text === a.invalidation;
       if ((!refs.length && !hypothetical && !/證據不足|無支持證據|無反對證據/.test(text)) || refs.some(id=>!Object.hasOwn(evidence.facts,id))) {
         result.warnings.push({sentence:text,reason:"缺少有效事實編號；此段依據尚未核對"});
@@ -720,7 +727,7 @@ function renderAIAdvice(content, item, finishReason, evidence = null) {
   const balanced = a.reasons.length === 3 && ["支持進場：","反對進場：","決定結論："].every((label,i)=>a.reasons[i].startsWith(label));
   // Unverified numeric restatement / proposed thresholds are notices, not
   // demonstrated contradictions. Keep hard evidence failures blocking.
-  const softWarning = w => ["AI重述數字尚未完整核對；請以程式來源卡為準", "可能包含未驗證交易門檻，不是已驗證買賣條件"].includes(w.reason);
+  const softWarning = w => w.severity==='notice' || ["AI重述數字尚未完整核對；請以程式來源卡為準", "可能包含未驗證交易門檻，不是已驗證買賣條件"].includes(w.reason);
   const blocked = Boolean(result.decisionIssue || result.warnings.some(w=>!softWarning(w)) || !balanced);
   const decision = blocked ? `覆核未通過（不是等待、買進或避開的判斷）\nAI 原答僅供稽核：${a.decision}；不得視為有效建議。${result.decisionIssue || ""}` : `AI建議：${a.decision}`;
   const divergence = a.decision === "可考慮買進" && (aiNumber(item.prediction_20d?.expected_net_return) === null || item.prediction_20d.expected_net_return <= 0)
