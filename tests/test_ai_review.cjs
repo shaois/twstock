@@ -19,8 +19,8 @@ out=render({...base,reasons:[base.reasons[0],'反對進場：5日價格跌幅8.1
 assert.doesNotMatch(out,/價格變化不符/);
 assert.match(render({...base,risk:'風險(F999)'}),/缺少有效事實編號/);
 assert.match(render({...base,reasons:['尚有矛盾[M1]']}),/分析結構不完整/);
-assert.match(render({...base,decision:'可考慮買進'}),/AI建議：可考慮買進/);
-assert.match(render({...base,decision:'避開'}),/AI建議：避開/);
+assert.match(render({...base,decision:'可考慮買進'}),/覆核未通過/);
+assert.match(render({...base,decision:'避開'}),/覆核未通過/);
 assert.doesNotMatch(render({...base,risk:'若未來5日價格跌幅20%則重新判斷[F5]'}),/此期間收盤變化為.*20/);
 console.log('Grouped references, model references, historical price confusion, balanced review and unchanged decisions passed');
 const structured={...base,reasons:[
@@ -29,6 +29,10 @@ const structured={...base,reasons:[
  {kind:'決定結論',text:'模型與歷史觀察尚未提供足夠支持',refs:['M1','F5']}],
  risk:{text:'買盤可能持續偏弱',refs:['F2']}};
 out=render(structured);
+for(const decision of ['等待','可考慮買進','避開']) {
+ assert.match(render({...structured,decision}),new RegExp('AI建議：'+decision));
+ assert.doesNotMatch(render({...structured,decision}),/覆核未通過/);
+}
 assert.match(out,/支持進場：證據不足/);
 assert.match(out,/短期價格走弱\[F5\]/);
 assert.doesNotMatch(out,/未通過一致性檢查|缺少有效事實編號|分析結構不完整/);
@@ -43,3 +47,26 @@ assert.match(render(structured),/全域共同基準，不是該股獨有報酬�
 assert.match(vm.runInContext('aiReviewEvidence(e,item.prediction_20d).facts.M1',ctx),/沒有個股報酬區辨力/);
 assert.match(render({...structured,decision:'可考慮買進'}),/AI建議：可考慮買進/);
 assert.match(render({...structured,risk:{text:'量價代理顯示資金流出',refs:['M4']}}),/量價代理不能直接視為實際淨資金流/);
+ctx.e.institution_facts={F4:{sessions:5,foreign:9998965,trust:-7865539,combined:2133426},F6:{sessions:20,foreign:40493035,trust:-20784589,combined:19708446}};
+ctx.e.facts.F4='五日外資買超、投信賣超、合計買超';
+ctx.e.facts.F6='二十日外資買超、投信賣超、合計買超';
+const wrong={...structured,reasons:[structured.reasons[0],{kind:'反對進場',text:'外資最近五日與二十日大幅賣超',refs:['F4','F6']},structured.reasons[2]]};
+for(const decision of ['等待','可考慮買進','避開']) {
+ const invalid=render({...wrong,decision});
+ assert.match(invalid,/法人買賣方向.*矛盾/);
+ assert.match(invalid,/覆核未通過/);
+ assert.doesNotMatch(invalid,/AI建議：/);
+}
+for(const text of ['外資買超','投信賣超','法人買超']) {
+ assert.doesNotMatch(render({...structured,risk:{text,refs:['F4']}}),/覆核未通過/);
+}
+assert.match(render({...structured,risk:{text:'投信買超',refs:['F4']}}),/覆核未通過/);
+assert.match(render({...structured,risk:{text:'外資二十日買超',refs:['F4']}}),/聲稱期間不一致/);
+ctx.e.institution_facts.F4.foreign=0;
+assert.doesNotMatch(render({...structured,risk:{text:'外資持平',refs:['F4']}}),/覆核未通過/);
+assert.match(render({...structured,risk:{text:'外資買超',refs:['F4']}}),/覆核未通過/);
+ctx.e.institution_facts.F4.trust=null;
+assert.match(render({...structured,risk:{text:'投信賣超',refs:['F4']}}),/完整數據/);
+assert.match(render({...structured,risk:{text:'量價代理顯示資金流出',refs:['M4']}}),/覆核未通過/);
+assert.match(render({...structured,risk:{text:'風險',refs:['F999']}}),/覆核未通過/);
+console.log('Institution direction, mixed windows, missing data and invalid-decision suppression passed');

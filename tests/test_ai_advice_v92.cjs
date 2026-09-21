@@ -39,7 +39,8 @@ ctx.testItem={as_of_date:"2026-09-14",prediction_20d:negative};
 const output=vm.runInContext('renderAIAdvice(testAdvice,testItem,"stop")',ctx);
 assert.match(output,/模型與AI有分歧/);
 assert.match(output,/-0.28/);
-assert.match(output,/AI建議：可考慮買進/);
+assert.match(output,/覆核未通過/); // Incomplete legacy rationale is no longer a valid recommendation.
+assert.doesNotMatch(output,/AI建議：/);
 console.log("AI output: schema, numbers, negative expectation, invented thresholds, truncation and rejection rendering passed");
 const normal = check({...base,reasons:["5日量價轉弱，但20日量價仍強","預期淨報酬+0.21%，淨獲利機率53.3%"]});
 assert.equal(normal.ok,true);
