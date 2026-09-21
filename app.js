@@ -481,6 +481,7 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
 - 預期淨報酬是收縮估計，不是未來必然報酬。收縮是估計方法，不會降低股票實際波動或證明風險可控；不能列為支持進場的證據。新模型以平均報酬及平方誤差選收縮，舊快取則可能仍是中位數版本；以M3版本資訊為準。null表示未知。接近零代表此估計未提供明顯報酬優勢，不能說成確定無獲利機會。
 - 量價代理不是股價漲跌幅、成交量增減率或真實淨資金流，不能將五日代理-40%寫成五日股價跌40%或成交量減40%。價格變化只能引用期間收盤變化事實；代理負值不能直接說成法人賣超或資金撤出。
 - 法人是外資與投信五交易日合計，單位股，不是張或單日；正數淨買超，負數淨賣超，零為持平。不能推論每天連買、加速買超。null是缺資料，不是零或利空。
+- 法人方向以institution_facts的foreign（外資）、trust（投信）、combined（兩者合計）核對；各F編號有獨立sessions期間，不能拿當日代替五日或二十日。描述買賣超須指明主體並引用對應法人F編號，不能把外資方向套用到合計。方向、期間或來源矛盾會使整份覆核失效，不能繼續當成正式建議。
 - 法人尚未納入機率訓練只描述模型使用方式，不是看空理由；可作獨立輔助證據，不能自行增加勝率。
 - 原機率適用次日開盤進場、訊號後第20交易日收盤評估，並非你提出的新進出場方案勝率。
 - 連續證據已由程式彙總成F編號。不得自行再加總、換算成萬/億/張、把五日當成當日、或把負號讀成買超。每個數字以該F項日期、單位與方向為準；法人是淨買賣超，不是總買進或总賣出。
@@ -585,12 +586,41 @@ function aiReviewEvidence(evidence, forecast = {}) {
   }};
 }
 
+// Check explicit institutional direction against numeric, period-specific facts.
+// Ambiguous claims are unverified rather than guessed from a convenient window.
+function checkAIInstitutionClaims(text, evidence) {
+  const issues=[];
+  for (const clause of text.split(/[。；]/)) {
+    if (/若|假設|如果|未來/.test(clause)) continue;
+    const claims=[...clause.matchAll(/(外資與投信|外資及投信|外資投信|兩者合計|法人|外資|投信)[^，。；]{0,45}?(買超|賣超|持平)/g)];
+    for (const claim of claims) {
+      const actor=/合計|法人|與|及|外資投信/.test(claim[1])?'combined':claim[1]==='外資'?'foreign':'trust';
+      const direction=claim[2]==='買超'?1:claim[2]==='賣超'?-1:0;
+      const prefix=clause.slice(0,claim.index+claim[0].length);
+      const periods=[...prefix.matchAll(/(20|二十|5|五|1|一)日/g)].map(m=>({二十:20,五:5,一:1}[m[1]]||Number(m[1])));
+      if (/當日|單日|今日/.test(prefix)) periods.push(1);
+      const refs=aiEvidenceRefs(clause).map(id=>evidence.institution_facts?.[id]).filter(Boolean);
+      if (periods.length && periods.some(n=>!refs.some(f=>f.sessions===n))) {
+        issues.push({sentence:clause,reason:'法人引用來源與聲稱期間不一致'});
+      }
+      const selected=periods.length ? [...new Set(periods)].map(n=>Object.values(evidence.institution_facts||{}).find(f=>f.sessions===n)) : refs;
+      if (!selected.length || selected.some(f=>!f || f[actor]===null || !Number.isFinite(f[actor]))) {
+        issues.push({sentence:clause,reason:'法人方向缺少可核對的期間與完整數據'});
+      } else if (selected.some(f=>Math.sign(f[actor])!==direction)) {
+        issues.push({sentence:clause,reason:'法人買賣方向與指定期間的程式事實矛盾'});
+      }
+    }
+  }
+  return issues;
+}
+
 function renderAIAdvice(content, item, finishReason, evidence = null) {
   evidence = aiReviewEvidence(evidence, item.prediction_20d || {});
   const result = validateAIAdvice(content, item.prediction_20d || {}, finishReason);
   const facts = `模型數據：預期二十日淨報酬 ${percent(item.prediction_20d?.expected_net_return)}（已扣成本）；淨獲利估計機率 ${percent(item.prediction_20d?.net_profit_probability)}`;
   if (!result.ok) return `AI 回答未通過一致性檢查（不是買進或不買的判斷）\n原因：${result.reason}\n${facts}\n本次回答未作為有效建議顯示。可重新分析；未自動重試或增加 API 呼叫。`;
   const a = result.advice;
+  for (const text of [...a.reasons,a.risk]) result.warnings.push(...checkAIInstitutionClaims(text,evidence));
   const estimatorNotice = item.prediction_20d?.return_estimator === "arithmetic_mean_shrinkage_period_balanced_MSE"
     ? "報酬模型：平均報酬／MSE版，尚待前瞻驗證。" + (item.prediction_20d?.return_shrinkage === 1 ? "\n報酬100%收縮：全域共同基準，不是該股獨有報酬優勢；機率與進場覆核仍須分別判讀。" : "")
     : "報酬模型：舊版或未標記；更新前端不會重算模型，需執行每日快取更新。";
@@ -628,19 +658,20 @@ function renderAIAdvice(content, item, finishReason, evidence = null) {
     for (const w of result.warnings) if (text.includes(w.sentence)) text = text.replace(w.sentence, `【待核對：${w.reason}】${w.sentence}`);
     return text;
   };
-  const decision = result.decisionIssue ? `結論待核對（AI 原答：${a.decision}，未確認為有效建議）\n${result.decisionIssue}` : `AI建議：${a.decision}`;
+  const balanced = a.reasons.length === 3 && ["支持進場：","反對進場：","決定結論："].every((label,i)=>a.reasons[i].startsWith(label));
+  const blocked = Boolean(result.decisionIssue || result.warnings.length || !balanced);
+  const decision = blocked ? `覆核未通過（不是等待、買進或避開的判斷）\nAI 原答僅供稽核：${a.decision}；不得視為有效建議。${result.decisionIssue || ""}` : `AI建議：${a.decision}`;
   const divergence = a.decision === "可考慮買進" && (aiNumber(item.prediction_20d?.expected_net_return) === null || item.prediction_20d.expected_net_return <= 0)
     ? "\n模型與AI有分歧：模型沒有正的預期淨報酬支持；AI為另一層研究意見，原機率不代表新進場方案勝率。" : "";
-  const balanced = a.reasons.length === 3 && ["支持進場：","反對進場：","決定結論："].every((label,i)=>a.reasons[i].startsWith(label));
   const notice = estimatorNotice + "\n" + (result.warnings.length ? "部分句子已標示疑慮，保留原文供核對；標示內容不可視為已驗證交易條件。" : "未發現已知格式與部分數值問題；不代表全文已驗證。") + (balanced ? "" : "\n分析結構不完整：AI未完整列出支持、反對與決定結論的證據；保留原答，不自動改判。");
   const evidenceText = "\n程式計算事實（不是AI生成）：\n" + Object.entries(evidence.facts).map(([id,value])=>`[${id}] ${value}`).join("\n");
-  return `AI 個股進場覆核（資料日：${item.as_of_date}，非即時行情；不更動模型排名）\n${facts}\n${decision}${divergence}\n${notice}\n理由：${a.reasons.map(annotate).join("；")}\n風險與反證：${annotate(a.risk)}\n行動觀察：${annotate(a.action)}\n改變看法的條件：${annotate(a.invalidation)}${evidenceText}\n事實編號只核對來源存在，不代表AI推論正確；此檢查不是完整語意或交易績效驗證。`;
+  return `AI 個股進場覆核（資料日：${item.as_of_date}，非即時行情；不更動模型排名）\n${facts}\n${decision}${divergence}\n${notice}${blocked ? "\n以下僅為未通過覆核的AI原文，不是有效交易方案；未自動重試或增加API呼叫。" : ""}\n理由：${a.reasons.map(annotate).join("；")}\n風險與反證：${annotate(a.risk)}\n行動觀察：${annotate(a.action)}\n改變看法的條件：${annotate(a.invalidation)}${evidenceText}\n已檢查來源存在及可識別的期間、方向和數值矛盾，不代表AI推論正確；此檢查不是完整語意或交易績效驗證。`;
 }
 
 function summarizeAIEvidence(history) {
   if (!history.available) return {available:false,reason:history.reason};
   const bars=history.bars, institutions=new Map(history.institutions.map(r=>[r[0],r]));
-  const facts={}, price_changes={};
+  const facts={}, price_changes={}, institution_facts={};
   const add=text=>{facts["F"+(Object.keys(facts).length+1)]=text;};
   const fmt=n=>Number.isInteger(n)?String(n):n.toFixed(4).replace(/0+$/,"").replace(/\.$/,"");
   const net=n=>n===null?"缺資料（不是零）":n>0?`淨買超 ${fmt(n)} 股`:n<0?`淨賣超 ${fmt(-n)} 股`:"淨額 0 股（持平）";
@@ -653,6 +684,7 @@ function summarizeAIEvidence(history) {
     const rows=window.map(b=>institutions.get(b[0]));
     const sums=[1,2].map(i=>rows.every(r=>r && Number.isFinite(r[i]))?rows.reduce((s,r)=>s+r[i],0):null);
     const combined=sums.every(n=>n!==null)?sums[0]+sums[1]:null;
+    institution_facts['F'+(Object.keys(facts).length+1)]={sessions:count,start:window[0][0],end:last[0],foreign:sums[0],trust:sums[1],combined};
     add(`${count===1?"當日":"最近"+count+"根已提供日線期間"}（${range}）：外資${net(sums[0])}；投信${net(sums[1])}；兩者合計${net(combined)}。缺任一日不計合計`);
     const before=bars[bars.length-count-1];
     const change=before?((last[4]/before[4]-1)*100):null;
@@ -663,7 +695,7 @@ function summarizeAIEvidence(history) {
   const high=bars.reduce((a,b)=>b[2]>a[2]?b:a),low=bars.reduce((a,b)=>b[3]<a[3]?b:a);
   add(`完整${bars.length}根日線（${bars[0][0]} 至 ${last[0]}）：首末收盤變化 ${fmt((last[4]/bars[0][4]-1)*100)}%；最高 ${fmt(high[2])} 元（${high[0]}），最低 ${fmt(low[3])} 元（${low[0]}）。最高最低先後不等於完整趨勢`);
   add("所有價格未還原，除權息與拆併股未核實；期間按已提供日線取樣，未核實交易日缺漏；股數不可當成金額");
-  return {available:true,facts,price_changes};
+  return {available:true,facts,price_changes,institution_facts};
 }
 
 async function loadAIHistory(stockId, item) {
