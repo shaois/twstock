@@ -1,0 +1,24 @@
+V92 typed-evidence-1
+
+前端更新，不更動模型、機率排序、報酬或快取。
+
+類股輪動正式納入F10，使用該股rotation資料。既有回答refs陣列中的
+精確名稱「類股輪動」可轉成F10，其他名稱不推測。沒有類股資料時
+明示未知，不填零。非法引用指出項目索引及值，不再一律報最多12個。
+
+新提示要求reasons及risk填institution_claims，每項明定：
+sessions=1/5/20、actor=foreign/trust/combined、
+direction=buy/sell/flat/unknown、ref=對應法人F編號。
+程式逐欄核對完整數據、引用期間、主體與方向，並產生法人事實文字。
+分析文字只說意義；不得另行重抄買超／賣超／持平方向。
+同段五日與二十日相反、外資與投信相反均可合法呈現。
+缺值只能unknown，零才能flat；不替AI補造缺失證據。
+
+相容性：未回傳institution_claims的舊格式仍走原文字核對，因此
+不能保證所有Groq回答都符合新版；原始格式錯誤診斷仍保留。
+檢查不是完整自然語言推論驗證，也不是投資績效驗證。
+八組前端測試通過；沒有呼叫真實Groq API或代為部署。
+
+部署：依原路徑覆蓋app.js與index.html，測試檔可一併提交，重新
+發布Pages後重新執行AI分析。不需重算模型。前端版本：
+92-typed-evidence-1。不要為此刪除benchmark快取或舊模型檔。

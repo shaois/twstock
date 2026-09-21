@@ -470,7 +470,7 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
   };
   return `只分析目標股票本身是否有值得承擔風險的淨獲利機會，不與其他股票比較、不要求打敗0050，也不用排名決定買賣。
 目標股票模型資料：${JSON.stringify(target)}
-個股連續證據與模型引用（程式已計算）：${JSON.stringify(aiReviewEvidence(summarizeAIEvidence(history), state.predictions[stockId].prediction_20d))}
+個股連續證據與模型引用（程式已計算）：${JSON.stringify(aiReviewEvidence(summarizeAIEvidence(history), state.predictions[stockId].prediction_20d, state.predictions[stockId].rotation))}
 驗證資訊：${JSON.stringify(validation)}
 急漲提醒：${entryAlert(state.predictions[stockId].prediction_20d)}（非買賣訊號）
 
@@ -481,7 +481,7 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
 - 預期淨報酬是收縮估計，不是未來必然報酬。收縮是估計方法，不會降低股票實際波動或證明風險可控；不能列為支持進場的證據。新模型以平均報酬及平方誤差選收縮，舊快取則可能仍是中位數版本；以M3版本資訊為準。null表示未知。接近零代表此估計未提供明顯報酬優勢，不能說成確定無獲利機會。
 - 量價代理不是股價漲跌幅、成交量增減率或真實淨資金流，不能將五日代理-40%寫成五日股價跌40%或成交量減40%。價格變化只能引用期間收盤變化事實；代理負值不能直接說成法人賣超或資金撤出。
 - 法人是外資與投信五交易日合計，單位股，不是張或單日；正數淨買超，負數淨賣超，零為持平。不能推論每天連買、加速買超。null是缺資料，不是零或利空。
-- 法人方向以institution_facts的foreign（外資）、trust（投信）、combined（兩者合計）核對；各F編號有獨立sessions期間，不能拿當日代替五日或二十日。描述買賣超須指明主體並引用對應法人F編號，不能把外資方向套用到合計。方向、期間或來源矛盾會使整份覆核失效，不能繼續當成正式建議。
+- 法人方向以institution_facts的foreign（外資）、trust（投信）、combined（兩者合計）核對；各F編號有獨立sessions期間，不能拿當日代替五日或二十日。主體、方向與來源只填下方institution_claims，不能把外資方向套用到合計。方向、期間或來源矛盾會使整份覆核失效。
 - 法人尚未納入機率訓練只描述模型使用方式，不是看空理由；可作獨立輔助證據，不能自行增加勝率。
 - 原機率適用次日開盤進場、訊號後第20交易日收盤評估，並非你提出的新進出場方案勝率。
 - 連續證據已由程式彙總成F編號。不得自行再加總、換算成萬/億/張、把五日當成當日、或把負號讀成買超。每個數字以該F項日期、單位與方向為準；法人是淨買賣超，不是總買進或总賣出。
@@ -501,7 +501,8 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
 
 回答契約：
 只輸出JSON物件，不加程式碼圍欄。格式：
-{"decision":"可考慮買進或等待或避開","expected_net_return":原始最終數值或null,"net_profit_probability":原始最終數值或null,"reasons":[{"kind":"支持進場","text":"定性分析","refs":["F4","M2"]},{"kind":"反對進場","text":"定性分析","refs":["F2"]},{"kind":"決定結論","text":"說明何項證據占優勢","refs":["F2","F4"]}],"risk":{"text":"風險與矛盾","refs":["M1"]},"action":"未來觀察条件","invalidation":"推翻建議的條件"}
+{"decision":"可考慮買進或等待或避開","expected_net_return":原始最終數值或null,"net_profit_probability":原始最終數值或null,"reasons":[{"kind":"支持進場","text":"定性分析","refs":["M2"],"institution_claims":[]},{"kind":"反對進場","text":"定性分析","refs":["M1"],"institution_claims":[]},{"kind":"決定結論","text":"說明何項證據占優勢","refs":["M1","M2"],"institution_claims":[]}],"risk":{"text":"風險與矛盾","refs":["M1"],"institution_claims":[]},"action":"未來觀察条件","invalidation":"推翻建議的條件"}
+法人核對新契約：reasons各項及risk都填institution_claims陣列。不引用法人時為[]；若用法人作依據，每項寫成{"sessions":5,"actor":"combined","direction":"sell","ref":"F4"}。這只是格式例，方向必須查institution_facts，不可照抄。sessions僅1/5/20；actor僅foreign/trust/combined；direction僅buy/sell/flat/unknown，缺值必須unknown。ref須是對應期間法人來源且列入同項refs。text只解釋意義與權衡，不寫買超/賣超/持平，主體期間方向由程式按claims呈現及核對，不從整段文字猜測。類股資料引用F10（正式類股輪動來源），不能用類股代替個股報酬，也不能把類股相對報酬說成個股報酬。
 decision必須是可考慮買進、等待、避開其中一項。reasons固定為支持進場、反對進場、決定結論三項物件；risk也是物件，refs為存在的來源編號陣列，不把編號寫在text。範例編號不是指定答案，須自行選正確來源。無支持證據可用空refs並直說證據不足。程式負責呈現引用的原始日期、期間、欄位及數值，text只做定性分析，不重抄數字或換算單位。各文字欄位不可留空。
 數字及日期由程式來源卡呈現，分析文字不自行換算、不自行產生持倉比例或固定時間門檻。淨報酬已扣成本，不再以成本門檻重複扣除。不可宣稱保證獲利。
 AI任務是進場覆核，不是重複模型門檻。預期淨報酬正負都不是單一買進或等待規則。若模型不支持、但連續價量與法人證據支持進場，可以提出有明確證據的研究建議，必須在risk說明與模型的分歧、新方案未驗證，不能改寫原始機率，也不把負期望改成正期望。不以「少量試單」代替證據。沒有連續證據時，不能宣稱已完成趨勢覆核；給出資料限制與條件式意見。
@@ -527,15 +528,30 @@ function validateAIAdvice(content, forecast, finishReason) {
       if (!r || typeof r!=="object" || Array.isArray(r)) {errors.push(`${path}：須為物件`);return;}
       const keys=kind ? ["kind","refs","text"] : ["refs","text"];
       for(const k of keys) if(!Object.hasOwn(r,k)) errors.push(`${path}.${k}：缺少欄位`);
-      for(const k of Object.keys(r)) if(!keys.includes(k)) errors.push(`${path}.${k}：非契約欄位`);
+      for(const k of Object.keys(r)) if(!keys.includes(k) && k!=='institution_claims') errors.push(`${path}.${k}：非契約欄位`);
       if(kind && typeof r.kind==='string') r.kind=r.kind.trim().replace(/[：:]$/, '');
       if(kind && r.kind!==kind) errors.push(`${path}.kind：須為${kind}`);
       if(typeof r.text!=='string' || !r.text.trim()) errors.push(`${path}.text：須為非空文字`);
       // Only normalize explicit IDs; never invent missing refs or extract guesses.
       if(typeof r.refs==='string' && /^\s*\[?[FMfm]\d+\]?\s*$/.test(r.refs)) r.refs=[r.refs];
-      if(Array.isArray(r.refs)) r.refs=r.refs.map(id=>typeof id==='string'?id.trim().replace(/^\[([FMfm]\d+)\]$/, '$1').toUpperCase():id);
+      if(Array.isArray(r.refs)) r.refs=r.refs.map(id=>typeof id==='string'?(id.trim()==='類股輪動'?'F10':id.trim().replace(/^\[([FMfm]\d+)\]$/, '$1').toUpperCase()):id);
       if(!Array.isArray(r.refs)) errors.push(`${path}.refs：須為來源編號陣列`);
-      else if(r.refs.length>12 || r.refs.some(id=>typeof id!=='string' || !/^[FM]\d+$/.test(id))) errors.push(`${path}.refs：最多12個F/M來源編號`);
+      else {
+        if(r.refs.length>12) errors.push(`${path}.refs：共${r.refs.length}個，最多12個來源編號`);
+        r.refs.forEach((id,i)=>{if(typeof id!=='string' || !/^[FM]\d+$/.test(id)) errors.push(`${path}.refs[${i}] = ${JSON.stringify(id)}：不是合法F/M來源編號`);});
+      }
+      if(Object.hasOwn(r,'institution_claims')) {
+        if(!Array.isArray(r.institution_claims) || r.institution_claims.length>9) errors.push(`${path}.institution_claims：須為最多9項陣列`);
+        else r.institution_claims.forEach((claim,i)=>{
+          const cp=`${path}.institution_claims[${i}]`;
+          if(!claim || typeof claim!=='object' || Array.isArray(claim)) {errors.push(`${cp}：須為物件`);return;}
+          if(Object.keys(claim).sort().join(',')!=='actor,direction,ref,sessions') errors.push(`${cp}：欄位須為actor,direction,ref,sessions`);
+          if(![1,5,20].includes(claim.sessions)) errors.push(`${cp}.sessions = ${JSON.stringify(claim.sessions)}：只接受1、5、20`);
+          if(!['foreign','trust','combined'].includes(claim.actor)) errors.push(`${cp}.actor = ${JSON.stringify(claim.actor)}：非法主體`);
+          if(!['buy','sell','flat','unknown'].includes(claim.direction)) errors.push(`${cp}.direction = ${JSON.stringify(claim.direction)}：非法方向`);
+          if(typeof claim.ref!=='string' || !/^F\d+$/.test(claim.ref)) errors.push(`${cp}.ref = ${JSON.stringify(claim.ref)}：須為F來源編號`);
+        });
+      }
     };
     if(advice.reasons.length!==3) errors.push('reasons：須恰有3項');
     advice.reasons.forEach((r,i)=>normalize(r,labels[i] || '未知類型',`reasons[${i}]`));
@@ -544,8 +560,8 @@ function validateAIAdvice(content, forecast, finishReason) {
     }
     normalize(advice.risk,null,'risk');
     if(errors.length) return reject(`結構化證據欄位不完整：${errors.join('；')}`);
-    structuredReferences = [...advice.reasons, advice.risk].map(r=>({text:r.text,refs:[...r.refs]}));
-    const display = r => `${r.kind ? r.kind+"：" : ""}${r.text}${r.refs.map(id=>`[${id}]`).join("")}`;
+    structuredReferences = [...advice.reasons, advice.risk].map(r=>({text:r.text,refs:[...r.refs],claims:r.institution_claims}));
+    const display = r => `${r.kind ? r.kind+"：" : ""}${r.text}${r.refs.map(id=>`[${id}]`).join("")}${(r.institution_claims||[]).map(c=>`（法人核對：${c.sessions}日${{foreign:'外資',trust:'投信',combined:'外資與投信合計'}[c.actor]}${{buy:'淨買超',sell:'淨賣超',flat:'持平',unknown:'資料不足'}[c.direction]}[${c.ref}]）`).join('')}`;
     advice.reasons = advice.reasons.map(display);
     advice.risk = display(advice.risk);
   }
@@ -595,8 +611,9 @@ function aiEvidenceRefs(text) {
   return [...new Set(refs)];
 }
 
-function aiReviewEvidence(evidence, forecast = {}) {
+function aiReviewEvidence(evidence, forecast = {}, sector = {}) {
   return {...evidence, facts:{...(evidence?.facts || {}),
+    F10:`類股輪動（同一快取截面觀察，非模型報酬預測）：產業 ${sector?.industry || '未知'}；狀態 ${sector?.state || '未知'}；成交占比變化 ${aiNumber(sector?.share_change_pp) ?? '未知'} 個百分點；二十日相對報酬 ${percent(sector?.relative_return_20d)}；上漲廣度 ${percent(sector?.positive_breadth_pct)}；分類樣本數 ${aiNumber(sector?.members) ?? '未知'}。缺值不能當零或轉強；類股不是個股進場證據。`,
     M1:`模型預期20日淨報酬 ${percent(forecast.expected_net_return)}，已扣成本；不是歷史股價漲跌幅${forecast.return_shrinkage === 1 ? "；100%收縮：全域共同基準，沒有個股報酬區辨力，不得當成該股買進優勢" : ""}`,
     M2:`模型淨獲利估計機率 ${percent(forecast.net_profit_probability)}；不是已驗證的進場勝率`,
     M3:`報酬全域收縮比例 ${aiNumber(forecast.return_shrinkage) ?? "未知"}；估計方法 ${forecast.return_estimator || "舊版或未知，非新版平均報酬估計"}；不是風險降低、買進證據或買賣門檻`,
@@ -636,12 +653,33 @@ function checkAIInstitutionClaims(text, evidence) {
 }
 
 function renderAIAdvice(content, item, finishReason, evidence = null) {
-  evidence = aiReviewEvidence(evidence, item.prediction_20d || {});
+  evidence = aiReviewEvidence(evidence, item.prediction_20d || {}, item.rotation);
   const result = validateAIAdvice(content, item.prediction_20d || {}, finishReason);
   const facts = `模型數據：預期二十日淨報酬 ${percent(item.prediction_20d?.expected_net_return)}（已扣成本）；淨獲利估計機率 ${percent(item.prediction_20d?.net_profit_probability)}`;
   if (!result.ok) return `AI 回答未通過一致性檢查（不是買進或不買的判斷）\n原因：${result.reason}\n${facts}\n本次回答未作為有效建議顯示。未自動重試或增加 API 呼叫。\n原始AI回答（僅供診斷，非有效建議；純文字顯示）：\n${typeof content==='string'?content.slice(0,24000):String(content)}${typeof content==='string' && content.length>24000?'\n（顯示上限24000字，後段已截斷）':''}`;
   const a = result.advice;
-  for (const text of [...a.reasons,a.risk]) result.warnings.push(...checkAIInstitutionClaims(text,evidence));
+  for (const [i,text] of [...a.reasons,a.risk].entries()) {
+    const r=result.structuredReferences?.[i];
+    if(r && r.claims!==undefined) {
+      // Typed facts are checked exactly. Free text must not make a second,
+      // possibly contradictory directional claim beside the canonical statement.
+      if(/買超|賣超|持平/.test(r.text)) result.warnings.push({sentence:r.text,reason:'法人方向請只填institution_claims，文字不得重述方向'});
+      if(/外資|投信|法人/.test(r.text) && !r.claims.length) result.warnings.push({sentence:r.text,reason:'法人分析缺少institution_claims明確證據'});
+      for(const [j,c] of r.claims.entries()) {
+        const f=evidence.institution_facts?.[c.ref];
+        let issue='';
+        if(!r.refs.includes(c.ref)) issue='ref未列入該項refs';
+        else if(!f) issue='引用不是可核對法人來源';
+        else if(f.sessions!==c.sessions) issue=`期間矛盾：來源為${f.sessions}日`;
+        else {
+          const n=f[c.actor];
+          const direction=!Number.isFinite(n)?'unknown':n>0?'buy':n<0?'sell':'flat';
+          if(c.direction!==direction) issue=`方向矛盾：來源為${direction}`;
+        }
+        if(issue) result.warnings.push({sentence:text,reason:`institution_claims[${j}] ${c.ref}/${c.actor}/${c.sessions}：${issue}`});
+      }
+    } else result.warnings.push(...checkAIInstitutionClaims(text,evidence));
+  }
   const estimatorNotice = item.prediction_20d?.return_estimator === "arithmetic_mean_shrinkage_period_balanced_MSE"
     ? "報酬模型：平均報酬／MSE版，尚待前瞻驗證。" + (item.prediction_20d?.return_shrinkage === 1 ? "\n報酬100%收縮：全域共同基準，不是該股獨有報酬優勢；機率與進場覆核仍須分別判讀。" : "")
     : "報酬模型：舊版或未標記；更新前端不會重算模型，需執行每日快取更新。";
