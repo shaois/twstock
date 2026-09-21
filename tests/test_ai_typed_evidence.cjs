@@ -18,10 +18,26 @@ assert.match(render(withClaim({...claim,direction:'buy'})),/方向矛盾/);
 assert.match(render(withClaim({...claim,sessions:20})),/期間矛盾/);
 assert.match(render(withClaim({...claim,actor:'trust'})),/方向矛盾/);
 assert.match(render(withClaim({...claim,ref:'M1'})),/institution_claims\[0\].ref/);
-assert.match(render(withClaim({...claim,ref:'F6'})),/ref未列入/);
+assert.match(render(withClaim({...claim,ref:'F6'})),/期間矛盾/);
 assert.match(render(withClaim({...claim,sessions:'5'})),/sessions/);
 assert.match(render({...a,risk:{...a.risk,refs:['不存在的類股來源']}}),/risk.refs\[0\] = "不存在的類股來源"/);
-assert.match(render({...a,reasons:[a.reasons[0],{...a.reasons[1],text:'外資買超'},a.reasons[2]]}),/文字不得重述方向/);
+assert.match(render({...a,reasons:[a.reasons[0],{...a.reasons[1],text:'外資買超'},a.reasons[2]]}),/法人買賣方向.*矛盾/);
+// Actual reported failure shapes: refs only contain model citations while
+// claims explicitly reference F4/F6; consistent repeated prose is permitted.
+const repeated={...a,reasons:[a.reasons[0],{...a.reasons[1],text:'法人五日合計賣超，構成反證',refs:['M4']},a.reasons[2]],
+ risk:{text:'短期法人合計賣超形成壓力',refs:['M1','M4'],institution_claims:[claim]}};
+for(const decision of ['等待','可考慮買進','避開']) {
+ const out=render({...repeated,decision});
+ assert.match(out,new RegExp('AI建議：'+decision));
+ assert.doesNotMatch(out,/覆核未通過|ref未列入|文字不得重述/);
+}
+assert.match(render({...a,risk:{text:'兩個期間的法人方向不同',refs:[],institution_claims:[claim,{sessions:20,actor:'combined',direction:'buy',ref:'F6'}]}}),/AI建議：等待/);
+const ambiguous={text:'法人賣超帶來壓力',refs:[],institution_claims:[claim,{sessions:20,actor:'combined',direction:'buy',ref:'F6'}]};
+assert.match(render({...a,risk:ambiguous}),/需人工核對/);
+assert.match(render({...a,risk:ambiguous}),/AI建議：等待/);
+assert.match(render({...a,risk:{...repeated.risk,text:'法人五日合計買超'}}),/覆核未通過/);
+assert.match(render({...a,risk:{...repeated.risk,text:'量價代理顯示資金流出'}}),/覆核未通過/);
+assert.match(render(withClaim({...claim,ref:'F999'})),/引用不是可核對法人來源/);
 assert.match(render({...a,reasons:[a.reasons[0],{...a.reasons[1],institution_claims:[]},a.reasons[2]]}),/法人分析缺少/);
 c.e.institution_facts.F4.combined=null;
 const withoutOther={...withClaim({...claim,direction:'unknown'}),reasons:[a.reasons[0],{...a.reasons[1],institution_claims:[{...claim,direction:'unknown'}]}, {kind:'決定結論',text:'資料不足',refs:['M1'],institution_claims:[]}]};
