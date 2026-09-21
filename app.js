@@ -257,7 +257,7 @@ function candidateRowHtml(row, index) {
     <td class="td-mono">${percent(row.item.rotation?.share_change_pp)} 個百分點</td>
     <td class="td-mono" title="${escapeHtml(row.item.institutional?.status || "尚無法人資料")}">${percent(row.item.institutional?.net_volume_pct)}</td>
     <td class="td-mono">${row.item.rank_change == null ? "首次／無可比紀錄" : row.item.rank_change > 0 ? "↑"+row.item.rank_change : row.item.rank_change < 0 ? "↓"+Math.abs(row.item.rank_change) : "持平"}</td>
-    <td class="td-mono" style="color:${signedClass(forecast.expected_net_return)}">${percent(forecast.expected_net_return)}</td>
+    <td class="td-mono" style="color:${signedClass(forecast.expected_net_return)}">${percent(forecast.expected_net_return)}${forecast.return_shrinkage === 1 ? "<br>全域共同基準" : ""}</td>
     <td class="td-mono" style="color:${signedClass(forecast.expected_alpha)}">${percent(forecast.expected_alpha)}</td>
     <td class="td-mono">${percent(forecast.net_profit_probability ?? forecast.up_probability, 1)}</td>
     <td class="td-mono">${percent(forecast.outperform_probability, 1)}</td>
@@ -382,7 +382,7 @@ function showStock(stockId) {
         ${metric("外資投信資料", item.institutional?.status || "缺資料")}
         ${metric("外資投信淨買／5日量", percent(item.institutional?.net_volume_pct))}
         ${metric("訊號日參考收盤價", money(item.current_price))}
-        ${metric("預期20日淨報酬", percent(f.expected_net_return))}
+        ${metric(f.return_shrinkage === 1 ? "20日淨報酬（全域共同基準）" : "預期20日淨報酬", percent(f.expected_net_return))}
         ${metric("預期淨超額（對0050）", percent(f.expected_alpha))}
         ${metric("淨獲利估計機率", percent(f.net_profit_probability, 1))}
         ${metric("超越0050估計機率", percent(f.outperform_probability, 1))}
@@ -428,6 +428,7 @@ function aiStockFacts(stockId) {
     參考收盤價_元_非即時: aiNumber(item.current_price),
     最終模型資料: {
       報酬全域收縮比例: aiNumber(f.return_shrinkage),
+      報酬適用範圍: f.return_shrinkage === 1 ? "全域共同基準，沒有個股報酬區辨力，不得作為個股買進優勢" : "個股條件收縮估計，非保證",
       預期20日淨報酬_pct_已扣成本: aiNumber(f.expected_net_return),
       淨獲利機率_pct: aiNumber(f.net_profit_probability),
       淨報酬25分位_pct: aiNumber(f.range_low_net_return),
@@ -503,7 +504,7 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
 decision必須是可考慮買進、等待、避開其中一項。reasons固定為支持進場、反對進場、決定結論三項物件；risk也是物件，refs為存在的來源編號陣列，不把編號寫在text。範例編號不是指定答案，須自行選正確來源。無支持證據可用空refs並直說證據不足。程式負責呈現引用的原始日期、期間、欄位及數值，text只做定性分析，不重抄數字或換算單位。各文字欄位不可留空。
 數字及日期由程式來源卡呈現，分析文字不自行換算、不自行產生持倉比例或固定時間門檻。淨報酬已扣成本，不再以成本門檻重複扣除。不可宣稱保證獲利。
 AI任務是進場覆核，不是重複模型門檻。預期淨報酬正負都不是單一買進或等待規則。若模型不支持、但連續價量與法人證據支持進場，可以提出有明確證據的研究建議，必須在risk說明與模型的分歧、新方案未驗證，不能改寫原始機率，也不把負期望改成正期望。不以「少量試單」代替證據。沒有連續證據時，不能宣稱已完成趨勢覆核；給出資料限制與條件式意見。
-正的預期淨報酬也不是自動買進：須說明個股資料提供的支持、風險及反證。量價代理不得寫成實際淨資金流入或流出。`;
+正的預期淨報酬也不是自動買進：須說明個股資料提供的支持、風險及反證。收縮比例為1時，報酬只是全域共同基準，不能列為該股獨有買進優勢，也不因此強制等待。量價代理不得寫成實際淨資金流入或流出。`;
 }
 
 // Output validation is a consistency check, not a profitability backtest.
@@ -558,7 +559,7 @@ function validateAIAdvice(content, forecast, finishReason) {
     }
     if (/淨報酬/.test(sentence) && /再扣|扣除成本後|成本門檻|接近成本/.test(sentence)) reasons.push("淨報酬已扣成本，這句可能重複計算成本");
     if (/保證獲利|穩賺|必賺|無風險/.test(sentence) && !/不保證|不能保證|並非|不是|不代表/.test(sentence)) reasons.push("不當獲利保證，不應採信");
-    if (/(?:量價|代理).{0,35}(?:淨資金流入|淨資金流出|資金淨流入|資金淨流出)/.test(sentence) && !/不代表|不是|並非|不能/.test(sentence)) reasons.push("量價代理不能直接視為實際淨資金流");
+    if (/(?:量價|代理).{0,35}(?:資金(?:淨)?流[入出]|淨資金流[入出]|資金撤出)/.test(sentence) && !/不代表|不是|並非|不能/.test(sentence)) reasons.push("量價代理不能直接視為實際淨資金流");
     if (reasons.length) warnings.push({sentence, reason: reasons.join("；")});
   }
   return {ok: true, advice, warnings, decisionIssue, structuredReferences};
@@ -577,7 +578,7 @@ function aiEvidenceRefs(text) {
 
 function aiReviewEvidence(evidence, forecast = {}) {
   return {...evidence, facts:{...(evidence?.facts || {}),
-    M1:`模型預期20日淨報酬 ${percent(forecast.expected_net_return)}，已扣成本；不是歷史股價漲跌幅`,
+    M1:`模型預期20日淨報酬 ${percent(forecast.expected_net_return)}，已扣成本；不是歷史股價漲跌幅${forecast.return_shrinkage === 1 ? "；100%收縮：全域共同基準，沒有個股報酬區辨力，不得當成該股買進優勢" : ""}`,
     M2:`模型淨獲利估計機率 ${percent(forecast.net_profit_probability)}；不是已驗證的進場勝率`,
     M3:`報酬全域收縮比例 ${aiNumber(forecast.return_shrinkage) ?? "未知"}；估計方法 ${forecast.return_estimator || "舊版或未知，非新版平均報酬估計"}；不是風險降低、買進證據或買賣門檻`,
     M4:`五日量價代理 ${percent(forecast.capital_flow_5d_pct)}；二十日量價代理 ${percent(forecast.capital_flow_20d_pct)}；不是價格漲跌幅、成交量增減率或實際淨資金流`
@@ -591,7 +592,7 @@ function renderAIAdvice(content, item, finishReason, evidence = null) {
   if (!result.ok) return `AI 回答未通過一致性檢查（不是買進或不買的判斷）\n原因：${result.reason}\n${facts}\n本次回答未作為有效建議顯示。可重新分析；未自動重試或增加 API 呼叫。`;
   const a = result.advice;
   const estimatorNotice = item.prediction_20d?.return_estimator === "arithmetic_mean_shrinkage_period_balanced_MSE"
-    ? "報酬模型：平均報酬／MSE版，尚待前瞻驗證。"
+    ? "報酬模型：平均報酬／MSE版，尚待前瞻驗證。" + (item.prediction_20d?.return_shrinkage === 1 ? "\n報酬100%收縮：全域共同基準，不是該股獨有報酬優勢；機率與進場覆核仍須分別判讀。" : "")
     : "報酬模型：舊版或未標記；更新前端不會重算模型，需執行每日快取更新。";
   if (result.structuredReferences) {
     for (const r of result.structuredReferences) {

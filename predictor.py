@@ -90,6 +90,8 @@ def _normalize_price_rows(rows):
             "volume": max(0.0, _number(row.get("Trading_Volume"))),
             "turnover": max(0.0, _number(row.get("Trading_money"))),
         }
+        if "_session_index" in row:
+            by_date[date]["_session_index"] = row["_session_index"]
     normalized = [by_date[date] for date in sorted(by_date)]
 
     # FinMind close prices are not adjusted for every split/capital change.
@@ -150,6 +152,7 @@ def _architecture_contract():
         "ranking_scope": "all_available_stocks",
         "ranking_refresh": "daily_after_completed_market_data",
         "ranking_primary_key": "net_profit_probability_20d",
+        "historical_sampling": "persisted_benchmark_session_index_mod_20_v1",
         "holding_period_trading_days": STABLE_HOLD_DAYS,
         "entry_data": "completed_daily_bars_only",
         "intraday_used_for_ranking": False,
@@ -464,7 +467,10 @@ def _prepare_samples(price_db, snapshot_date=None, benchmark_rows=None):
     snapshot_date = snapshot_date or dates[-1]
     # Calendar anchor is independent of future stock coverage. No sliding
     # dates[coverage][::20] grid that may make overlapping evaluation periods.
-    historical_dates = set(dates[::20])
+    # Persisted benchmark ordinals survive rolling-cache truncation. Legacy
+    # inputs retain their original phase; the updater stamps them BEFORE trim.
+    historical_dates = {r["date"] for i, r in enumerate(benchmark)
+                        if r.get("_session_index", i) % 20 == 0}
     samples, current = [], {}
     for sid, raw in sorted(price_db.items()):
         rows = _normalize_price_rows(raw)
@@ -585,6 +591,7 @@ def _cohort_prediction(cohort, current_price, factor_percentile, validation=None
         "local_alpha": local_alpha, "prior_alpha": prior_alpha,
         "return_shrinkage": shrink_return, "alpha_shrinkage": shrink_alpha,
         "return_estimator": "arithmetic_mean_shrinkage_period_balanced_MSE",
+        "return_scope": "global_prior_only" if shrink_return == 1 else "stock_conditioned_shrunk",
         "range_low_return": round(q25, 2), "range_high_return": round(q75, 2),
         "downside_return": round(q10, 2),
         "range_low_net_return": round(q25 - ROUND_TRIP_COST_PCT, 2),

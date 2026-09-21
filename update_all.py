@@ -169,6 +169,42 @@ def merge_price_rows(existing_rows: Any, new_rows: Any) -> list[dict[str, Any]]:
     return [merged[key] for key in sorted(merged)][-PRICE_HISTORY_LIMIT:]
 
 
+def merge_benchmark_rows(existing_rows, new_rows):
+    """Keep immutable session ordinals, including across the first legacy trim.
+
+    Date corrections inside an anchored calendar require an explicit research
+    rebuild, not silently rephasing every training observation.
+    """
+    existing = {str(r["date"]): dict(r) for r in existing_rows or []
+                if isinstance(r, dict) and r.get("date")}
+    dates = sorted(existing)
+    offsets = set()
+    for i, d in enumerate(dates):
+        if "_session_index" in existing[d]:
+            ordinal = existing[d]["_session_index"]
+            if type(ordinal) is not int:
+                raise ValueError("Invalid benchmark session ordinal")
+            offsets.add(ordinal - i)
+    if len(offsets) > 1:
+        raise ValueError("Benchmark calendar changed; explicit rebuild required")
+    offset = next(iter(offsets), 0)
+    for i, d in enumerate(dates):
+        existing[d]["_session_index"] = offset + i
+    merged = {d: dict(r) for d, r in existing.items()}
+    for row in new_rows or []:
+        if isinstance(row, dict) and row.get("date"):
+            d = str(row["date"])
+            merged[d] = {k: v for k, v in row.items() if k != "_session_index"}
+    ordered = sorted(merged)
+    offsets = {existing[d]["_session_index"] - i
+               for i, d in enumerate(ordered) if d in existing}
+    if len(offsets) > 1:
+        raise ValueError("Inserted benchmark session changes calendar; explicit rebuild required")
+    offset = next(iter(offsets), 0)
+    return [{**merged[d], "_session_index": offset + i}
+            for i, d in enumerate(ordered)][-PRICE_HISTORY_LIMIT:]
+
+
 async def fetch_price_rows(
     client: httpx.AsyncClient,
     stock_id: str,
@@ -383,11 +419,12 @@ async def main() -> None:
         benchmark_rows = (
             benchmark_payload.get("data", []) if isinstance(benchmark_payload, dict) else []
         )
+        benchmark_rows = merge_benchmark_rows(benchmark_rows, [])
         try:
             fetched_benchmark = await fetch_price_rows(
                 client, BENCHMARK_ID, latest_start_date(benchmark_rows), token
             )
-            benchmark_rows = merge_price_rows(benchmark_rows, mark_fetched_rows(fetched_benchmark, taipei_now()))
+            benchmark_rows = merge_benchmark_rows(benchmark_rows, mark_fetched_rows(fetched_benchmark, taipei_now()))
         except FinMindQuotaError:
             if not benchmark_rows:
                 save_json(PROGRESS_PATH, {"date": today_str, "index": len(stock_ids)})
