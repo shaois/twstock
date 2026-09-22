@@ -217,11 +217,21 @@ function stockName(stockId) {
   return state.universe[stockId]?.name || stockId;
 }
 
+function observationRankingActive() {
+  return Boolean(state.model.observation_ranking && !state.showDailyRanking);
+}
+function displayRank(item) {
+  return observationRankingActive() ? item.observation_rank_20d ?? item.probability_rank_20d : item.probability_rank_20d;
+}
+function rankingChange(item) {
+  const v=observationRankingActive()?item.observation_rank_change:item.rank_change;
+  return v == null ? '首次／無可比紀錄' : v>0?'↑'+v:v<0?'↓'+Math.abs(v):'持平';
+}
 function modelRows() {
   return Object.entries(state.predictions)
     .filter(([, item]) => item?.available && item?.prediction_20d)
     .map(([stockId, item]) => ({ stockId, item }))
-    .sort((a, b) => number(a.item.probability_rank_20d, 9999) - number(b.item.probability_rank_20d, 9999));
+    .sort((a, b) => number(displayRank(a.item), 9999) - number(displayRank(b.item), 9999));
 }
 
 function renderStockList() {
@@ -235,7 +245,7 @@ function renderStockList() {
   byId("stockList").innerHTML = rows.map(({ stockId, item }) => `
     <button class="stock-item ${stockId === state.currentStockId ? "active" : ""}" onclick="showStock('${escapeHtml(stockId)}')">
       <span><span class="s-id">${escapeHtml(stockId)}</span><span class="s-name">${escapeHtml(stockName(stockId))}</span></span>
-      <span style="text-align:right"><span class="model-badge">20日</span><span class="s-name">#${number(item.probability_rank_20d, "--")}</span></span>
+      <span style="text-align:right"><span class="model-badge">20日</span><span class="s-name">#${number(displayRank(item), "--")}</span></span>
     </button>`).join("");
 }
 
@@ -250,13 +260,13 @@ function candidateRowHtml(row, index) {
   const waiting = forecast.entry_status === "wait_pullback";
   const status = entryAlert(forecast);
   return `<tr onclick="showStock('${escapeHtml(row.stockId)}')">
-    <td class="td-mono">#${index}</td>
+    <td class="td-mono">#${index}${row.item.observation_rank_20d ? `<br>當日 #${row.item.probability_rank_20d}<br>觀察分數 ${number(row.item.observation_score_20d).toFixed(3)}（${row.item.observation_count}/5日）` : ''}</td>
     <td><span class="s-id">${escapeHtml(row.stockId)}</span> ${escapeHtml(stockName(row.stockId))}</td>
     <td style="color:${waiting ? "var(--warn)" : "var(--muted)"}">${status}</td>
     <td>${escapeHtml(row.item.rotation?.industry || "分類未知")}<br>${escapeHtml(row.item.rotation?.state || "尚無分類資料")}</td>
     <td class="td-mono">${percent(row.item.rotation?.share_change_pp)} 個百分點</td>
     <td class="td-mono" title="${escapeHtml(row.item.institutional?.status || "尚無法人資料")}">${percent(row.item.institutional?.net_volume_pct)}</td>
-    <td class="td-mono">${row.item.rank_change == null ? "首次／無可比紀錄" : row.item.rank_change > 0 ? "↑"+row.item.rank_change : row.item.rank_change < 0 ? "↓"+Math.abs(row.item.rank_change) : "持平"}</td>
+    <td class="td-mono">${rankingChange(row.item)}</td>
     <td class="td-mono" style="color:${signedClass(forecast.expected_net_return)}">${percent(forecast.expected_net_return)}${forecast.return_shrinkage === 1 ? "<br>全域共同基準" : ""}</td>
     <td class="td-mono" style="color:${signedClass(forecast.expected_alpha)}">${percent(forecast.expected_alpha)}</td>
     <td class="td-mono">${percent(forecast.net_profit_probability ?? forecast.up_probability, 1)}</td>
@@ -292,10 +302,11 @@ function show20dCandidates() {
 
   byId("screenerResult").innerHTML = `
     <div class="screener-panel" style="border-color:var(--accent)">
-      <div class="panel-title">20 日獲利機率動態排行榜</div>
+      <div class="panel-title">${observationRankingActive()?'20 日研究觀察榜（最多5資料日平均）':'20 日獲利機率動態排行榜'}</div>
+      ${state.model.observation_ranking ? `<button onclick="state.showDailyRanking=!state.showDailyRanking;show20dCandidates()">切換${observationRankingActive()?'當日原始機率榜':'5資料日觀察榜'}</button><p>觀察分數是最近最多5個已記錄資料日機率的算術平均，不是新的校準機率。歷史不足會顯示實際日數；不鎖持股，也不保證名次不變。當日預測與AI輸入保持不變。此排序尚未驗證績效，以下原模型重播不代表此榜績效。<br>前20名與上次重疊：${state.model.observation_ranking.top20_overlap ?? '尚無可比紀錄'}／${state.model.observation_ranking.previous_top20_count}。</p>` : '<p>尚未產生觀察榜快取，暫顯示當日原始排名。</p>'}
       <div style="color:var(--muted);font-size:12px;line-height:1.8;margin-bottom:12px">
         資料日 ${escapeHtml(state.model.latest_date || "--")}；共排序 ${rows.length} 支。20 日是預測期限，不再鎖定持有名單。<br>
-        排序方式：全部股票依20日淨獲利估計機率動態排序。急漲提醒獨立顯示，不改變排名。<br>
+        排序方式：${observationRankingActive()?'依最多5資料日觀察分數排序；同分依股票代碼':'依當日20日淨獲利估計機率完整精度排序'}。急漲提醒獨立顯示，不改變排名。<br>
         急漲條件：基準日漲幅≥7%，或漲幅≥5%且收盤位於當日高低價區間最上方5%。未觸發不代表適合買進；本提醒不計算回測價位或進場時機。<br>
         200支股票池量價狀態：${escapeHtml(flow.status || "尚無判斷")}；正資金流廣度 ${number(flow.positive_5d_pct).toFixed(1)}%；5日資金流中位數 ${percent(flow.median_5d_pct, 1)}。<br>
         量價與類股輪動直接參與歷史相似樣本權重，再依20日淨獲利估計機率排序。<br>分類可形成族群的股票 ${number(state.model.sector_coverage)} 支；成交熱度不是淨資金流入，法人資料僅展示與累積，尚未納入機率。<br>
@@ -376,7 +387,8 @@ function showStock(stockId) {
     <div class="panel">
       <div class="panel-title">20日研究估計・前瞻驗證尚待累積</div>
       <div class="detail-grid">
-        <div>${metric("機率排名", "#" + item.probability_rank_20d)}
+        <div>${metric(observationRankingActive()?"觀察榜排名":"當日機率排名", "#" + displayRank(item))}
+        ${item.observation_rank_20d ? metric("當日原始名次／觀察分數", `#${item.probability_rank_20d}／${number(item.observation_score_20d).toFixed(3)}（${item.observation_count}/5資料日）`) : ''}
         ${metric("類股輪動", (item.rotation?.industry || "分類未知")+"／"+(item.rotation?.state || "樣本不足"))}
         ${metric("類股成交占比變化", percent(item.rotation?.share_change_pp)+" 個百分點")}
         ${metric("外資投信資料", item.institutional?.status || "缺資料")}

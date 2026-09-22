@@ -582,8 +582,10 @@ def _cohort_prediction(cohort, current_price, factor_percentile, validation=None
         "expected_net_after_buffer": round(expected - ROUND_TRIP_COST_PCT - SAFETY_BUFFER_PCT, 2),
         "expected_alpha": round(alpha, 2),
         "net_profit_probability": round(profit, 1),
+        "net_profit_probability_full": profit,
         "up_probability": round(profit, 1),
         "outperform_probability": round(outperform, 1),
+        "outperform_probability_full": outperform,
         "probability_status": adaptation["status"],
         "raw_net_profit_probability": raw_profit,
         "raw_outperform_probability": raw_outperform,
@@ -608,7 +610,8 @@ def _cohort_prediction(cohort, current_price, factor_percentile, validation=None
 
 def _rank_key(item):
     f = item["prediction_20d"]
-    return (-f["net_profit_probability"], -f["outperform_probability"],
+    return (-f.get("net_profit_probability_full", f["net_profit_probability"]),
+            -f.get("outperform_probability_full", f["outperform_probability"]),
             -item["capital_flow_score"], -f["expected_alpha"],
             -f["expected_return"], -item["factor_score_20d"], item["stock_id"])
 
@@ -931,7 +934,70 @@ def apply_dynamic_probability_ranking(predictions, existing_log, stock_universe=
     model["ranked_20d"] = [r["stock_id"] for r in items]
     model["ranked_20d_count"] = len(items)
     model["selected_20d"] = []
+    apply_observation_ranking(predictions, existing_log)
     return predictions
+
+
+OBSERVATION_RANK_VERSION = "probability_mean_5_observations_v1"
+
+
+def apply_observation_ranking(predictions, existing_log):
+    """Separate display score; never overwrite forecasts or replay ranks.
+
+    At most five published data-date snapshots, current included. Old model
+    versions are not backfilled; a missing stock breaks its history chain.
+    """
+    model = predictions.get("model", {})
+    current_date = model.get("latest_date")
+    if not current_date:
+        return
+    day = datetime.fromisoformat(current_date)
+    history = []
+    for d, snapshot in reversed(sorted(_normalise_prediction_log(existing_log).items())):
+        if d >= current_date:
+            continue
+        if ((day-datetime.fromisoformat(d)).days > 14
+                or snapshot.get("observation_rank_version") != OBSERVATION_RANK_VERSION
+                or snapshot.get("model_name") != MODEL_NAME
+                or snapshot.get("experiment_id") != model.get("experiment_id")
+                or snapshot.get("universe_fingerprint") != model.get("universe_fingerprint")):
+            break
+        history.append((d, {r["stock_id"]: r for r in snapshot.get("20d", [])}))
+        if len(history) == 4:
+            break
+    ranked = []
+    for sid, item in predictions.get("data", {}).items():
+        if not item.get("available") or not item.get("prediction_20d"):
+            continue
+        f = item["prediction_20d"]
+        current = f.get("net_profit_probability_full", f["net_profit_probability"])
+        values, dates = [current], [current_date]
+        for d, records in history:
+            value = records.get(sid, {}).get("observation_input_probability")
+            if not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 100:
+                break
+            values.append(value)
+            dates.append(d)
+        item["observation_score_20d"] = statistics.mean(values)
+        item["observation_dates"] = dates
+        item["observation_count"] = len(values)
+        ranked.append((sid, item))
+    # Stable stock-id tie-break avoids reintroducing short-term proxy churn.
+    ranked.sort(key=lambda r: (-r[1]["observation_score_20d"], r[0]))
+    previous = history[0][1] if history else {}
+    for rank, (sid, item) in enumerate(ranked, 1):
+        item["observation_rank_20d"] = rank
+        old = previous.get(sid, {}).get("observation_rank_20d")
+        item["observation_rank_change"] = old-rank if isinstance(old, int) else None
+    top = [sid for sid, _ in ranked[:20]]
+    old_top = [sid for sid, r in previous.items() if (r.get("observation_rank_20d") or 9999) <= 20]
+    model["observation_ranking"] = {
+        "version": OBSERVATION_RANK_VERSION, "max_observations": 5,
+        "history_dates": [d for d, _ in history],
+        "top20_overlap": len(set(top) & set(old_top)) if old_top else None,
+        "previous_top20_count": len(old_top),
+        "performance_status": "unvalidated_display_ranking_not_replay_performance",
+    }
 
 
 def update_prediction_log(existing_log, predictions, price_db, benchmark_rows=None, run_date=None,
@@ -944,7 +1010,10 @@ def update_prediction_log(existing_log, predictions, price_db, benchmark_rows=No
         # Freeze a same-day signal. Keep a legacy snapshot as audit evidence
         # when a new version begins on that date.
         if (not old or old.get("model_name") != MODEL_NAME
-                or old.get("experiment_id") != model.get("experiment_id")):
+                or old.get("experiment_id") != model.get("experiment_id")
+                or (model.get("reference_mode") != "frozen_prospective"
+                    and model.get("observation_ranking", {}).get("version")
+                    and old.get("observation_rank_version") != model["observation_ranking"]["version"])):
             snapshot = {
                 "date": d, "model_name": MODEL_NAME,
                 "implementation_version": MODEL_IMPLEMENTATION_VERSION,
@@ -954,8 +1023,12 @@ def update_prediction_log(existing_log, predictions, price_db, benchmark_rows=No
                 "experiment_id": model.get("experiment_id"),
                 "reference_mode": model.get("reference_mode"),
                 "adaptation": model.get("adaptation"),
+                "observation_rank_version": model.get("observation_ranking", {}).get("version"),
                 "20d": [{
                     "stock_id": sid, "probability_rank": item["probability_rank_20d"],
+                    "observation_input_probability": item["prediction_20d"].get("net_profit_probability_full", item["prediction_20d"]["net_profit_probability"]),
+                    "observation_rank_20d": item.get("observation_rank_20d"),
+                    "observation_score_20d": item.get("observation_score_20d"),
                     "net_profit_probability": item["prediction_20d"]["net_profit_probability"],
                     "outperform_probability": item["prediction_20d"]["outperform_probability"],
                     "raw_net_profit_probability": item["prediction_20d"]["raw_net_profit_probability"],
