@@ -506,7 +506,8 @@ function aiPrompt(stockId, history = {available:false, reason:"尚未取得連�
 decision必須是可考慮買進、等待、避開其中一項。reasons固定為支持進場、反對進場、決定結論三項物件；risk也是物件，refs為存在的來源編號陣列，不把編號寫在text。範例編號不是指定答案，須自行選正確來源。無支持證據可用空refs並直說證據不足。程式負責呈現引用的原始日期、期間、欄位及數值，text只做定性分析，不重抄數字或換算單位。各文字欄位不可留空。
 數字及日期由程式來源卡呈現，分析文字不自行換算、不自行產生持倉比例或固定時間門檻。淨報酬已扣成本，不再以成本門檻重複扣除。不可宣稱保證獲利。
 AI任務是進場覆核，不是重複模型門檻。預期淨報酬正負都不是單一買進或等待規則。若模型不支持、但連續價量與法人證據支持進場，可以提出有明確證據的研究建議，必須在risk說明與模型的分歧、新方案未驗證，不能改寫原始機率，也不把負期望改成正期望。不以「少量試單」代替證據。沒有連續證據時，不能宣稱已完成趨勢覆核；給出資料限制與條件式意見。
-純假設風險（例如「若未來法人轉為賣超，需重新評估」）不是歷史事實，institution_claims可為[]，不可捏造未來證據。歷史法人陳述仍須填claims；同一項refs與claims.ref適用於該項全部句子，不得借用其他項目的來源。請把歷史事實和假設條件分句寫清楚。
+證據連結：結論或風險若沿用前文已填的法人claims，可將institution_claims設為[]，但refs必須明確列出前文對應法人F編號（不是僅M1/M2/M4）。例如前文已有5日combined/buy/F4，結論可寫「五日法人合計買超提供支持」、refs:["F4","M1"]；程式會連結前文同主體的已核對欄位。不得省略來源、改用其他期間或把外資當合計；不同期間方向相反時須明寫期間，不能只寫「法人買超」。此規則不改變你的買進／等待／避開判斷。
+純假設風險（例如「若未來法人轉為賣超，需重新評估」）不是歷史事實，institution_claims可為[]，不可捏造未來證據。首次歷史法人陳述仍須填claims；同一項refs與claims.ref適用於該項全部句子，跨項沿用必須明確引用前文來源。請把歷史事實和假設條件分句寫清楚。
 量價代理僅描述指標正負，例如「五日量價代理為負，價格與成交活動需另行確認」；不要改寫成「資金流出／流入」。法人淨買賣股數也不是全市場淨資金流。
 正的預期淨報酬也不是自動買進：須說明個股資料提供的支持、風險及反證。收縮比例為1時，報酬只是全域共同基準，不能列為該股獨有買進優勢，也不因此強制等待。量價代理不得寫成實際淨資金流入或流出。`;
 }
@@ -669,17 +670,31 @@ function renderAIAdvice(content, item, finishReason, evidence = null) {
   const facts = `模型數據：預期二十日淨報酬 ${percent(item.prediction_20d?.expected_net_return)}（已扣成本）；淨獲利估計機率 ${percent(item.prediction_20d?.net_profit_probability)}`;
   if (!result.ok) return `AI 回答未通過一致性檢查（不是買進或不買的判斷）\n原因：${result.reason}\n${facts}\n本次回答未作為有效建議顯示。未自動重試或增加 API 呼叫。\n原始AI回答（僅供診斷，非有效建議；純文字顯示）：\n${typeof content==='string'?content.slice(0,24000):String(content)}${typeof content==='string' && content.length>24000?'\n（顯示上限24000字，後段已截斷）':''}`;
   const a = result.advice;
+  // Link only explicit citations to earlier numerically verified claims.
+  const verifiedEarlier=[];
   for (const [i,text] of [...a.reasons,a.risk].entries()) {
     const r=result.structuredReferences?.[i];
     if(r && r.claims!==undefined) {
+      const historical=aiHistoricalClauses(r.text).join('；');
+      const needsInstitution=/外資|投信|法人/.test(historical);
+      let linked=false;
+      if(needsInstitution && !r.claims.length) {
+        const actors=[...historical.matchAll(/外資與投信|外資及投信|外資投信|兩者合計|法人|外資|投信/g)]
+          .map(m=>/與|及|合計|法人|外資投信/.test(m[0])?'combined':m[0]==='外資'?'foreign':'trust');
+        const candidates=verifiedEarlier.filter(c=>r.refs.includes(c.ref) && actors.includes(c.actor));
+        if(actors.length && actors.every(actor=>candidates.some(c=>c.actor===actor))) {
+          r.claims=[...new Map(candidates.map(c=>[JSON.stringify(c),c])).values()];
+          linked=true;
+        }
+      }
       // Claims already carry explicit references; refs need not duplicate them.
       // Repeated prose is permitted, but identifiable contradictions still fail.
       const referenceIds=[...new Set([...r.refs,...r.claims.map(c=>c.ref)])];
       for(const issue of checkAIInstitutionClaims(r.text,evidence,referenceIds)) {
         result.warnings.push({sentence:r.text,reason:issue.reason,
-          severity:/矛盾/.test(issue.reason)?'error':'notice'});
+          severity:linked || /矛盾/.test(issue.reason)?'error':'notice'});
       }
-      if(aiHistoricalClauses(r.text).some(t=>/外資|投信|法人/.test(t)) && !r.claims.length) result.warnings.push({sentence:r.text,reason:'法人分析缺少institution_claims明確證據'});
+      if(needsInstitution && !r.claims.length) result.warnings.push({sentence:r.text,reason:'法人分析缺少institution_claims明確證據；可在refs明確引用前文同主體的已核對來源'});
       for(const [j,c] of r.claims.entries()) {
         const f=evidence.institution_facts?.[c.ref];
         let issue='';
@@ -691,6 +706,7 @@ function renderAIAdvice(content, item, finishReason, evidence = null) {
           if(c.direction!==direction) issue=`方向矛盾：來源為${direction}`;
         }
         if(issue) result.warnings.push({sentence:text,reason:`institution_claims[${j}] ${c.ref}/${c.actor}/${c.sessions}：${issue}`});
+        else if(!linked) verifiedEarlier.push(c);
       }
     } else result.warnings.push(...checkAIInstitutionClaims(text,evidence));
   }
