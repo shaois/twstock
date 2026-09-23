@@ -13,6 +13,11 @@ on:
       - "build_ai_context.py"
       - "prepare_release.py"
       - "predictor.py"
+      - "research_protocol.py"
+      - "update_all.py"
+      - "rotation.py"
+      - "cache/benchmark.json"
+      - "cache/prediction_log.json"
       - "cache/price.json"
       - "cache/institutions.json"
       - "cache/universe.json"
@@ -43,6 +48,7 @@ jobs:
       - name: Prepare website files
         run: |
           mkdir -p _site/cache
+          python3 -m pip install httpx
           python3 prepare_release.py
           cp index.html _site/index.html
           cp app.js _site/app.js
