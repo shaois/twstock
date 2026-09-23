@@ -9,7 +9,10 @@ on:
     paths:
       - "index.html"
       - "app.js"
+      - "ai-review.js"
       - "build_ai_context.py"
+      - "prepare_release.py"
+      - "predictor.py"
       - "cache/price.json"
       - "cache/institutions.json"
       - "cache/universe.json"
@@ -40,8 +43,10 @@ jobs:
       - name: Prepare website files
         run: |
           mkdir -p _site/cache
+          python3 prepare_release.py
           cp index.html _site/index.html
           cp app.js _site/app.js
+          cp ai-review.js _site/ai-review.js
           cp cache/universe.json _site/cache/universe.json
           cp cache/predictions.json _site/cache/predictions.json
           python3 build_ai_context.py
