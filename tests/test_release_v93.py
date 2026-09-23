@@ -26,7 +26,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(client.get('/health').json()['ai_analysis'],VERSION)
             for url in ['/','/app.js','/ai-review.js','/ai-schema.json','/cache/predictions.json','/cache/ai-context/2606.json']:
                 self.assertEqual(client.get(url).status_code,200,url)
-            self.assertIn('ai-review.js?v=93',client.get('/').text)
+            self.assertIn('ai-review.js?v=94',client.get('/').text)
 
     def test_one_attempt_on_all_errors(self):
         for status in [400,401,404,408,429,500,502,503,504]:
