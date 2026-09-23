@@ -231,13 +231,13 @@ class ProxyTests(unittest.TestCase):
                 upstream.assert_not_called()
 
     def test_only_user_key_is_forwarded_and_body_is_bounded(self):
-        body = {"model": "llama-3.3-70b-versatile",
+        body = {"model": "openai/gpt-oss-120b",
                 "messages": [{"role": "user", "content": "explain"}],
                 "max_tokens": 999999, "stream": True}
         key, safe = main._request_parts({"api_key": " user-key ", "body": body}, "groq")
         self.assertEqual(key, "user-key")
-        self.assertEqual(safe["max_tokens"], 600)
-        self.assertNotIn("stream", safe)
+        self.assertEqual(safe["max_completion_tokens"], 2048)
+        self.assertFalse(safe["stream"])
 
     def test_provider_error_does_not_echo_key(self):
         import httpx
@@ -247,7 +247,7 @@ class ProxyTests(unittest.TestCase):
         context.__aenter__.return_value = upstream
         with TestClient(main.app) as client, patch("main.httpx.AsyncClient", return_value=context):
             response = client.post("/api/groq", json={"api_key": "user-key", "body": {
-                "model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": "explain"}]}})
+                "model": "openai/gpt-oss-120b", "messages": [{"role": "user", "content": "explain"}]}})
         self.assertEqual(response.status_code, 401)
         self.assertNotIn("user-key", response.text)
 

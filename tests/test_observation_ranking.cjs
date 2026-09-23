@@ -11,4 +11,6 @@ assert.equal(vm.runInContext('modelRows()[0].stockId',c),'B');
 assert.equal(vm.runInContext('rankingChange(state.predictions.B)',c),'↑3');
 vm.runInContext('state.model={};state.showDailyRanking=false',c);
 assert.equal(vm.runInContext('modelRows()[0].stockId',c),'B');
-console.log('Observation/default, daily toggle, rank-change isolation and legacy fallback passed');
+vm.runInContext('state.showDailyRanking=true;state.model.rank_comparison_status="model_or_universe_changed"',c);
+assert.match(vm.runInContext('rankingChange({rank_change:120})',c),/不直接比較/);
+console.log('Observation/default, daily toggle, rank-change isolation, experiment-change warning and legacy fallback passed');
