@@ -32,7 +32,7 @@ const Review94 = (() => {
   }
   function render(r,facts,date,signals){
     const lines=[`AI 主觀研究偏向：${r.decision}`,`資料日：${date}；非即時行情。`,
-      '研究排名不是進場資格。進場策略尚未完成獨立驗證；本頁不產生程式核准買點。',
+      '此為選用AI意見，不改變上方免費條件核對；若不同，條件核對仍以程式列出的數據為準。進場策略尚未獨立驗證。',
       '數字、方向、期間及因素由程式生成；AI只選擇偏向與關注來源，未驗證投資效果。'];
     if(signals)for(const [k,label]of [['bull','正向觀測因素'],['bear','負向觀測因素'],['neutral','中性／缺資料']])lines.push('',`${label}（正負不等於買賣條件）：`,...(signals[k].length?signals[k]:['無']));
     lines.push('','AI關注的資料：');for(const id of new Set(r.focus_refs))lines.push(`[${id}] ${facts[id]}`);

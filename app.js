@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "v94";
+const APP_VERSION = "v94.1";
 const MODEL_IMPLEMENTATION_VERSION = "v94";
 const MODEL_NAME = "single_horizon_20d_rotation_v94";
 const CONTRACT_VERSION = "20d-net-executable-v2";
@@ -384,7 +384,7 @@ function showStock(stockId) {
   byId("stockDetail").innerHTML = `
     <div class="stock-header"><div class="stock-title"><h1>${escapeHtml(stockId)} ${escapeHtml(stockName(stockId))}</h1>
       <div class="sub">資料日 ${escapeHtml(item.as_of_date)}；研究候選，非投資建議</div></div>
-      <button class="btn btn-primary" onclick="runAI20d('${escapeHtml(stockId)}')">AI 操作分析</button></div>
+      <button class="btn btn-primary" onclick="runAI20d('${escapeHtml(stockId)}')">選用 AI 意見（需 API）</button></div>
     <div class="panel">
       <div class="panel-title">20日研究估計・前瞻驗證尚待累積</div>
       <p>這是研究排序，不是可買清單。進場資格：尚無獨立驗證的交易規則；AI偏向不會核准買點。</p>
@@ -418,7 +418,46 @@ function showStock(stockId) {
       </div>
       <p>以次日實際開盤價為進場基準；價格尚未確定，因此顯示報酬區間。股票與0050各採0.6%來回成本情境；資金流為量價代理值。</p>
     </div>
+    <div class="panel" id="entryAssessment"><div class="panel-title">候選與進場條件核對（免費／規則未驗證績效）</div><p>正在讀取同日期資料…</p></div>
     <div class="ai-panel" id="aiPanel" style="display:none"><div class="ai-header"><div class="panel-title">AI 解讀</div><span class="ai-badge" id="aiBadge"></span></div><div class="ai-content" id="aiContent"></div></div>`;
+  loadEntryAssessment(stockId, item);
+}
+
+// Descriptive sign-consistency screen, not fitted or validated trading rules.
+// Shared prior returns never count as individual-stock evidence.
+function assessEntry(item, history) {
+  const problem=Review94.quality(history);
+  if(problem || !item?.available || !item.prediction_20d) return {status:'資料不足',reason:problem||'模型資料不足',checks:[]};
+  const f=item.prediction_20d,e=summarizeAIEvidence(history);
+  const checks=[];
+  const add=(group,label,value,pass,unit,ref)=>checks.push({group,label,value,pass:Number.isFinite(value)?pass:null,unit,ref});
+  add('候選','20日價格報酬 > 0',e.price_changes[20],e.price_changes[20]>0,'%', 'F7');
+  add('候選','模型淨獲利估計機率 > 50%',f.net_profit_probability,f.net_profit_probability>50,'%', 'M2');
+  add('進場','5日價格報酬 > 0',e.price_changes[5],e.price_changes[5]>0,'%', 'F5');
+  add('進場','5日外資＋投信合計淨買超 > 0',e.institution_facts.F4?.combined,e.institution_facts.F4?.combined>0,'股','F4');
+  add('進場','20日外資＋投信合計淨買超 > 0',e.institution_facts.F6?.combined,e.institution_facts.F6?.combined>0,'股','F6');
+  add('進場','5日量價代理 > 0（非實際資金流）',f.capital_flow_5d_pct,f.capital_flow_5d_pct>0,'%', 'M4');
+  checks.push({group:'進場',label:'未觸發既有急漲提醒',value:null,unit:'',ref:'既有急漲規則',pass:f.entry_status==='research_only'?true:f.entry_status==='wait_pullback'?false:null});
+  const missing=checks.filter(x=>x.pass===null),failed=checks.filter(x=>x.pass===false);
+  const candidate=checks.filter(x=>x.group==='候選').every(x=>x.pass===true);
+  return {status:missing.length?'資料不足':!candidate?'未符合候選條件':failed.length?'候選／等待條件':'符合觀察進場條件（非核准買點）',
+    reason:missing.length?'缺少：'+missing.map(x=>x.label).join('；'):failed.length?'尚未符合：'+failed.map(x=>x.label).join('；'):'上述明訂條件全部符合；不代表已證明有交易優勢。',
+    candidate,checks,probability:f.net_profit_probability,downside:f.downside_net_return,
+    outperform:f.outperform_probability,sharedReturn:f.return_shrinkage===1,
+    invalidation:'每次資料更新重新核對；候選條件失效即不再符合候選，進場條件失效則取消該條件狀態。這不是持倉停損或出場策略。'};
+}
+
+async function loadEntryAssessment(stockId,item) {
+  const generation=(state.entryAssessmentGeneration||0)+1;state.entryAssessmentGeneration=generation;
+  const history=await loadAIHistory(stockId,item);
+  if(state.currentStockId!==stockId || state.entryAssessmentGeneration!==generation)return;
+  const r=assessEntry(item,history),panel=byId('entryAssessment');if(!panel)return;
+  panel.innerHTML=`<div class="panel-title">候選與進場條件核對（免費／規則 v1）</div>
+    <h3>${escapeHtml(r.status)}</h3><p>${escapeHtml(r.reason)}</p>
+    <p>以下是固定的方向一致性觀察規則，未用報酬最佳化，也尚未驗證績效。條件通過不等於適合你的風險承受度。</p>
+    ${r.checks.map(x=>`<div>${x.pass===null?'缺資料':x.pass?'通過':'未通過'}｜${escapeHtml(x.group)}：${escapeHtml(x.label)}${Number.isFinite(x.value)?`；實際 ${escapeHtml(x.value.toLocaleString('zh-TW',{maximumFractionDigits:4}))}${escapeHtml(x.unit)}`:''} [${escapeHtml(x.ref)}]</div>`).join('')}
+    ${r.checks.length?`<p>模型估計淨獲利機率 ${percent(r.probability)}；超越0050機率 ${percent(r.outperform)}（${Number.isFinite(r.outperform)?r.outperform>50?'估計高於五成':'估計未高於五成':'缺資料'}，本規則不代表能勝過0050）。下行10分位 ${percent(r.downside)}，不是最壞損失或停損價。</p>
+    <p>${r.sharedReturn?'預期報酬為全域共同基準，不用來區分或支持此股票。':''} ${escapeHtml(r.invalidation)}</p>`:''}`;
 }
 
 function modelDecision(stockId) {
