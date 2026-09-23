@@ -1,2 +1,6 @@
 __pycache__/ 
 *.pyc 
+.venv/
+.env
+twstock-v93-diagnostics.json
+_site/

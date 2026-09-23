@@ -1,38 +1,60 @@
-# V92 資金輪動整合研究排行
+# 台股研究儀表板 V93 — 完整專案
 
-本版沿用V91.1架構，固定200支股票、20日預測、每日全合格股票排序、AI只解釋。未增加AI請求、未增加套件依賴。研究候選，非投資建議。
+這是完整網站、API 後端、資料更新器、研究模型、快取與測試，不是差異補丁。
+应用版本 V93；數值研究模型仍是 V92，沒有把程式修復冒充模型績效提升。
 
-## 本次真正整合了什麼
-- 個股5/20日量價累積代理值、成交額加速度。
-- 同類股5日成交額占股票池比重，相對20日平均的增減。
-- 同類股平均20日對0050相對強度、上漲廣度；至少3支有效成員。
-- 上述條件直接影響歷史相似樣本權重，再估計20日淨獲利機率，不只當成同分排序。
-- 新欄位：類股輪動狀態、成交占比變化、外資投信淨買占5日量、較上個已記錄交易日的排名升降。
-- 正式模型滾動更新；凍結影子模型另行驗證。兩者紀錄分開，不把影子結果當正式績效。
+## 本機啟動
 
-## 重要邊界
-成交額是交易熱度，量價是代理值，兩者不是淨資金流入。分類為FinMind TaiwanStockInfo的產業別，不是細分概念股主題；只分析固定200支股票池，不代表全台股。現行分類回推歷史不等於point-in-time分類，不能宣稱排除歷史分類偏差。
+Windows 可直接雙擊 `start-local.cmd`（需先裝 Python；第一次會建立隔離環境並安裝依賴）。
 
-外資與投信真實買賣資料新增自動抓取、對齊、展示與保存；不包括自營商，不能稱完整三大法人。首輪僅回補最近90日，尚未形成足夠多年驗證，因此此版沒有把法人數字硬加進機率。量價與類股轮動已參與主要機率估計，法人層仍屬資料建置階段。
+安裝 Python 3.11 或 3.12，在此目錄執行：
 
-核距離的尺度是明列研究設定，不是已證明最佳的權重。功能完成不表示排序效果已優於V91；V91舊更新包保留作對照，沒有自動改寫成新模型。既有收縮/校準方法仍屬研究假設，可能選到100%收縮，畫面會揭露。
+```sh
+python -m venv .venv
+# Windows PowerShell:
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python start.py
+```
 
-## 更新
-依V92_UPLOAD_FILES.txt上傳並保留路徑，重跑Cache至200/200，再等待Pages部署。新增cache/sectors.json、institutions.json、shadow_log.json由脚本生成，不要自行用舊行情覆蓋。
+開啟 http://localhost:8000，點「重新載入快取」。若埠被占用，可先設定 `$env:PORT='8010'`。
+Linux/macOS 使用 `.venv/bin/python`。不需 AI 金鑰即可使用排名與數據。
+AI 金鑰只存在目前頁面記憶體，切換供應商會清除；只傳至對應 API 代理及供應商，不寫入檔案或瀏覽器儲存。
 
-法人預設每支每批多查一次，完整輪約增加200次；分類每完整輪增加一次。全部使用既有FinMind Token與一般個股API，不使用付費會員限定的全市場單次API。仍受帳號權限/額度限制，沒有替使用者購買方案。需要停用法人查詢可在更新流程環境設FETCH_INSTITUTIONS=0，價格與量價輪動仍正常。
+## 部署整套程式
 
-缺分類時顯示未知並停用該股類股距離；不足3支不造類股訊號。法人缺任一對齊5日資料時顯示缺資料，不補0。輔助查詢失敗沿用已有資料或標未知；主要價格因配額停止時保存進度供續跑。
+1. 先備份現有專案，將本專案程式、tests 與 `.github/workflows` 一起更新到儲存庫根目錄；不要只上傳 app.js。
+2. **現有 cache 若較新，保留整個現有 cache，不要以本包舊快取蓋掉。** 包內快取資料日為 2026-09-21，僅供立即啟動。
+3. Render 安裝命令 `pip install -r requirements.txt`，啟動命令改為 `python start.py`。也可使用附帶 render.yaml。
+4. 若沿用 GitHub Pages，必須同時部署 Pages 與 Render。Pages 預設 API 為 `https://twstock-app.onrender.com`，換網域時修改 app.js 的 BACKEND_URL，並設定後端 ALLOWED_ORIGINS 為新的 Pages origin。直接使用 Render 網站則走同源 API。
+5. `/health` 必須回傳 `application_version: v93`、`ai_analysis: opinion-v93`。新版前端在呼叫 AI 前會檢查，不相容則停止且不耗 AI 請求。
+6. 自動更新仍需 GitHub Actions secret `FINMIND_TOKEN`，沒有此金鑰只會展示現有快取。每日更新會保留觀察排名歷史；Pages 建置和本機啟動均會產生同日期的 AI 資料卡。
 
-保留原本cache與兩份稽核檔research_protocol.json、prediction_log.json。shadow_log.json只記影子實驗。核心程式、股票池或產業分類映射改變會另開實驗。正式排名每次重新計算，但首次日誌快照不覆寫。
+## 這次真正改了什麼
 
-## 測試
-python -m unittest discover -s tests -v
-node tests/test_frontend_v92.cjs
-python verify_model.py --report V92_VALIDATION_REPORT.json
+- 正式執行路徑已移除舊 AI 文字猜測覆核器。AI 不再重複提交報酬、機率及法人數值讓程式用正規表示式猜意思。
+- 程式計算的資料卡與 AI 主觀推論分開顯示。缺引用會具體警告；**格式正確不代表推論正確**，也不代表交易資格通過。
+- Groq GPT-OSS 使用後端固定 JSON Schema 的 strict structured outputs；NVIDIA 仍為 JSON 提示加本機格式檢查，沒有同等格式保證。
+- 明確區分「AI 意見：等待」與「技術失敗」。保留可考慮買進、等待、避開、資料不足四種意見，沒有強制前五名買進或偷偷降低門檻。
+- 一次點擊最多一次上游呼叫；無自動重試、並發重複點擊攔截、超時處理、過期頁面回應不覆蓋新股票。
+- 可匯出本次工作階段最多50筆診斷（遮蔽金鑰），保留原始 AI 回答供離線重播；重新整理後清除。
+- 預設最多5個同模型、同實驗、同股票池資料日平均的觀察榜；原始每日機率、排序及預測保留，可切換。不是鎖定持股。
 
-verify_model只讀本機快取，不抓新行情。若沒有sectors.json，報告sector_coverage=0，不能把該重播當成完整類股輪動驗證。
+## 排名波動的實際證據與限制
 
-官方資料文件：
-https://finmind.github.io/tutor/TaiwanMarket/Technical/
-https://finmind.github.io/tutor/TaiwanMarket/Chip/
+隨包兩日紀錄（9/18 與9/21）原始前20名只重疊4支；力旺83→1、裕民123→3。
+兩日的 experiment_id 與校準參數不同，不能只把名次差當成同一模型的市場變化。
+當前分數又很接近，排名本身不表示差距足夠顯著。20日是預測期限，不自動等於平穩的每日排序。
+
+觀察榜不混用舊實驗、不虛構歷史。本包首次移轉為1/5日，之後每天自然累積；同日重跑不增加日數。
+**因此首次啟動不會立即把排名變回昨天，也尚未實證它能改善報酬或達到指定換手率。**
+目前研究模型未證明穩定優於基準，前五名可能都不適合買進；不能靠 UI 或 AI 格式修復創造交易優勢。
+
+## 驗證
+
+安裝 Node.js 20+，執行 `python verify_release.py`。
+此命令執行所有 Python 測試、V93 前端整合測試及觀察排名測試，不呼叫真實 AI。
+需要以現有行情完整重算時，可另執行 `python rebuild_cache.py`；會更新本目錄的模型快取與研究紀錄，不抓新行情。執行前先備份 cache。
+現有199筆快取資料卡與前五名模擬回答均納入驗證；詳見 TEST_REPORT.md。
+沒有替使用者執行真實 API 推論，亦未部署到其線上帳號；這兩項不能以離線測試宣稱已通過。
+
+Groq 格式契約依據：https://console.groq.com/docs/structured-outputs

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import re
 from pathlib import Path
@@ -13,6 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from ai_contract import VERSION, SCHEMA
 
 
 ROOT = Path(__file__).resolve().parent
@@ -21,7 +21,7 @@ ALLOWED_ORIGINS = [s.strip() for s in os.environ.get(
     "ALLOWED_ORIGINS", "https://shaois.github.io,https://twstock-app.onrender.com"
 ).split(",") if s.strip() and s.strip() != "*"]
 
-app = FastAPI(title="Taiwan stock 20-day relative-return model", version="91")
+app = FastAPI(title="Taiwan stock 20-day relative-return model", version="93")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -65,6 +65,14 @@ def _request_parts(request: dict[str, Any], provider: str) -> tuple[str, dict[st
         upstream_body.update(max_tokens=1024, chat_template_kwargs={"enable_thinking": False})
     else:
         upstream_body.update(max_completion_tokens=2048, reasoning_effort="low", reasoning_format="hidden")
+    if request.get("review_version") == VERSION and provider == "groq":
+        upstream_body["response_format"] = {"type": "json_schema", "json_schema": {
+            "name": "stock_opinion_v93", "strict": True, "schema": SCHEMA}}
+        upstream_body["max_completion_tokens"] = 4096
+    elif request.get("review_version") == VERSION and provider == "nvidia":
+        upstream_body["max_tokens"] = 2048
+    elif request.get("review_version") not in (None, VERSION):
+        raise HTTPException(status_code=409, detail="前後端 AI 版本不一致，未呼叫供應商")
     return api_key.strip(), upstream_body
 
 
@@ -126,35 +134,33 @@ async def nvidia_proxy(request: dict[str, Any]) -> Any:
         raise HTTPException(status_code=502, detail="NVIDIA connection failed") from exc
     if response.is_error:
         raise _upstream_error(response, "NVIDIA", api_key, body)
-    return response.json()
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="上游回應不是 JSON") from exc
 
 
 @app.post("/api/groq")
 async def groq_proxy(request: dict[str, Any]) -> Any:
     api_key, body = _request_parts(request, "groq")
-    # Do not immediately repeat a rate-limited request; let the user see Retry-After.
-    retry_statuses = {408, 409, 500, 502, 503, 504}
+    # Exactly one upstream attempt per explicit user request, including 5xx.
     timeout = httpx.Timeout(90.0, connect=20.0)
     last_response: httpx.Response | None = None
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            for attempt in range(3):
-                last_response = await client.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json=body,
-                )
-                if last_response.status_code not in retry_statuses:
-                    break
-                if attempt < 2:
-                    await asyncio.sleep(1.5 * (attempt + 1))
+            last_response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"}, json=body)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="Groq connection failed") from exc
     if last_response is None:
         raise HTTPException(status_code=502, detail="Groq did not respond")
     if last_response.is_error:
         raise _upstream_error(last_response, "Groq", api_key, body)
-    return last_response.json()
+    try:
+        return last_response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="上游回應不是 JSON") from exc
 
 
 @app.get("/")
@@ -172,7 +178,18 @@ async def health() -> dict[str, str]:
     return {
         "status": "ok",
         "model": "single_horizon_20d_rotation_v92",
-        "ai_error_reporting": "v92-ai-fix-1",
-        "ai_model_config": "v92-ai-model-fix-2",
-        "ai_analysis": "direct-data-advice-1",
+        "ai_error_reporting": "v93-single-attempt",
+        "ai_model_config": "v93-server-owned-schema",
+        "ai_analysis": VERSION,
+        "application_version": "v93",
     }
+
+
+@app.get("/ai-review.js")
+async def review_script() -> FileResponse:
+    return FileResponse(ROOT / "ai-review.js", media_type="application/javascript")
+
+
+@app.get("/ai-schema.json")
+async def review_schema() -> dict:
+    return {"version": VERSION, "schema": SCHEMA}
