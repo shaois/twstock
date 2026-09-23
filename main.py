@@ -21,7 +21,7 @@ ALLOWED_ORIGINS = [s.strip() for s in os.environ.get(
     "ALLOWED_ORIGINS", "https://shaois.github.io,https://twstock-app.onrender.com"
 ).split(",") if s.strip() and s.strip() != "*"]
 
-app = FastAPI(title="Taiwan stock 20-day relative-return model", version="93")
+app = FastAPI(title="Taiwan stock 20-day relative-return model", version="94")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -67,7 +67,7 @@ def _request_parts(request: dict[str, Any], provider: str) -> tuple[str, dict[st
         upstream_body.update(max_completion_tokens=2048, reasoning_effort="low", reasoning_format="hidden")
     if request.get("review_version") == VERSION and provider == "groq":
         upstream_body["response_format"] = {"type": "json_schema", "json_schema": {
-            "name": "stock_opinion_v93", "strict": True, "schema": SCHEMA}}
+            "name": "stock_opinion_v94", "strict": True, "schema": SCHEMA}}
         upstream_body["max_completion_tokens"] = 4096
     elif request.get("review_version") == VERSION and provider == "nvidia":
         upstream_body["max_tokens"] = 2048
@@ -177,11 +177,11 @@ async def app_script() -> FileResponse:
 async def health() -> dict[str, str]:
     return {
         "status": "ok",
-        "model": "single_horizon_20d_rotation_v92",
-        "ai_error_reporting": "v93-single-attempt",
-        "ai_model_config": "v93-server-owned-schema",
+        "model": "single_horizon_20d_rotation_v94",
+        "ai_error_reporting": "v94-single-attempt",
+        "ai_model_config": "v94-server-owned-schema",
         "ai_analysis": VERSION,
-        "application_version": "v93",
+        "application_version": "v94",
     }
 
 

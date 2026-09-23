@@ -1,60 +1,46 @@
-# 台股研究儀表板 V93 — 完整專案
+# 台股研究儀表板 V94 — 完整程式
 
-這是完整網站、API 後端、資料更新器、研究模型、快取與測試，不是差異補丁。
-应用版本 V93；數值研究模型仍是 V92，沒有把程式修復冒充模型績效提升。
+V94 修正的是資料可靠性與程式契約，不承諾報酬，也不強迫前五名出現買進。
 
-## 本機啟動
+## 既有 GitHub Pages + Render 上線
 
-Windows 可直接雙擊 `start-local.cmd`（需先裝 Python；第一次會建立隔離環境並安裝依賴）。
+1. 使用 `twstock-v94-upload.zip`，將內層全部檔案（包含 `.github`）上傳原 repo 根目錄。這個包包含完整程式、部署與測試，**刻意不含 cache**；保留線上原有全部 cache，不要先刪 repo。
+2. Render：Build `pip install -r requirements.txt`；Start `python start.py`。後端 `/health` 應顯示 `application_version: v94`、`ai_analysis: opinion-v94`。
+3. Pages workflow 會用 repo 現有快取日期，離線重建 V94 模型並產生資料卡。首次可能耗時數分鐘；不呼叫行情或 AI，不會換成包內舊日期。Render 啟動也有相同遷移。
+4. 部署完成後重新整理頁面，確認 V94 及資料日。前後端不同版時不呼叫付費 AI。
+5. Daily FinMind Cache Refresh 照原設定執行，既有 `FINMIND_TOKEN` 保留。完整更新後會持久保存新模型歷史。新模型初始顯示 1/5 是誠實的暖機狀態，不能沿用不相容舊實驗補足。
 
-安裝 Python 3.11 或 3.12，在此目錄執行：
+不需要先執行 start-local.cmd 才能上傳。自訂 Pages 網域預設也連既有 Render；更換 API 主機可修改 app.js 的 BACKEND_URL，或在載入腳本之前指定 `window.TWSTOCK_CONFIG={apiBase:'https://your-api-host'}`，並同步設定後端 ALLOWED_ORIGINS。
+
+## 本機完整包
+
+`twstock-v94-complete.zip` 額外包含 **2026-09-21 離線示範快取**。此快取不要上傳覆蓋線上較新的資料。
+
+Windows 安裝 Python 3.11 或 3.12 後雙擊 start-local.cmd。每次啟動會檢查安裝依賴，失敗後可重試，不再只因 .venv 存在就略過。瀏覽 http://localhost:8000。
+
+跨平台可執行：
 
 ```sh
-python -m venv .venv
-# Windows PowerShell:
-.venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python start.py
+python -m pip install -r requirements.txt
+python start.py
 ```
 
-開啟 http://localhost:8000，點「重新載入快取」。若埠被占用，可先設定 `$env:PORT='8010'`。
-Linux/macOS 使用 `.venv/bin/python`。不需 AI 金鑰即可使用排名與數據。
-AI 金鑰只存在目前頁面記憶體，切換供應商會清除；只傳至對應 API 代理及供應商，不寫入檔案或瀏覽器儲存。
+## 修正內容
 
-## 部署整套程式
-
-1. 先備份現有專案，將本專案程式、tests 與 `.github/workflows` 一起更新到儲存庫根目錄；不要只上傳 app.js。
-2. **現有 cache 若較新，保留整個現有 cache，不要以本包舊快取蓋掉。** 包內快取資料日為 2026-09-21，僅供立即啟動。
-3. Render 安裝命令 `pip install -r requirements.txt`，啟動命令改為 `python start.py`。也可使用附帶 render.yaml。
-4. 若沿用 GitHub Pages，必須同時部署 Pages 與 Render。Pages 預設 API 為 `https://twstock-app.onrender.com`，換網域時修改 app.js 的 BACKEND_URL，並設定後端 ALLOWED_ORIGINS 為新的 Pages origin。直接使用 Render 網站則走同源 API。
-5. `/health` 必須回傳 `application_version: v93`、`ai_analysis: opinion-v93`。新版前端在呼叫 AI 前會檢查，不相容則停止且不耗 AI 請求。
-6. 自動更新仍需 GitHub Actions secret `FINMIND_TOKEN`，沒有此金鑰只會展示現有快取。每日更新會保留觀察排名歷史；Pages 建置和本機啟動均會產生同日期的 AI 資料卡。
-
-## 這次真正改了什麼
-
-- 正式執行路徑已移除舊 AI 文字猜測覆核器。AI 不再重複提交報酬、機率及法人數值讓程式用正規表示式猜意思。
-- 程式計算的資料卡與 AI 主觀推論分開顯示。缺引用會具體警告；**格式正確不代表推論正確**，也不代表交易資格通過。
-- Groq GPT-OSS 使用後端固定 JSON Schema 的 strict structured outputs；NVIDIA 仍為 JSON 提示加本機格式檢查，沒有同等格式保證。
-- 明確區分「AI 意見：等待」與「技術失敗」。保留可考慮買進、等待、避開、資料不足四種意見，沒有強制前五名買進或偷偷降低門檻。
-- 一次點擊最多一次上游呼叫；無自動重試、並發重複點擊攔截、超時處理、過期頁面回應不覆蓋新股票。
-- 可匯出本次工作階段最多50筆診斷（遮蔽金鑰），保留原始 AI 回答供離線重播；重新整理後清除。
-- 預設最多5個同模型、同實驗、同股票池資料日平均的觀察榜；原始每日機率、排序及預測保留，可切換。不是鎖定持股。
-
-## 排名波動的實際證據與限制
-
-隨包兩日紀錄（9/18 與9/21）原始前20名只重疊4支；力旺83→1、裕民123→3。
-兩日的 experiment_id 與校準參數不同，不能只把名次差當成同一模型的市場變化。
-當前分數又很接近，排名本身不表示差距足夠顯著。20日是預測期限，不自動等於平穩的每日排序。
-
-觀察榜不混用舊實驗、不虛構歷史。本包首次移轉為1/5日，之後每天自然累積；同日重跑不增加日數。
-**因此首次啟動不會立即把排名變回昨天，也尚未實證它能改善報酬或達到指定換手率。**
-目前研究模型未證明穩定優於基準，前五名可能都不適合買進；不能靠 UI 或 AI 格式修復創造交易優勢。
+- 模型保留原始價格，不再依暴跌比率製造還原係數。特徵或持有報酬跨越未核實極端跳變時排除；尚無可比預測的股票不排名。
+- AI 使用同一原始價格口徑，61 根日線與0050交易日期核對，20日法人缺值及價格跳變會在付費呼叫前停止。
+- 資料卡 ID 固定；缺資料不改變後續 ID。F10 永遠是產業資料，不接受 M10。
+- AI只能輸出研究偏向、合法來源及固定觀察項目；不允許自由文字、重寫金額股數或杜撰買卖門檻。正負因素由程式計算。
+- 不存在引用／額外欄位／截斷／部署錯版：顯示分析失敗，不冒充等待或避開；不自動重試。
+- 模型程式的註解／排版變更不再改變實驗雜湊；可執行語義變更仍建立新實驗。
+- 五日觀察分數和當日排名分開；沒有滿五天不得宣稱穩定化或績效已验证。
 
 ## 驗證
 
-安裝 Node.js 20+，執行 `python verify_release.py`。
-此命令執行所有 Python 測試、V93 前端整合測試及觀察排名測試，不呼叫真實 AI。
-需要以現有行情完整重算時，可另執行 `python rebuild_cache.py`；會更新本目錄的模型快取與研究紀錄，不抓新行情。執行前先備份 cache。
-現有199筆快取資料卡與前五名模擬回答均納入驗證；詳見 TEST_REPORT.md。
-沒有替使用者執行真實 API 推論，亦未部署到其線上帳號；這兩項不能以離線測試宣稱已通過。
+已有 cache 時安裝 Python 依賴及 Node.js，執行 `python verify_release.py`。測試全部離線，不使用真實 API Key。沒有 cache 的上傳包應在保留原 repo cache 的工作目錄中測試，或使用完整包。
 
-Groq 格式契約依據：https://console.groq.com/docs/structured-outputs
+## 仍有邊界
+
+這不是官方除權息總報酬資料。極端跳變排除是保守資料品質措施，不是公司行動辨識；較小的未核實事件仍可能影響結果。股票池也非已完整驗證的歷史成分股資料。
+
+研究排名 ≠ 進場資格。AI 的「可考慮買進」是未驗證研究偏向，不是程式核准買點。此版本沒有以改判買進掩飾資料錯誤；交易策略、同模型跨日換手及真實供應商穩定性仍需各自驗證。API 費用由使用者主動點擊產生，每次最多一個請求。

@@ -40,8 +40,8 @@ STRONG_CLOSE_DAY_RETURN_PCT = 5.0
 STRONG_CLOSE_LOCATION = 0.95
 TAIPEI_TZ = timezone(timedelta(hours=8))
 MODEL_CONTRACT_VERSION = "20d-net-executable-v2"
-MODEL_IMPLEMENTATION_VERSION = "v92"
-MODEL_NAME = "single_horizon_20d_rotation_v92"
+MODEL_IMPLEMENTATION_VERSION = "v94"
+MODEL_NAME = "single_horizon_20d_rotation_v94"
 
 def _number(value, default=0.0):
     try:
@@ -94,26 +94,17 @@ def _normalize_price_rows(rows):
             by_date[date]["_session_index"] = row["_session_index"]
     normalized = [by_date[date] for date in sorted(by_date)]
 
-    # FinMind close prices are not adjusted for every split/capital change.
-    # A large one-session discontinuity would otherwise be learned as a real
-    # gain/loss (for example a 4-for-1 split looks like a 75% crash). Rebase
-    # all older prices and volumes onto the newest share basis. The threshold
-    # is deliberately wide so ordinary limit-up/down moves remain untouched.
-    adjustment = 1.0
-    volume_adjustment = 1.0
+    # Raw prices only. Flag extreme boundaries; never manufacture corporate
+    # action factors. Windows crossing these boundaries are excluded below.
     raw_closes = [row["close"] for row in normalized]
     for index in range(len(normalized) - 1, 0, -1):
         newer = raw_closes[index]
         older = raw_closes[index - 1]
         ratio = newer / older if older > 0 else 1.0
         if ratio < 0.55 or ratio > 1.80:
-            adjustment *= ratio
-            volume_adjustment /= ratio
-        normalized[index - 1]["open"] *= adjustment
-        normalized[index - 1]["high"] *= adjustment
-        normalized[index - 1]["low"] *= adjustment
-        normalized[index - 1]["close"] *= adjustment
-        normalized[index - 1]["volume"] *= volume_adjustment
+            # Do not infer a corporate action coefficient from price movement.
+            # Keep original prices; crossing windows are unscorable.
+            normalized[index]["unverified_discontinuity"] = True
     return normalized
 
 
@@ -432,6 +423,10 @@ def _realized_outcome(stock_by_date, benchmark, signal_index):
     dates = [r["date"] for r in benchmark[signal_index + 1:signal_index + 21]]
     if any(d not in stock_by_date for d in dates):
         return None
+    if any(stock_by_date[d].get("unverified_discontinuity") for d in dates[1:]):
+        return None
+    if any(r.get("unverified_discontinuity") for r in benchmark[signal_index + 2:signal_index + 21]):
+        return None
     entry = stock_by_date[dates[0]]["open"]
     exit_price = stock_by_date[dates[-1]]["close"]
     benchmark_entry = benchmark[signal_index + 1]["open"]
@@ -484,6 +479,10 @@ def _prepare_samples(price_db, snapshot_date=None, benchmark_rows=None):
             calendar_index = positions[d]
             lookback = dates[max(0, calendar_index - 60):calendar_index + 1]
             if len(lookback) < 61 or [r["date"] for r in rows[index - 60:index + 1]] != lookback:
+                continue
+            if any(r.get("unverified_discontinuity") for r in rows[index - 59:index + 1]):
+                continue
+            if any(r.get("unverified_discontinuity") for r in benchmark[calendar_index - 59:calendar_index + 1]):
                 continue
             features = _feature_vector(rows, index, market)
             state = {
@@ -851,7 +850,7 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
     ranked, flow = _rank_states(list(current.values()), cohort, adaptation)
     available = {r["stock_id"]: r for r in ranked}
     output = {sid: available.get(sid, {
-        "available": False, "reason": "共同日期、250日歷史或至少12期成熟訓練資料不足",
+        "available": False, "reason": "共同日期、250日歷史、成熟訓練資料不足，或60日區間含未核實價格跳變；不產生可比較預測",
     }) for sid in universe_ids}
     fingerprint = hashlib.sha256(",".join(universe_ids).encode()).hexdigest()
     result = {

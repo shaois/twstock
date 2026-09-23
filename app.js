@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "v93";
-const MODEL_IMPLEMENTATION_VERSION = "v92";
-const MODEL_NAME = "single_horizon_20d_rotation_v92";
+const APP_VERSION = "v94";
+const MODEL_IMPLEMENTATION_VERSION = "v94";
+const MODEL_NAME = "single_horizon_20d_rotation_v94";
 const CONTRACT_VERSION = "20d-net-executable-v2";
 const MODEL_OBJECTIVE = "outperform_0050_net_return_over_next_20_trading_sessions";
 const BACKEND_URL = "https://twstock-app.onrender.com";
@@ -387,6 +387,7 @@ function showStock(stockId) {
       <button class="btn btn-primary" onclick="runAI20d('${escapeHtml(stockId)}')">AI 操作分析</button></div>
     <div class="panel">
       <div class="panel-title">20日研究估計・前瞻驗證尚待累積</div>
+      <p>這是研究排序，不是可買清單。進場資格：尚無獨立驗證的交易規則；AI偏向不會核准買點。</p>
       <div class="detail-grid">
         <div>${metric(observationRankingActive()?"觀察榜排名":"當日機率排名", "#" + displayRank(item))}
         ${item.observation_rank_20d ? metric("當日原始名次／觀察分數", `#${item.probability_rank_20d}／${number(item.observation_score_20d).toFixed(3)}（${item.observation_count}/5資料日）`) : ''}
@@ -396,7 +397,7 @@ function showStock(stockId) {
         ${metric("外資投信淨買／5日量", percent(item.institutional?.net_volume_pct))}
         ${metric("訊號日參考收盤價", money(item.current_price))}
         ${metric(f.return_shrinkage === 1 ? "20日淨報酬（全域共同基準）" : "預期20日淨報酬", percent(f.expected_net_return))}
-        ${metric("預期淨超額（對0050）", percent(f.expected_alpha))}
+        ${metric(f.alpha_shrinkage===1 ? "淨超額（全域共同基準，無個股區辨力）" : "預期淨超額（對0050）", percent(f.expected_alpha))}
         ${metric("淨獲利估計機率", percent(f.net_profit_probability, 1))}
         ${metric("超越0050估計機率", percent(f.outperform_probability, 1))}
         ${metric("淨報酬區間（25–75分位）", percent(f.range_low_net_return) + " ～ " + percent(f.range_high_net_return))}
@@ -494,7 +495,7 @@ function summarizeAIEvidence(history) {
   for (const count of [1,5,20]) {
     const window=bars.slice(-count);
     const range=window.length?`${window[0][0]} 至 ${last[0]}`:"無日期";
-    if (window.length<count) {add(`最近${count}根日線／法人：樣本不足`);continue;}
+    if (window.length<count) {add(`最近${count}根法人：樣本不足`);add(`最近${count}根日線：樣本不足`);continue;}
     const rows=window.map(b=>institutions.get(b[0]));
     const sums=[1,2].map(i=>rows.every(r=>r && Number.isFinite(r[i]))?rows.reduce((s,r)=>s+r[i],0):null);
     const combined=sums.every(n=>n!==null)?sums[0]+sums[1]:null;
@@ -518,7 +519,7 @@ async function loadAIHistory(stockId, item) {
     if (!response.ok) throw new Error("unavailable");
     const h = await response.json();
     if (h.version !== 1 || h.stock_id !== stockId || h.as_of_date !== item.as_of_date || h.aligned !== true ||
-        !Array.isArray(h.bars) || !h.bars.length || h.bars.length > 60 ||
+        !Array.isArray(h.bars) || !h.bars.length || h.bars.length > 61 ||
         !Array.isArray(h.institutions) || h.institutions.length > 20) throw new Error("mismatch");
     if (h.bars.some((b,i) => !Array.isArray(b) || b.length !== 6 || typeof b[0] !== "string" ||
         b[0] > item.as_of_date || (i && b[0] <= h.bars[i-1][0]) ||
@@ -531,6 +532,7 @@ async function loadAIHistory(stockId, item) {
         r.slice(1).some(n=>n!==null && !Number.isFinite(n)))) throw new Error("institutions");
     return {available:true, bars:h.bars, bar_columns:["date","open","high","low","close","volume_shares"],
       institutions:h.institutions, institution_columns:["date","foreign_net_shares","trust_net_shares"],
+      calendar_verified:h.calendar_verified===true,
       price_basis:"原始未還原日線，除權息未核實；法人缺值不是零，非即時行情"};
   } catch {
     return {available:false, reason:"連續資料缺失、過期或不匹配；僅能分析彙總，不能宣稱完成趨勢覆核"};

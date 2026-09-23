@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import copy
 import hashlib
 import json
@@ -81,7 +82,10 @@ def load_protocol(universe, now):
     digest = hashlib.sha256()
     for name in ("predictor.py", "research_protocol.py", "update_all.py", "rotation.py"):
         digest.update(name.encode())
-        digest.update((ROOT / name).read_text(encoding="utf-8").replace("\r\n", "\n").encode())
+        # Comments/formatting do not change experiment identity. Executable
+        # changes still start a new experiment rather than mixing forecasts.
+        source = (ROOT / name).read_text(encoding="utf-8-sig")
+        digest.update(ast.dump(ast.parse(source), include_attributes=False).encode())
     sectors = load_json(SECTORS_PATH, {}).get("data", {})
     digest.update(json.dumps({sid: v.get("industry_category") for sid,v in sectors.items()},
                              sort_keys=True, ensure_ascii=False).encode())
