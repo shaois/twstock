@@ -1,0 +1,16 @@
+const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
+const c=vm.createContext({document:{addEventListener(){}},window:{}});
+vm.runInContext(fs.readFileSync(require('path').join(__dirname,'../app.js'),'utf8'),c);
+vm.runInContext(`state.model={observation_ranking:{version:'v1'}};
+state.predictions={A:{available:true,prediction_20d:{},probability_rank_20d:2,observation_rank_20d:1,observation_rank_change:2},B:{available:true,prediction_20d:{},probability_rank_20d:1,observation_rank_20d:2,rank_change:3}};`,c);
+assert.equal(vm.runInContext('modelRows()[0].stockId',c),'A');
+assert.equal(vm.runInContext('rankingChange(state.predictions.A)',c),'↑2');
+assert.equal(vm.runInContext('rankingChange(state.predictions.B)',c),'首次／無可比紀錄');
+vm.runInContext('state.showDailyRanking=true',c);
+assert.equal(vm.runInContext('modelRows()[0].stockId',c),'B');
+assert.equal(vm.runInContext('rankingChange(state.predictions.B)',c),'↑3');
+vm.runInContext('state.model={};state.showDailyRanking=false',c);
+assert.equal(vm.runInContext('modelRows()[0].stockId',c),'B');
+vm.runInContext('state.showDailyRanking=true;state.model.rank_comparison_status="model_or_universe_changed"',c);
+assert.match(vm.runInContext('rankingChange({rank_change:120})',c),/不直接比較/);
+console.log('Observation/default, daily toggle, rank-change isolation, experiment-change warning and legacy fallback passed');
