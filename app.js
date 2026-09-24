@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "v94.1";
+const APP_VERSION = "v94.2";
 const MODEL_IMPLEMENTATION_VERSION = "v94";
 const MODEL_NAME = "single_horizon_20d_rotation_v94";
 const CONTRACT_VERSION = "20d-net-executable-v2";
@@ -124,7 +124,7 @@ function showLoadedSummary() {
     <p style="max-width:560px;line-height:1.9">
       資料日 ${escapeHtml(state.model.latest_date || "--")}，已讀取 ${Object.keys(state.predictions).length}/200 筆，可排序 ${modelRows().length} 支。<br>
       200支股票池量價狀態：${escapeHtml(flow.status || "尚無判斷")}；5日正資金流廣度 ${number(flow.positive_5d_pct).toFixed(1)}%。<br>
-      綠色按鈕重新讀取快取；黃色按鈕開啟觀察榜，可切換當日原始排名。排名不是買進資格。
+      綠色按鈕重新讀取快取；黃色按鈕開啟免費條件清單。原模型排行另列，未證明優於基準。
     </p>`;
 }
 
@@ -281,6 +281,7 @@ function candidateRowHtml(row, index) {
 }
 
 function show20dCandidates() {
+  state.boardGeneration=(state.boardGeneration||0)+1;
   if (!state.loaded) {
     showToast("請先按「重新載入快取」");
     return;
@@ -384,7 +385,7 @@ function showStock(stockId) {
   byId("stockDetail").innerHTML = `
     <div class="stock-header"><div class="stock-title"><h1>${escapeHtml(stockId)} ${escapeHtml(stockName(stockId))}</h1>
       <div class="sub">資料日 ${escapeHtml(item.as_of_date)}；研究候選，非投資建議</div></div>
-      <button class="btn btn-primary" onclick="runAI20d('${escapeHtml(stockId)}')">選用 AI 意見（需 API）</button></div>
+      <button class="btn btn-primary" onclick="showDecisionBoard()">返回免費條件清單</button></div>
     <div class="panel">
       <div class="panel-title">20日研究估計・前瞻驗證尚待累積</div>
       <p>這是研究排序，不是可買清單。進場資格：尚無獨立驗證的交易規則；AI偏向不會核准買點。</p>
@@ -458,6 +459,49 @@ async function loadEntryAssessment(stockId,item) {
     ${r.checks.map(x=>`<div>${x.pass===null?'缺資料':x.pass?'通過':'未通過'}｜${escapeHtml(x.group)}：${escapeHtml(x.label)}${Number.isFinite(x.value)?`；實際 ${escapeHtml(x.value.toLocaleString('zh-TW',{maximumFractionDigits:4}))}${escapeHtml(x.unit)}`:''} [${escapeHtml(x.ref)}]</div>`).join('')}
     ${r.checks.length?`<p>模型估計淨獲利機率 ${percent(r.probability)}；超越0050機率 ${percent(r.outperform)}（${Number.isFinite(r.outperform)?r.outperform>50?'估計高於五成':'估計未高於五成':'缺資料'}，本規則不代表能勝過0050）。下行10分位 ${percent(r.downside)}，不是最壞損失或停損價。</p>
     <p>${r.sharedReturn?'預期報酬為全域共同基準，不用來區分或支持此股票。':''} ${escapeHtml(r.invalidation)}</p>`:''}`;
+}
+
+// One assessment function powers both the list and detail. No AI request.
+async function showDecisionBoard() {
+  if(!state.loaded)return;
+  state.currentStockId='';
+  byId('welcome').style.display='none';byId('stockDetail').style.display='none';
+  const panel=byId('screenerResult');panel.style.display='block';
+  const predictions=state.predictions;
+  const generation=(state.boardGeneration||0)+1;state.boardGeneration=generation;
+  panel.innerHTML='<p>讀取同日期資料並核對條件…不呼叫 AI。</p>';
+  const rows=Object.entries(predictions).map(([stockId,item])=>({stockId,item})),results=[];let next=0;
+  await Promise.all(Array.from({length:Math.min(6,rows.length)},async()=>{
+    while(next<rows.length){
+      const row=rows[next++];
+      let history;
+      try {history=row.item?.available?await loadAIHistory(row.stockId,row.item):{available:false,reason:row.item?.reason||'模型資料不足'};}
+      catch {history={available:false,reason:'資料讀取失敗'};}
+      if(state.boardGeneration!==generation||state.predictions!==predictions)return;
+      const assessment=assessEntry(row.item,history);
+      results.push({...row,assessment});
+    }
+  }));
+  if(state.boardGeneration!==generation||state.currentStockId||state.predictions!==predictions)return;
+  state.boardResults=results;renderDecisionBoard('all');
+}
+
+function renderDecisionBoard(filter='all') {
+  const group=r=>r.assessment.status==='資料不足'?'missing':
+    !r.assessment.candidate?'excluded':r.assessment.checks.every(x=>x.pass===true)?'ready':'waiting';
+  const order={ready:0,waiting:1,excluded:2,missing:3};
+  const all=state.boardResults||[];
+  const rows=all.filter(r=>filter==='all'||group(r)===filter)
+    .sort((a,b)=>order[group(a)]-order[group(b)]||a.stockId.localeCompare(b.stockId));
+  byId('screenerResult').innerHTML=`<div class="screener-panel">
+    <div class="panel-title">候選與進場條件清單（免費）</div>
+    <p>資料日 ${escapeHtml(state.model.latest_date)}。按條件狀態分組，同組依代碼；不是預測排名，也不是已驗證的買點。選股規則未經獨立績效驗證。</p>
+    <p>20日是評估期限，不代表名單固定20天。此清單與個股頁使用同一判讀函式；沒有第二個 AI 結論。</p>
+    ${[['all','全部'],['ready','符合觀察進場條件'],['waiting','候選／等待條件'],['excluded','未符合候選'],['missing','資料不足']].map(([k,label])=>`<button onclick="renderDecisionBoard('${k}')">${label} (${all.filter(r=>k==='all'||group(r)===k).length})</button>`).join(' ')}
+    <button onclick="state.boardGeneration++;show20dCandidates()">原模型研究排名／驗證資料</button>
+    <table><thead><tr><th>股票</th><th>條件狀態</th><th>原因</th></tr></thead><tbody>
+    ${rows.map(r=>`<tr><td><button onclick="showStock('${escapeHtml(r.stockId)}')">${escapeHtml(r.stockId)} ${escapeHtml(stockName(r.stockId))}</button></td><td>${escapeHtml(r.assessment.status)}</td><td>${escapeHtml(r.assessment.reason)}</td></tr>`).join('')||'<tr><td colspan="3">此分類沒有股票，不放寬條件湊數。</td></tr>'}
+    </tbody></table></div>`;
 }
 
 function modelDecision(stockId) {

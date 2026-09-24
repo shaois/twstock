@@ -1,0 +1,3116 @@
+{
+  "method": "fixed_rules_chronological_nonoverlapping_20_sessions",
+  "cost_pct_each": 0.6,
+  "status": "exploratory_not_independent_validation",
+  "limitations": [
+    "current universe survivorship bias",
+    "raw prices: corporate actions unverified",
+    "fixed rules chosen after earlier research; not untouched holdout",
+    "normal intervals descriptive, small samples/regime dependence",
+    "no historical institutional entry-rule performance claimed"
+  ],
+  "rules": {
+    "momentum20_top20pct": {
+      "all": {
+        "periods": 32,
+        "mean_net_return": 3.2082859165649977,
+        "mean_excess_universe": 1.363239592523016,
+        "mean_excess_0050": 0.5183456802633332,
+        "positive_excess_periods": 20,
+        "worst_period_net": -10.155917816414572,
+        "descriptive_95pct_normal_interval": [
+          0.07339894556810567,
+          2.6530802394779265
+        ]
+      },
+      "later_half": {
+        "periods": 16,
+        "mean_net_return": 1.3313021452181022,
+        "mean_excess_universe": 1.1019825229970583,
+        "mean_excess_0050": -0.662262954107549,
+        "positive_excess_periods": 9,
+        "worst_period_net": -10.155917816414572,
+        "descriptive_95pct_normal_interval": [
+          -0.9179722353086317,
+          3.121937281302748
+        ]
+      },
+      "excluded_periods": 16,
+      "periods": [
+        {
+          "signal_date": "2022-10-27",
+          "exit_date": "2022-11-24",
+          "count": 40,
+          "net": 15.023124153013185,
+          "excess_universe": 2.2439193258669103,
+          "alpha": -2.7338738185892533
+        },
+        {
+          "signal_date": "2022-11-24",
+          "exit_date": "2022-12-22",
+          "count": 40,
+          "net": -5.374182827876057,
+          "excess_universe": -3.9669170953992223,
+          "alpha": -1.3022582672245282
+        },
+        {
+          "signal_date": "2022-12-22",
+          "exit_date": "2023-02-01",
+          "count": 40,
+          "net": 4.966489021827928,
+          "excess_universe": -2.2081298584915805,
+          "alpha": -1.931252622255172
+        },
+        {
+          "signal_date": "2023-02-01",
+          "exit_date": "2023-03-03",
+          "count": 40,
+          "net": 3.426407253602652,
+          "excess_universe": 0.5637107802939281,
+          "alpha": 4.816099689180379
+        },
+        {
+          "signal_date": "2023-03-03",
+          "exit_date": "2023-03-31",
+          "count": 40,
+          "net": 1.0367294223634125,
+          "excess_universe": 0.4617771427206677,
+          "alpha": 0.42990462003300406
+        },
+        {
+          "signal_date": "2023-03-31",
+          "exit_date": "2023-05-04",
+          "count": 40,
+          "net": 0.054065885962359284,
+          "excess_universe": 0.5773575246873381,
+          "alpha": 3.42609732990112
+        },
+        {
+          "signal_date": "2023-05-04",
+          "exit_date": "2023-06-01",
+          "count": 40,
+          "net": 10.38605087436654,
+          "excess_universe": 4.019812872266584,
+          "alpha": 4.656399217612085
+        },
+        {
+          "signal_date": "2023-06-01",
+          "exit_date": "2023-07-03",
+          "count": 40,
+          "net": 12.66942854741228,
+          "excess_universe": 8.877585975165179,
+          "alpha": 9.374357005281924
+        },
+        {
+          "signal_date": "2023-07-03",
+          "exit_date": "2023-07-31",
+          "count": 40,
+          "net": 10.608416556720659,
+          "excess_universe": 7.341771867232431,
+          "alpha": 12.699812350219698
+        },
+        {
+          "signal_date": "2023-09-26",
+          "exit_date": "2023-10-27",
+          "count": 40,
+          "net": 0.3289340418617868,
+          "excess_universe": 2.2388627154301655,
+          "alpha": 0.5596275174465174
+        },
+        {
+          "signal_date": "2023-10-27",
+          "exit_date": "2023-11-24",
+          "count": 40,
+          "net": 6.826177706337462,
+          "excess_universe": 0.8731663362456876,
+          "alpha": 0.2366352226773335
+        },
+        {
+          "signal_date": "2023-11-24",
+          "exit_date": "2023-12-22",
+          "count": 40,
+          "net": 1.3138665469983306,
+          "excess_universe": -1.2795688640843914,
+          "alpha": 0.5800250835836884
+        },
+        {
+          "signal_date": "2023-12-22",
+          "exit_date": "2024-01-22",
+          "count": 40,
+          "net": -1.351910272713759,
+          "excess_universe": -0.5348553222490076,
+          "alpha": -1.353414032112273
+        },
+        {
+          "signal_date": "2024-01-22",
+          "exit_date": "2024-02-29",
+          "count": 40,
+          "net": 10.539736758665953,
+          "excess_universe": 4.208488743564104,
+          "alpha": 4.11957245694825
+        },
+        {
+          "signal_date": "2024-02-29",
+          "exit_date": "2024-03-28",
+          "count": 40,
+          "net": 2.358863927019036,
+          "excess_universe": -1.0180400765580693,
+          "alpha": -6.341031579773008
+        },
+        {
+          "signal_date": "2024-04-29",
+          "exit_date": "2024-05-28",
+          "count": 40,
+          "net": 8.55211741102852,
+          "excess_universe": 3.593004526092857,
+          "alpha": -0.053431138782318
+        },
+        {
+          "signal_date": "2024-06-26",
+          "exit_date": "2024-07-26",
+          "count": 40,
+          "net": -4.154059846798066,
+          "excess_universe": -0.7227620788889118,
+          "alpha": -1.0486132237043888
+        },
+        {
+          "signal_date": "2024-08-23",
+          "exit_date": "2024-09-23",
+          "count": 40,
+          "net": -0.18246220485379236,
+          "excess_universe": 1.6418700758409586,
+          "alpha": -0.04847097678360801
+        },
+        {
+          "signal_date": "2024-09-23",
+          "exit_date": "2024-10-24",
+          "count": 40,
+          "net": -1.0717218580706267,
+          "excess_universe": -1.0638548651688275,
+          "alpha": -6.803599587328278
+        },
+        {
+          "signal_date": "2024-10-24",
+          "exit_date": "2024-11-22",
+          "count": 40,
+          "net": -2.3527160134598697,
+          "excess_universe": 0.47307850839716536,
+          "alpha": -0.75271601345988
+        },
+        {
+          "signal_date": "2024-11-22",
+          "exit_date": "2024-12-20",
+          "count": 40,
+          "net": -0.9557489928165133,
+          "excess_universe": 2.055571825038664,
+          "alpha": 0.7228334416981169
+        },
+        {
+          "signal_date": "2024-12-20",
+          "exit_date": "2025-01-20",
+          "count": 40,
+          "net": -0.8917259097828578,
+          "excess_universe": 0.597173328510781,
+          "alpha": -2.1407243689508295
+        },
+        {
+          "signal_date": "2025-01-20",
+          "exit_date": "2025-02-26",
+          "count": 40,
+          "net": 3.2814363317761512,
+          "excess_universe": -1.399396234562548,
+          "alpha": 5.199226499034144
+        },
+        {
+          "signal_date": "2025-02-26",
+          "exit_date": "2025-03-27",
+          "count": 40,
+          "net": -6.13182269643423,
+          "excess_universe": -0.9747801755227883,
+          "alpha": 1.6238582473975132
+        },
+        {
+          "signal_date": "2025-03-27",
+          "exit_date": "2025-04-28",
+          "count": 40,
+          "net": -10.155917816414572,
+          "excess_universe": 1.7998702722725088,
+          "alpha": -2.85762030036657
+        },
+        {
+          "signal_date": "2025-04-28",
+          "exit_date": "2025-05-27",
+          "count": 40,
+          "net": 3.8931461211106178,
+          "excess_universe": -1.0817028767528858,
+          "alpha": -2.6262077526554592
+        },
+        {
+          "signal_date": "2025-08-27",
+          "exit_date": "2025-09-24",
+          "count": 40,
+          "net": -2.7035095749702527,
+          "excess_universe": -4.5219480427807035,
+          "alpha": -12.709570181030873
+        },
+        {
+          "signal_date": "2025-12-23",
+          "exit_date": "2026-01-22",
+          "count": 41,
+          "net": 13.664821412218174,
+          "excess_universe": 4.380728570950236,
+          "alpha": 1.989606400490272
+        },
+        {
+          "signal_date": "2026-01-22",
+          "exit_date": "2026-03-03",
+          "count": 41,
+          "net": 3.9060028548612613,
+          "excess_universe": 0.08027753647735736,
+          "alpha": -4.717298116012544
+        },
+        {
+          "signal_date": "2026-03-03",
+          "exit_date": "2026-03-31",
+          "count": 41,
+          "net": 1.9702488812387142,
+          "excess_universe": 5.2491330902595355,
+          "alpha": 9.0947966848563
+        },
+        {
+          "signal_date": "2026-03-31",
+          "exit_date": "2026-04-30",
+          "count": 41,
+          "net": 26.882943146050465,
+          "excess_universe": 13.585894292700203,
+          "alpha": 6.816276479383788
+        },
+        {
+          "signal_date": "2026-05-29",
+          "exit_date": "2026-06-29",
+          "count": 41,
+          "net": -3.69807951016497,
+          "excess_universe": -2.467432858817812,
+          "alpha": -2.337984498288488
+        }
+      ]
+    },
+    "momentum5_top20pct": {
+      "all": {
+        "periods": 32,
+        "mean_net_return": 3.0093021859799958,
+        "mean_excess_universe": 1.1642558619380141,
+        "mean_excess_0050": 0.31936194967833126,
+        "positive_excess_periods": 19,
+        "worst_period_net": -11.234801767262718,
+        "descriptive_95pct_normal_interval": [
+          0.0004731431882771808,
+          2.328038580687751
+        ]
+      },
+      "later_half": {
+        "periods": 16,
+        "mean_net_return": 0.6954839228466405,
+        "mean_excess_universe": 0.46616430062559666,
+        "mean_excess_0050": -1.2980811764790106,
+        "positive_excess_periods": 9,
+        "worst_period_net": -11.234801767262718,
+        "descriptive_95pct_normal_interval": [
+          -0.5413593077911896,
+          1.473687909042383
+        ]
+      },
+      "excluded_periods": 16,
+      "periods": [
+        {
+          "signal_date": "2022-10-27",
+          "exit_date": "2022-11-24",
+          "count": 40,
+          "net": 15.12278961039139,
+          "excess_universe": 2.343584783245115,
+          "alpha": -2.634208361211047
+        },
+        {
+          "signal_date": "2022-11-24",
+          "exit_date": "2022-12-22",
+          "count": 40,
+          "net": -2.164535269049584,
+          "excess_universe": -0.7572695365727493,
+          "alpha": 1.9073892916019448
+        },
+        {
+          "signal_date": "2022-12-22",
+          "exit_date": "2023-02-01",
+          "count": 40,
+          "net": 2.3925932315279748,
+          "excess_universe": -4.782025648791533,
+          "alpha": -4.505148412555125
+        },
+        {
+          "signal_date": "2023-02-01",
+          "exit_date": "2023-03-03",
+          "count": 40,
+          "net": 2.921680735143096,
+          "excess_universe": 0.05898426183437211,
+          "alpha": 4.311373170720823
+        },
+        {
+          "signal_date": "2023-03-03",
+          "exit_date": "2023-03-31",
+          "count": 40,
+          "net": 1.9111513952413115,
+          "excess_universe": 1.3361991155985669,
+          "alpha": 1.3043265929109031
+        },
+        {
+          "signal_date": "2023-03-31",
+          "exit_date": "2023-05-04",
+          "count": 40,
+          "net": -2.093070397362548,
+          "excess_universe": -1.5697787586375693,
+          "alpha": 1.2789610465762125
+        },
+        {
+          "signal_date": "2023-05-04",
+          "exit_date": "2023-06-01",
+          "count": 40,
+          "net": 14.887673230865216,
+          "excess_universe": 8.521435228765261,
+          "alpha": 9.15802157411076
+        },
+        {
+          "signal_date": "2023-06-01",
+          "exit_date": "2023-07-03",
+          "count": 40,
+          "net": 10.642726601327933,
+          "excess_universe": 6.850884029080831,
+          "alpha": 7.347655059197575
+        },
+        {
+          "signal_date": "2023-07-03",
+          "exit_date": "2023-07-31",
+          "count": 40,
+          "net": 12.590914820346978,
+          "excess_universe": 9.32427013085875,
+          "alpha": 14.682310613846017
+        },
+        {
+          "signal_date": "2023-09-26",
+          "exit_date": "2023-10-27",
+          "count": 40,
+          "net": -3.5004553493586714,
+          "excess_universe": -1.5905266757902927,
+          "alpha": -3.2697618737739407
+        },
+        {
+          "signal_date": "2023-10-27",
+          "exit_date": "2023-11-24",
+          "count": 40,
+          "net": 3.66592872823821,
+          "excess_universe": -2.2870826418535644,
+          "alpha": -2.923613755421918
+        },
+        {
+          "signal_date": "2023-11-24",
+          "exit_date": "2023-12-22",
+          "count": 40,
+          "net": 2.521651982399634,
+          "excess_universe": -0.07178342868308807,
+          "alpha": 1.7878105189849918
+        },
+        {
+          "signal_date": "2023-12-22",
+          "exit_date": "2024-01-22",
+          "count": 40,
+          "net": 1.3036145478802554,
+          "excess_universe": 2.120669498345007,
+          "alpha": 1.3021107884817416
+        },
+        {
+          "signal_date": "2024-01-22",
+          "exit_date": "2024-02-29",
+          "count": 40,
+          "net": 7.717895431647531,
+          "excess_universe": 1.3866474165456815,
+          "alpha": 1.2977311299298286
+        },
+        {
+          "signal_date": "2024-02-29",
+          "exit_date": "2024-03-28",
+          "count": 40,
+          "net": 3.7942845321140566,
+          "excess_universe": 0.4173805285369512,
+          "alpha": -4.905610974677988
+        },
+        {
+          "signal_date": "2024-04-29",
+          "exit_date": "2024-05-28",
+          "count": 40,
+          "net": 13.45508335446083,
+          "excess_universe": 8.495970469525167,
+          "alpha": 4.849534804649992
+        },
+        {
+          "signal_date": "2024-06-26",
+          "exit_date": "2024-07-26",
+          "count": 40,
+          "net": -4.9717371418001415,
+          "excess_universe": -1.5404393738909876,
+          "alpha": -1.866290518706465
+        },
+        {
+          "signal_date": "2024-08-23",
+          "exit_date": "2024-09-23",
+          "count": 40,
+          "net": -2.1376099088841563,
+          "excess_universe": -0.3132776281894054,
+          "alpha": -2.003618680813972
+        },
+        {
+          "signal_date": "2024-09-23",
+          "exit_date": "2024-10-24",
+          "count": 40,
+          "net": -2.2844094033807467,
+          "excess_universe": -2.276542410478948,
+          "alpha": -8.016287132638398
+        },
+        {
+          "signal_date": "2024-10-24",
+          "exit_date": "2024-11-22",
+          "count": 40,
+          "net": -0.11496047648175271,
+          "excess_universe": 2.7108340453752824,
+          "alpha": 1.4850395235182372
+        },
+        {
+          "signal_date": "2024-11-22",
+          "exit_date": "2024-12-20",
+          "count": 40,
+          "net": -3.128950317616183,
+          "excess_universe": -0.11762949976100545,
+          "alpha": -1.450367883101553
+        },
+        {
+          "signal_date": "2024-12-20",
+          "exit_date": "2025-01-20",
+          "count": 40,
+          "net": -2.9955197654684627,
+          "excess_universe": -1.5066205271748239,
+          "alpha": -4.244518224636434
+        },
+        {
+          "signal_date": "2025-01-20",
+          "exit_date": "2025-02-26",
+          "count": 40,
+          "net": 5.303695313256189,
+          "excess_universe": 0.6228627469174901,
+          "alpha": 7.221485480514182
+        },
+        {
+          "signal_date": "2025-02-26",
+          "exit_date": "2025-03-27",
+          "count": 40,
+          "net": -5.078505277828512,
+          "excess_universe": 0.07853724308292964,
+          "alpha": 2.677175666003231
+        },
+        {
+          "signal_date": "2025-03-27",
+          "exit_date": "2025-04-28",
+          "count": 40,
+          "net": -11.234801767262718,
+          "excess_universe": 0.7209863214243626,
+          "alpha": -3.936504251214717
+        },
+        {
+          "signal_date": "2025-04-28",
+          "exit_date": "2025-05-27",
+          "count": 40,
+          "net": 8.014452375679518,
+          "excess_universe": 3.0396033778160145,
+          "alpha": 1.4950985019134415
+        },
+        {
+          "signal_date": "2025-08-27",
+          "exit_date": "2025-09-24",
+          "count": 40,
+          "net": 1.0080546169542235,
+          "excess_universe": -0.8103838508562275,
+          "alpha": -8.998005989106396
+        },
+        {
+          "signal_date": "2025-12-23",
+          "exit_date": "2026-01-22",
+          "count": 41,
+          "net": 14.408887798711646,
+          "excess_universe": 5.124794957443708,
+          "alpha": 2.733672786983744
+        },
+        {
+          "signal_date": "2026-01-22",
+          "exit_date": "2026-03-03",
+          "count": 41,
+          "net": 4.058156488070512,
+          "excess_universe": 0.23243116968660837,
+          "alpha": -4.565144482803293
+        },
+        {
+          "signal_date": "2026-03-03",
+          "exit_date": "2026-03-31",
+          "count": 41,
+          "net": -2.3587446370836256,
+          "excess_universe": 0.9201395719371952,
+          "alpha": 4.765803166533961
+        },
+        {
+          "signal_date": "2026-03-31",
+          "exit_date": "2026-04-30",
+          "count": 41,
+          "net": 15.978500005770076,
+          "excess_universe": 2.6814511524198146,
+          "alpha": -4.088166660896602
+        },
+        {
+          "signal_date": "2026-05-29",
+          "exit_date": "2026-06-29",
+          "count": 41,
+          "net": -3.3387651370896183,
+          "excess_universe": -2.1081184857424606,
+          "alpha": -1.9786701252131358
+        }
+      ]
+    },
+    "positive20_only": {
+      "all": {
+        "periods": 32,
+        "mean_net_return": 2.263522911884048,
+        "mean_excess_universe": 0.4184765878420662,
+        "mean_excess_0050": -0.4264173244176166,
+        "positive_excess_periods": 19,
+        "worst_period_net": -10.163129937398708,
+        "descriptive_95pct_normal_interval": [
+          -0.1528848684979085,
+          0.9898380441820409
+        ]
+      },
+      "later_half": {
+        "periods": 16,
+        "mean_net_return": 0.7321498405652137,
+        "mean_excess_universe": 0.5028302183441699,
+        "mean_excess_0050": -1.2614152587604375,
+        "positive_excess_periods": 8,
+        "worst_period_net": -10.163129937398708,
+        "descriptive_95pct_normal_interval": [
+          -0.5845592985162588,
+          1.5902197352045984
+        ]
+      },
+      "excluded_periods": 16,
+      "periods": [
+        {
+          "signal_date": "2022-10-27",
+          "exit_date": "2022-11-24",
+          "count": 75,
+          "net": 12.719630623800157,
+          "excess_universe": -0.05957420334611818,
+          "alpha": -5.037367347802281
+        },
+        {
+          "signal_date": "2022-11-24",
+          "exit_date": "2022-12-22",
+          "count": 186,
+          "net": -1.3235052561108265,
+          "excess_universe": 0.08376047636600803,
+          "alpha": 2.748419304540702
+        },
+        {
+          "signal_date": "2022-12-22",
+          "exit_date": "2023-02-01",
+          "count": 83,
+          "net": 5.628175872658647,
+          "excess_universe": -1.5464430076608613,
+          "alpha": -1.269565771424453
+        },
+        {
+          "signal_date": "2023-02-01",
+          "exit_date": "2023-03-03",
+          "count": 168,
+          "net": 2.557954712542551,
+          "excess_universe": -0.3047417607661731,
+          "alpha": 3.9476471481202777
+        },
+        {
+          "signal_date": "2023-03-03",
+          "exit_date": "2023-03-31",
+          "count": 141,
+          "net": 1.2359632791069122,
+          "excess_universe": 0.6610109994641674,
+          "alpha": 0.6291384767765037
+        },
+        {
+          "signal_date": "2023-03-31",
+          "exit_date": "2023-05-04",
+          "count": 110,
+          "net": -0.33299157191565415,
+          "excess_universe": 0.1903000668093247,
+          "alpha": 3.0390398720231064
+        },
+        {
+          "signal_date": "2023-05-04",
+          "exit_date": "2023-06-01",
+          "count": 96,
+          "net": 7.185131240453118,
+          "excess_universe": 0.8188932383531631,
+          "alpha": 1.4554795836986636
+        },
+        {
+          "signal_date": "2023-06-01",
+          "exit_date": "2023-07-03",
+          "count": 150,
+          "net": 4.808506183541975,
+          "excess_universe": 1.0166636112948728,
+          "alpha": 1.5134346414116178
+        },
+        {
+          "signal_date": "2023-07-03",
+          "exit_date": "2023-07-31",
+          "count": 132,
+          "net": 4.680755873213304,
+          "excess_universe": 1.4141111837250766,
+          "alpha": 6.772151666712344
+        },
+        {
+          "signal_date": "2023-09-26",
+          "exit_date": "2023-10-27",
+          "count": 94,
+          "net": -1.1502203954313888,
+          "excess_universe": 0.7597082781369899,
+          "alpha": -0.9195269198466582
+        },
+        {
+          "signal_date": "2023-10-27",
+          "exit_date": "2023-11-24",
+          "count": 67,
+          "net": 6.338761485367892,
+          "excess_universe": 0.38575011527611824,
+          "alpha": -0.25078099829223577
+        },
+        {
+          "signal_date": "2023-11-24",
+          "exit_date": "2023-12-22",
+          "count": 178,
+          "net": 2.2485713150284856,
+          "excess_universe": -0.3448640960542364,
+          "alpha": 1.5147298516138432
+        },
+        {
+          "signal_date": "2023-12-22",
+          "exit_date": "2024-01-22",
+          "count": 121,
+          "net": -0.7351993504265104,
+          "excess_universe": 0.0818556000382411,
+          "alpha": -0.7367031098250244
+        },
+        {
+          "signal_date": "2024-01-22",
+          "exit_date": "2024-02-29",
+          "count": 80,
+          "net": 8.36169734028047,
+          "excess_universe": 2.030449325178621,
+          "alpha": 1.9415330385627678
+        },
+        {
+          "signal_date": "2024-02-29",
+          "exit_date": "2024-03-28",
+          "count": 148,
+          "net": 3.8615146315884745,
+          "excess_universe": 0.4846106280113691,
+          "alpha": -4.83838087520357
+        },
+        {
+          "signal_date": "2024-04-29",
+          "exit_date": "2024-05-28",
+          "count": 111,
+          "net": 4.633589747548502,
+          "excess_universe": -0.32552313738716165,
+          "alpha": -3.9719588022623373
+        },
+        {
+          "signal_date": "2024-06-26",
+          "exit_date": "2024-07-26",
+          "count": 105,
+          "net": -3.4434006055561945,
+          "excess_universe": -0.012102837647040676,
+          "alpha": -0.33795398246251773
+        },
+        {
+          "signal_date": "2024-08-23",
+          "exit_date": "2024-09-23",
+          "count": 88,
+          "net": -1.1297245641060205,
+          "excess_universe": 0.6946077165887303,
+          "alpha": -0.9957333360358361
+        },
+        {
+          "signal_date": "2024-09-23",
+          "exit_date": "2024-10-24",
+          "count": 83,
+          "net": -0.22892128918751248,
+          "excess_universe": -0.2210542962857134,
+          "alpha": -5.960799018445164
+        },
+        {
+          "signal_date": "2024-10-24",
+          "exit_date": "2024-11-22",
+          "count": 92,
+          "net": -1.514830411353145,
+          "excess_universe": 1.31096411050389,
+          "alpha": 0.08516958864684497
+        },
+        {
+          "signal_date": "2024-11-22",
+          "exit_date": "2024-12-20",
+          "count": 77,
+          "net": -1.8930725561033315,
+          "excess_universe": 1.1182482617518459,
+          "alpha": -0.21449012158870126
+        },
+        {
+          "signal_date": "2024-12-20",
+          "exit_date": "2025-01-20",
+          "count": 69,
+          "net": -1.9003637454680804,
+          "excess_universe": -0.4114645071744416,
+          "alpha": -3.149362204636052
+        },
+        {
+          "signal_date": "2025-01-20",
+          "exit_date": "2025-02-26",
+          "count": 92,
+          "net": 4.564366389613087,
+          "excess_universe": -0.11646617672561188,
+          "alpha": 6.482156556871081
+        },
+        {
+          "signal_date": "2025-02-26",
+          "exit_date": "2025-03-27",
+          "count": 165,
+          "net": -4.544129434551091,
+          "excess_universe": 0.6129130863603507,
+          "alpha": 3.2115515092806524
+        },
+        {
+          "signal_date": "2025-03-27",
+          "exit_date": "2025-04-28",
+          "count": 52,
+          "net": -10.163129937398708,
+          "excess_universe": 1.7926581512883732,
+          "alpha": -2.8648324213507053
+        },
+        {
+          "signal_date": "2025-04-28",
+          "exit_date": "2025-05-27",
+          "count": 10,
+          "net": 1.6167270160250982,
+          "excess_universe": -3.3581219818384054,
+          "alpha": -4.902626857740978
+        },
+        {
+          "signal_date": "2025-08-27",
+          "exit_date": "2025-09-24",
+          "count": 118,
+          "net": 1.3893111873619177,
+          "excess_universe": -0.4291272804485333,
+          "alpha": -8.616749418698703
+        },
+        {
+          "signal_date": "2025-12-23",
+          "exit_date": "2026-01-22",
+          "count": 140,
+          "net": 10.846714100184862,
+          "excess_universe": 1.5626212589169235,
+          "alpha": -0.8285009115430406
+        },
+        {
+          "signal_date": "2026-01-22",
+          "exit_date": "2026-03-03",
+          "count": 141,
+          "net": 2.628942978580327,
+          "excess_universe": -1.196782339803577,
+          "alpha": -5.994357992293478
+        },
+        {
+          "signal_date": "2026-03-03",
+          "exit_date": "2026-03-31",
+          "count": 117,
+          "net": -2.287329062701078,
+          "excess_universe": 0.991555146319743,
+          "alpha": 4.837218740916509
+        },
+        {
+          "signal_date": "2026-03-31",
+          "exit_date": "2026-04-30",
+          "count": 57,
+          "net": 20.511688021966325,
+          "excess_universe": 7.214639168616063,
+          "alpha": 0.44502135529964665
+        },
+        {
+          "signal_date": "2026-05-29",
+          "exit_date": "2026-06-29",
+          "count": 156,
+          "net": -2.738450638263037,
+          "excess_universe": -1.507803986915879,
+          "alpha": -1.3783556263865542
+        }
+      ]
+    }
+  },
+  "cache_date": "2026-09-21",
+  "existing_model_validation": {
+    "periods": 21,
+    "sample_picks": 4166,
+    "return_error_diagnostic": {
+      "scope": "chronological_replay_not_untouched_holdout",
+      "periods": 21,
+      "model_mse": 207.556518,
+      "model_mae": 9.54068,
+      "prior_mean_mse": 207.291564,
+      "local_mean_mse": 207.650927,
+      "note": "各期等權，未證明交易獲利能力；不以這份報告再選參數"
+    },
+    "raw_profit_calibration": {
+      "bins": [
+        {
+          "lower_pct": 0,
+          "upper_pct": 20,
+          "count": 0,
+          "periods": 0,
+          "predicted_pct": null,
+          "observed_pct": null
+        },
+        {
+          "lower_pct": 20,
+          "upper_pct": 40,
+          "count": 23,
+          "periods": 11,
+          "predicted_pct": 39.54,
+          "observed_pct": 52.17
+        },
+        {
+          "lower_pct": 40,
+          "upper_pct": 60,
+          "count": 4143,
+          "periods": 21,
+          "predicted_pct": 46.24,
+          "observed_pct": 47.57
+        },
+        {
+          "lower_pct": 60,
+          "upper_pct": 80,
+          "count": 0,
+          "periods": 0,
+          "predicted_pct": null,
+          "observed_pct": null
+        },
+        {
+          "lower_pct": 80,
+          "upper_pct": 100,
+          "count": 0,
+          "periods": 0,
+          "predicted_pct": null,
+          "observed_pct": null
+        }
+      ],
+      "periods": 21,
+      "sample_count": 4166,
+      "brier_score": 0.2512,
+      "training_base_rate_brier": 0.25062,
+      "mean_probability_error_pp": -1.37,
+      "status": "chronological_diagnostic_not_independent_validation",
+      "uncertainty": "股票同期間相關；樣本筆數不等於獨立樣本數，未宣稱統計顯著"
+    },
+    "raw_outperform_calibration": {
+      "bins": [
+        {
+          "lower_pct": 0,
+          "upper_pct": 20,
+          "count": 0,
+          "periods": 0,
+          "predicted_pct": null,
+          "observed_pct": null
+        },
+        {
+          "lower_pct": 20,
+          "upper_pct": 40,
+          "count": 3481,
+          "periods": 21,
+          "predicted_pct": 37.26,
+          "observed_pct": 39.67
+        },
+        {
+          "lower_pct": 40,
+          "upper_pct": 60,
+          "count": 685,
+          "periods": 21,
+          "predicted_pct": 41.37,
+          "observed_pct": 36.93
+        },
+        {
+          "lower_pct": 60,
+          "upper_pct": 80,
+          "count": 0,
+          "periods": 0,
+          "predicted_pct": null,
+          "observed_pct": null
+        },
+        {
+          "lower_pct": 80,
+          "upper_pct": 100,
+          "count": 0,
+          "periods": 0,
+          "predicted_pct": null,
+          "observed_pct": null
+        }
+      ],
+      "periods": 21,
+      "sample_count": 4166,
+      "brier_score": 0.24015,
+      "training_base_rate_brier": 0.23952,
+      "mean_probability_error_pp": -1.25,
+      "status": "chronological_diagnostic_not_independent_validation",
+      "uncertainty": "股票同期間相關；樣本筆數不等於獨立樣本數，未宣稱統計顯著"
+    },
+    "scope": "all_stock_probability_ranking",
+    "status": "research_replay_only",
+    "period_details": [
+      {
+        "date": "2024-08-22",
+        "training_periods": 12,
+        "max_training_label_end": "2024-07-23",
+        "ranked": 196,
+        "evaluated": 196,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 0.0,
+          "alpha_shrinkage": 0.0,
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "status": "insufficient_separate_periods_raw_estimate",
+          "tuning_dates": [],
+          "calibration_dates": [],
+          "max_label_end": null
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 2.473297409219571,
+            "alpha": 1.1459231075435943
+          },
+          {
+            "quintile": 2,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": -0.28634295332292065,
+            "alpha": -1.6137172549988976
+          },
+          {
+            "quintile": 3,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": -0.3987262553029216,
+            "alpha": -1.7261005569788987
+          },
+          {
+            "quintile": 4,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": -2.215371513219888,
+            "alpha": -3.5427458148958655
+          },
+          {
+            "quintile": 5,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": -3.3163082899323753,
+            "alpha": -4.643682591608353
+          }
+        ]
+      },
+      {
+        "date": "2024-09-20",
+        "training_periods": 13,
+        "max_training_label_end": "2024-08-22",
+        "ranked": 198,
+        "evaluated": 198,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 0.0,
+          "alpha_shrinkage": 0.0,
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "status": "insufficient_separate_periods_raw_estimate",
+          "tuning_dates": [],
+          "calibration_dates": [],
+          "max_label_end": null
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 0.6585757351226387,
+            "alpha": -6.109268691061972
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 4.9260374555432715,
+            "alpha": -1.8418069706413394
+          },
+          {
+            "quintile": 3,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 1.2601124713938117,
+            "alpha": -5.5077319547908
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -2.0698699209096265,
+            "alpha": -8.837714347094238
+          },
+          {
+            "quintile": 5,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 2.0007096350345757,
+            "alpha": -4.767134791150036
+          }
+        ]
+      },
+      {
+        "date": "2024-10-23",
+        "training_periods": 14,
+        "max_training_label_end": "2024-09-20",
+        "ranked": 198,
+        "evaluated": 198,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 0.0,
+          "alpha_shrinkage": 0.0,
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "status": "insufficient_separate_periods_raw_estimate",
+          "tuning_dates": [],
+          "calibration_dates": [],
+          "max_label_end": null
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -4.1961407531086214,
+            "alpha": -0.2032836102514795
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -3.504370532746186,
+            "alpha": 0.48848661011095607
+          },
+          {
+            "quintile": 3,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": -3.9737070050911236,
+            "alpha": 0.019150137766018236
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -2.795242472704588,
+            "alpha": 1.1976146701525539
+          },
+          {
+            "quintile": 5,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": -4.551985449746036,
+            "alpha": -0.5591283068888943
+          }
+        ]
+      },
+      {
+        "date": "2024-11-21",
+        "training_periods": 15,
+        "max_training_label_end": "2024-10-23",
+        "ranked": 198,
+        "evaluated": 198,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 0.0,
+          "alpha_shrinkage": 0.0,
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "status": "insufficient_separate_periods_raw_estimate",
+          "tuning_dates": [],
+          "calibration_dates": [],
+          "max_label_end": null
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -3.3131053793162435,
+            "alpha": -4.439949963303685
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -3.385306726371683,
+            "alpha": -4.512151310359124
+          },
+          {
+            "quintile": 3,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": -1.6997724575862414,
+            "alpha": -2.826617041573683
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 0.5698387064145994,
+            "alpha": -0.5570058775728419
+          },
+          {
+            "quintile": 5,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 0.45611702174339136,
+            "alpha": -0.6707275622440501
+          }
+        ]
+      },
+      {
+        "date": "2024-12-19",
+        "training_periods": 16,
+        "max_training_label_end": "2024-11-21",
+        "ranked": 200,
+        "evaluated": 200,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 0.0,
+          "alpha_shrinkage": 0.0,
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "status": "insufficient_separate_periods_raw_estimate",
+          "tuning_dates": [],
+          "calibration_dates": [],
+          "max_label_end": null
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -2.9718676141465004,
+            "alpha": -3.687996646404563
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -2.1604890425198744,
+            "alpha": -2.8766180747779364
+          },
+          {
+            "quintile": 3,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -2.140271350477436,
+            "alpha": -2.8564003827354982
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -1.4071892071689265,
+            "alpha": -2.1233182394269887
+          },
+          {
+            "quintile": 5,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -1.2932759770870144,
+            "alpha": -2.0094050093450764
+          }
+        ]
+      },
+      {
+        "date": "2025-01-17",
+        "training_periods": 17,
+        "max_training_label_end": "2024-12-19",
+        "ranked": 200,
+        "evaluated": 200,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 0.0,
+          "alpha_shrinkage": 0.0,
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "status": "insufficient_separate_periods_raw_estimate",
+          "tuning_dates": [],
+          "calibration_dates": [],
+          "max_label_end": null
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 4.063634037532755,
+            "alpha": 6.438932033982154
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 7.290276798891766,
+            "alpha": 9.665574795341165
+          },
+          {
+            "quintile": 3,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 3.542697141078388,
+            "alpha": 5.917995137527787
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 5.551146902333493,
+            "alpha": 7.926444898782892
+          },
+          {
+            "quintile": 5,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 5.802295378616172,
+            "alpha": 8.177593375065571
+          }
+        ]
+      },
+      {
+        "date": "2025-02-25",
+        "training_periods": 18,
+        "max_training_label_end": "2025-01-17",
+        "ranked": 200,
+        "evaluated": 200,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 0.0,
+          "alpha_shrinkage": 0.0,
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "status": "insufficient_separate_periods_raw_estimate",
+          "tuning_dates": [],
+          "calibration_dates": [],
+          "max_label_end": null
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -6.192946695577277,
+            "alpha": -1.2383588262149077
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -1.7075387643575703,
+            "alpha": 3.2470491050047983
+          },
+          {
+            "quintile": 3,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -3.708682429304122,
+            "alpha": 1.245905440058247
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -3.952067430561021,
+            "alpha": 1.002520438801348
+          },
+          {
+            "quintile": 5,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -3.0493012398150916,
+            "alpha": 1.905286629547277
+          }
+        ]
+      },
+      {
+        "date": "2025-03-26",
+        "training_periods": 19,
+        "max_training_label_end": "2025-02-25",
+        "ranked": 200,
+        "evaluated": 200,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 0.0,
+          "alpha_shrinkage": 0.0,
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "status": "insufficient_separate_periods_raw_estimate",
+          "tuning_dates": [],
+          "calibration_dates": [],
+          "max_label_end": null
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -13.935044683145613,
+            "alpha": -4.657358732732384
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -11.950963949363427,
+            "alpha": -2.6732779989501987
+          },
+          {
+            "quintile": 3,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -12.693283472023692,
+            "alpha": -3.415597521610465
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -13.689889358580416,
+            "alpha": -4.412203408167189
+          },
+          {
+            "quintile": 5,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -13.757691965344604,
+            "alpha": -4.4800060149313765
+          }
+        ]
+      },
+      {
+        "date": "2025-04-25",
+        "training_periods": 20,
+        "max_training_label_end": "2025-03-26",
+        "ranked": 200,
+        "evaluated": 200,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 0.0,
+          "alpha_shrinkage": 0.0,
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "warmup"
+          },
+          "status": "insufficient_separate_periods_raw_estimate",
+          "tuning_dates": [],
+          "calibration_dates": [],
+          "max_label_end": null
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 4.401299398254366,
+            "alpha": -3.302057915894318
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 6.1844160000705415,
+            "alpha": -1.518941314078143
+          },
+          {
+            "quintile": 3,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 7.986324516129803,
+            "alpha": 0.2829672019811182
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 6.328915031022929,
+            "alpha": -1.3744422831257548
+          },
+          {
+            "quintile": 5,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 7.648825721390409,
+            "alpha": -0.05453159275827515
+          }
+        ]
+      },
+      {
+        "date": "2025-09-23",
+        "training_periods": 22,
+        "max_training_label_end": "2025-05-26",
+        "ranked": 195,
+        "evaluated": 194,
+        "missing": 1,
+        "adaptation": {
+          "return_shrinkage": 1.0,
+          "alpha_shrinkage": 1.0,
+          "return_tuning_mse": {
+            "0.0": 83.597986,
+            "0.25": 83.454016,
+            "0.5": 83.343749,
+            "0.75": 83.267185,
+            "1.0": 83.224324
+          },
+          "alpha_tuning_mse": {
+            "0.0": 81.909136,
+            "0.25": 81.761072,
+            "0.5": 81.647805,
+            "0.75": 81.569334,
+            "1.0": 81.525659
+          },
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "selection_reason": "insufficient_purged_guard_periods"
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "selection_reason": "insufficient_purged_guard_periods"
+          },
+          "status": "time_split_fitted_pending_prospective_evaluation",
+          "tuning_dates": [
+            "2024-08-22",
+            "2024-09-20",
+            "2024-10-23"
+          ],
+          "calibration_dates": [
+            "2024-12-19",
+            "2025-01-17",
+            "2025-02-25",
+            "2025-03-26",
+            "2025-04-25"
+          ],
+          "max_label_end": "2025-05-26",
+          "selection_metric": "period_balanced_MSE",
+          "probability_method": "monotone_Platt_with_purged_chronological_guard"
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 3.0491074218113354,
+            "alpha": -5.039137893350501
+          },
+          {
+            "quintile": 2,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 3.128333858130965,
+            "alpha": -4.959911457030871
+          },
+          {
+            "quintile": 3,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 2.0350927727850263,
+            "alpha": -6.053152542376811
+          },
+          {
+            "quintile": 4,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 1.1782935120113844,
+            "alpha": -6.909951803150452
+          },
+          {
+            "quintile": 5,
+            "ranked": 39,
+            "evaluated": 38,
+            "net_return": null,
+            "alpha": null
+          }
+        ]
+      },
+      {
+        "date": "2025-10-27",
+        "training_periods": 22,
+        "max_training_label_end": "2025-05-26",
+        "ranked": 195,
+        "evaluated": 194,
+        "missing": 1,
+        "adaptation": {
+          "return_shrinkage": 1.0,
+          "alpha_shrinkage": 1.0,
+          "return_tuning_mse": {
+            "0.0": 83.597986,
+            "0.25": 83.454016,
+            "0.5": 83.343749,
+            "0.75": 83.267185,
+            "1.0": 83.224324
+          },
+          "alpha_tuning_mse": {
+            "0.0": 81.909136,
+            "0.25": 81.761072,
+            "0.5": 81.647805,
+            "0.75": 81.569334,
+            "1.0": 81.525659
+          },
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "selection_reason": "insufficient_purged_guard_periods"
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "selection_reason": "insufficient_purged_guard_periods"
+          },
+          "status": "time_split_fitted_pending_prospective_evaluation",
+          "tuning_dates": [
+            "2024-08-22",
+            "2024-09-20",
+            "2024-10-23"
+          ],
+          "calibration_dates": [
+            "2024-12-19",
+            "2025-01-17",
+            "2025-02-25",
+            "2025-03-26",
+            "2025-04-25"
+          ],
+          "max_label_end": "2025-05-26",
+          "selection_metric": "period_balanced_MSE",
+          "probability_method": "monotone_Platt_with_purged_chronological_guard"
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 39,
+            "evaluated": 38,
+            "net_return": null,
+            "alpha": null
+          },
+          {
+            "quintile": 2,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": -5.536211320809827,
+            "alpha": 1.3580451701421823
+          },
+          {
+            "quintile": 3,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": -3.7764108646398,
+            "alpha": 3.11784562631221
+          },
+          {
+            "quintile": 4,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": -5.465095122700767,
+            "alpha": 1.4291613682512434
+          },
+          {
+            "quintile": 5,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": -4.334275738706302,
+            "alpha": 2.559980752245708
+          }
+        ]
+      },
+      {
+        "date": "2025-11-24",
+        "training_periods": 23,
+        "max_training_label_end": "2025-10-27",
+        "ranked": 198,
+        "evaluated": 197,
+        "missing": 1,
+        "adaptation": {
+          "return_shrinkage": 1.0,
+          "alpha_shrinkage": 1.0,
+          "return_tuning_mse": {
+            "0.0": 84.591777,
+            "0.25": 84.38885,
+            "0.5": 84.217883,
+            "0.75": 84.078875,
+            "1.0": 83.971828
+          },
+          "alpha_tuning_mse": {
+            "0.0": 82.108784,
+            "0.25": 81.923291,
+            "0.5": 81.770659,
+            "0.75": 81.650891,
+            "1.0": 81.563986
+          },
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "selection_reason": "insufficient_purged_guard_periods"
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "selection_reason": "insufficient_purged_guard_periods"
+          },
+          "status": "time_split_fitted_pending_prospective_evaluation",
+          "tuning_dates": [
+            "2024-08-22",
+            "2024-09-20",
+            "2024-10-23",
+            "2024-11-21"
+          ],
+          "calibration_dates": [
+            "2025-01-17",
+            "2025-02-25",
+            "2025-03-26",
+            "2025-04-25",
+            "2025-09-23"
+          ],
+          "max_label_end": "2025-10-27",
+          "selection_metric": "period_balanced_MSE",
+          "probability_method": "monotone_Platt_with_purged_chronological_guard"
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 3.083272434227977,
+            "alpha": -0.7648330023453246
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 3.1886923643593845,
+            "alpha": -0.6594130722139172
+          },
+          {
+            "quintile": 3,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 4.461858085056801,
+            "alpha": 0.6137526484834989
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 39,
+            "net_return": null,
+            "alpha": null
+          },
+          {
+            "quintile": 5,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 2.8435770366366175,
+            "alpha": -1.0045283999366843
+          }
+        ]
+      },
+      {
+        "date": "2025-12-22",
+        "training_periods": 24,
+        "max_training_label_end": "2025-11-24",
+        "ranked": 197,
+        "evaluated": 197,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 1.0,
+          "alpha_shrinkage": 1.0,
+          "return_tuning_mse": {
+            "0.0": 84.591777,
+            "0.25": 84.38885,
+            "0.5": 84.217883,
+            "0.75": 84.078875,
+            "1.0": 83.971828
+          },
+          "alpha_tuning_mse": {
+            "0.0": 82.108784,
+            "0.25": 81.923291,
+            "0.5": 81.770659,
+            "0.75": 81.650891,
+            "1.0": 81.563986
+          },
+          "profit_map": {
+            "slope": 1.0164833687370824,
+            "intercept": 0.2790012065910374,
+            "status": "fitted_on_separate_periods",
+            "fit_dates": [
+              "2025-01-17",
+              "2025-02-25"
+            ],
+            "guard_dates": [
+              "2025-04-25",
+              "2025-09-23",
+              "2025-10-27"
+            ],
+            "guard_raw_brier": 0.25303816131789625,
+            "guard_fitted_brier": 0.24938425484610394,
+            "guard_baseline_brier": 0.25009493127147764,
+            "selection_reason": "lower_guard_brier_than_raw",
+            "guard_is_validation_not_test": true
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "fit_dates": [
+              "2025-01-17",
+              "2025-02-25"
+            ],
+            "guard_dates": [
+              "2025-04-25",
+              "2025-09-23",
+              "2025-10-27"
+            ],
+            "guard_raw_brier": 0.24027002796219188,
+            "guard_fitted_brier": 0.33577422975689025,
+            "guard_baseline_brier": 0.34313073453608245,
+            "selection_reason": "no_guard_improvement",
+            "guard_is_validation_not_test": true
+          },
+          "status": "time_split_fitted_pending_prospective_evaluation",
+          "tuning_dates": [
+            "2024-08-22",
+            "2024-09-20",
+            "2024-10-23",
+            "2024-11-21"
+          ],
+          "calibration_dates": [
+            "2025-01-17",
+            "2025-02-25",
+            "2025-03-26",
+            "2025-04-25",
+            "2025-09-23",
+            "2025-10-27"
+          ],
+          "max_label_end": "2025-11-24",
+          "selection_metric": "period_balanced_MSE",
+          "probability_method": "monotone_Platt_with_purged_chronological_guard"
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 9.550893372557894,
+            "alpha": -2.9987129266546844
+          },
+          {
+            "quintile": 2,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 10.055637586263963,
+            "alpha": -2.4939687129486154
+          },
+          {
+            "quintile": 3,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 7.467824611063113,
+            "alpha": -5.081781688149466
+          },
+          {
+            "quintile": 4,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 6.71734613886927,
+            "alpha": -5.832260160343309
+          },
+          {
+            "quintile": 5,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 3.929420761664398,
+            "alpha": -8.620185537548181
+          }
+        ]
+      },
+      {
+        "date": "2026-01-21",
+        "training_periods": 25,
+        "max_training_label_end": "2025-12-22",
+        "ranked": 198,
+        "evaluated": 198,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 1.0,
+          "alpha_shrinkage": 1.0,
+          "return_tuning_mse": {
+            "0.0": 80.699787,
+            "0.25": 80.530909,
+            "0.5": 80.392084,
+            "0.75": 80.283312,
+            "1.0": 80.204593
+          },
+          "alpha_tuning_mse": {
+            "0.0": 77.634612,
+            "0.25": 77.491726,
+            "0.5": 77.379499,
+            "0.75": 77.297932,
+            "1.0": 77.247025
+          },
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "fit_dates": [
+              "2025-02-25",
+              "2025-03-26",
+              "2025-04-25"
+            ],
+            "guard_dates": [
+              "2025-09-23",
+              "2025-10-27",
+              "2025-11-24"
+            ],
+            "guard_raw_brier": 0.24759851215324968,
+            "guard_fitted_brier": 0.25279881757695577,
+            "guard_baseline_brier": 0.2533057512167042,
+            "selection_reason": "no_guard_improvement",
+            "guard_is_validation_not_test": true
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "fit_dates": [
+              "2025-02-25",
+              "2025-03-26",
+              "2025-04-25"
+            ],
+            "guard_dates": [
+              "2025-09-23",
+              "2025-10-27",
+              "2025-11-24"
+            ],
+            "guard_raw_brier": 0.23858802561465386,
+            "guard_fitted_brier": 0.23902577835150512,
+            "guard_baseline_brier": 0.23893947311040176,
+            "selection_reason": "no_guard_improvement",
+            "guard_is_validation_not_test": true
+          },
+          "status": "time_split_fitted_pending_prospective_evaluation",
+          "tuning_dates": [
+            "2024-08-22",
+            "2024-09-20",
+            "2024-10-23",
+            "2024-11-21",
+            "2024-12-19"
+          ],
+          "calibration_dates": [
+            "2025-02-25",
+            "2025-03-26",
+            "2025-04-25",
+            "2025-09-23",
+            "2025-10-27",
+            "2025-11-24"
+          ],
+          "max_label_end": "2025-12-22",
+          "selection_metric": "period_balanced_MSE",
+          "probability_method": "monotone_Platt_with_purged_chronological_guard"
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 10.08085452191061,
+            "alpha": -1.0715794141116235
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 8.151256180358981,
+            "alpha": -3.001177755663252
+          },
+          {
+            "quintile": 3,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 4.6346283849852075,
+            "alpha": -6.517805551037025
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 7.390272490228921,
+            "alpha": -3.762161445793311
+          },
+          {
+            "quintile": 5,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 3.8270470970392885,
+            "alpha": -7.325386838982944
+          }
+        ]
+      },
+      {
+        "date": "2026-03-02",
+        "training_periods": 26,
+        "max_training_label_end": "2026-01-21",
+        "ranked": 199,
+        "evaluated": 199,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 1.0,
+          "alpha_shrinkage": 1.0,
+          "return_tuning_mse": {
+            "0.0": 80.699787,
+            "0.25": 80.530909,
+            "0.5": 80.392084,
+            "0.75": 80.283312,
+            "1.0": 80.204593
+          },
+          "alpha_tuning_mse": {
+            "0.0": 77.634612,
+            "0.25": 77.491726,
+            "0.5": 77.379499,
+            "0.75": 77.297932,
+            "1.0": 77.247025
+          },
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "fit_dates": [
+              "2025-02-25",
+              "2025-03-26",
+              "2025-04-25"
+            ],
+            "guard_dates": [
+              "2025-09-23",
+              "2025-10-27",
+              "2025-11-24",
+              "2025-12-22"
+            ],
+            "guard_raw_brier": 0.25102835600310297,
+            "guard_fitted_brier": 0.2603147511682453,
+            "guard_baseline_brier": 0.2601909885394317,
+            "selection_reason": "no_guard_improvement",
+            "guard_is_validation_not_test": true
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "fit_dates": [
+              "2025-02-25",
+              "2025-03-26",
+              "2025-04-25"
+            ],
+            "guard_dates": [
+              "2025-09-23",
+              "2025-10-27",
+              "2025-11-24",
+              "2025-12-22"
+            ],
+            "guard_raw_brier": 0.22936528245663604,
+            "guard_fitted_brier": 0.232604819907533,
+            "guard_baseline_brier": 0.2321091909862136,
+            "selection_reason": "no_guard_improvement",
+            "guard_is_validation_not_test": true
+          },
+          "status": "time_split_fitted_pending_prospective_evaluation",
+          "tuning_dates": [
+            "2024-08-22",
+            "2024-09-20",
+            "2024-10-23",
+            "2024-11-21",
+            "2024-12-19"
+          ],
+          "calibration_dates": [
+            "2025-02-25",
+            "2025-03-26",
+            "2025-04-25",
+            "2025-09-23",
+            "2025-10-27",
+            "2025-11-24",
+            "2025-12-22"
+          ],
+          "max_label_end": "2026-01-21",
+          "selection_metric": "period_balanced_MSE",
+          "probability_method": "monotone_Platt_with_purged_chronological_guard"
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -2.3142145633870217,
+            "alpha": 5.968483750166993
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -6.515173129848404,
+            "alpha": 1.7675251837056105
+          },
+          {
+            "quintile": 3,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -3.4082849296012405,
+            "alpha": 4.874413383952774
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -4.678809571532126,
+            "alpha": 3.6038887420218884
+          },
+          {
+            "quintile": 5,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": -3.4190297077339524,
+            "alpha": 4.863668605820062
+          }
+        ]
+      },
+      {
+        "date": "2026-03-30",
+        "training_periods": 27,
+        "max_training_label_end": "2026-03-02",
+        "ranked": 200,
+        "evaluated": 200,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 1.0,
+          "alpha_shrinkage": 1.0,
+          "return_tuning_mse": {
+            "0.0": 87.284726,
+            "0.25": 87.116037,
+            "0.5": 86.976763,
+            "0.75": 86.866905,
+            "1.0": 86.786463
+          },
+          "alpha_tuning_mse": {
+            "0.0": 95.1504,
+            "0.25": 94.998947,
+            "0.5": 94.877462,
+            "0.75": 94.785944,
+            "1.0": 94.724393
+          },
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "fit_dates": [
+              "2025-03-26",
+              "2025-04-25"
+            ],
+            "guard_dates": [
+              "2025-10-27",
+              "2025-11-24",
+              "2025-12-22",
+              "2026-01-21"
+            ],
+            "guard_raw_brier": 0.2543633932226012,
+            "guard_fitted_brier": 0.2586736955670628,
+            "guard_baseline_brier": 0.2578697670983476,
+            "selection_reason": "no_guard_improvement",
+            "guard_is_validation_not_test": true
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "fit_dates": [
+              "2025-03-26",
+              "2025-04-25"
+            ],
+            "guard_dates": [
+              "2025-10-27",
+              "2025-11-24",
+              "2025-12-22",
+              "2026-01-21"
+            ],
+            "guard_raw_brier": 0.2320603957087198,
+            "guard_fitted_brier": 0.23293408044760486,
+            "guard_baseline_brier": 0.2329526939815233,
+            "selection_reason": "no_guard_improvement",
+            "guard_is_validation_not_test": true
+          },
+          "status": "time_split_fitted_pending_prospective_evaluation",
+          "tuning_dates": [
+            "2024-08-22",
+            "2024-09-20",
+            "2024-10-23",
+            "2024-11-21",
+            "2024-12-19",
+            "2025-01-17"
+          ],
+          "calibration_dates": [
+            "2025-03-26",
+            "2025-04-25",
+            "2025-09-23",
+            "2025-10-27",
+            "2025-11-24",
+            "2025-12-22",
+            "2026-01-21"
+          ],
+          "max_label_end": "2026-03-02",
+          "selection_metric": "period_balanced_MSE",
+          "probability_method": "monotone_Platt_with_purged_chronological_guard"
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 21.341219796204708,
+            "alpha": -1.7806615943883473
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 14.489183159161263,
+            "alpha": -8.632698231431796
+          },
+          {
+            "quintile": 3,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 16.88480795583864,
+            "alpha": -6.237073434754417
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 10.890709286379256,
+            "alpha": -12.231172104213801
+          },
+          {
+            "quintile": 5,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 6.916372423582275,
+            "alpha": -16.205508967010783
+          }
+        ]
+      },
+      {
+        "date": "2026-04-29",
+        "training_periods": 28,
+        "max_training_label_end": "2026-03-30",
+        "ranked": 200,
+        "evaluated": 200,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 1.0,
+          "alpha_shrinkage": 1.0,
+          "return_tuning_mse": {
+            "0.0": 87.284726,
+            "0.25": 87.116037,
+            "0.5": 86.976763,
+            "0.75": 86.866905,
+            "1.0": 86.786463
+          },
+          "alpha_tuning_mse": {
+            "0.0": 95.1504,
+            "0.25": 94.998947,
+            "0.5": 94.877462,
+            "0.75": 94.785944,
+            "1.0": 94.724393
+          },
+          "profit_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "fit_dates": [
+              "2025-03-26",
+              "2025-04-25",
+              "2025-09-23"
+            ],
+            "guard_dates": [
+              "2025-11-24",
+              "2025-12-22",
+              "2026-01-21",
+              "2026-03-02"
+            ],
+            "guard_raw_brier": 0.2561949283253266,
+            "guard_fitted_brier": 0.2584417548984145,
+            "guard_baseline_brier": 0.2572864192059603,
+            "selection_reason": "no_guard_improvement",
+            "guard_is_validation_not_test": true
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "fit_dates": [
+              "2025-03-26",
+              "2025-04-25",
+              "2025-09-23"
+            ],
+            "guard_dates": [
+              "2025-11-24",
+              "2025-12-22",
+              "2026-01-21",
+              "2026-03-02"
+            ],
+            "guard_raw_brier": 0.23425309131997077,
+            "guard_fitted_brier": 0.24088900694741927,
+            "guard_baseline_brier": 0.24151957063588667,
+            "selection_reason": "no_guard_improvement",
+            "guard_is_validation_not_test": true
+          },
+          "status": "time_split_fitted_pending_prospective_evaluation",
+          "tuning_dates": [
+            "2024-08-22",
+            "2024-09-20",
+            "2024-10-23",
+            "2024-11-21",
+            "2024-12-19",
+            "2025-01-17"
+          ],
+          "calibration_dates": [
+            "2025-03-26",
+            "2025-04-25",
+            "2025-09-23",
+            "2025-10-27",
+            "2025-11-24",
+            "2025-12-22",
+            "2026-01-21",
+            "2026-03-02"
+          ],
+          "max_label_end": "2026-03-30",
+          "selection_metric": "period_balanced_MSE",
+          "probability_method": "monotone_Platt_with_purged_chronological_guard"
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 10.574726541300267,
+            "alpha": 1.037740239930411
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 17.111392418026266,
+            "alpha": 7.5744061166564105
+          },
+          {
+            "quintile": 3,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 14.638047583097444,
+            "alpha": 5.1010612817275875
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 11.093807043965528,
+            "alpha": 1.556820742595672
+          },
+          {
+            "quintile": 5,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 9.415089619544306,
+            "alpha": -0.12189668182555125
+          }
+        ]
+      },
+      {
+        "date": "2026-05-28",
+        "training_periods": 29,
+        "max_training_label_end": "2026-04-29",
+        "ranked": 200,
+        "evaluated": 200,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 1.0,
+          "alpha_shrinkage": 1.0,
+          "return_tuning_mse": {
+            "0.0": 83.56789,
+            "0.25": 83.380055,
+            "0.5": 83.22098,
+            "0.75": 83.090664,
+            "1.0": 82.989108
+          },
+          "alpha_tuning_mse": {
+            "0.0": 89.287795,
+            "0.25": 89.100675,
+            "0.5": 88.942689,
+            "0.75": 88.813839,
+            "1.0": 88.714123
+          },
+          "profit_map": {
+            "slope": 0.9618460922729531,
+            "intercept": 0.2184397957752886,
+            "status": "fitted_on_separate_periods",
+            "fit_dates": [
+              "2025-04-25",
+              "2025-09-23",
+              "2025-10-27"
+            ],
+            "guard_dates": [
+              "2025-12-22",
+              "2026-01-21",
+              "2026-03-02",
+              "2026-03-30"
+            ],
+            "guard_raw_brier": 0.2567863375775007,
+            "guard_fitted_brier": 0.24860131719109435,
+            "guard_baseline_brier": 0.24899356945654674,
+            "selection_reason": "lower_guard_brier_than_raw",
+            "guard_is_validation_not_test": true
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "fit_dates": [
+              "2025-04-25",
+              "2025-09-23",
+              "2025-10-27"
+            ],
+            "guard_dates": [
+              "2025-12-22",
+              "2026-01-21",
+              "2026-03-02",
+              "2026-03-30"
+            ],
+            "guard_raw_brier": 0.22505869639634432,
+            "guard_fitted_brier": 0.22584772902472922,
+            "guard_baseline_brier": 0.22682081280522332,
+            "selection_reason": "no_guard_improvement",
+            "guard_is_validation_not_test": true
+          },
+          "status": "time_split_fitted_pending_prospective_evaluation",
+          "tuning_dates": [
+            "2024-08-22",
+            "2024-09-20",
+            "2024-10-23",
+            "2024-11-21",
+            "2024-12-19",
+            "2025-01-17",
+            "2025-02-25"
+          ],
+          "calibration_dates": [
+            "2025-04-25",
+            "2025-09-23",
+            "2025-10-27",
+            "2025-11-24",
+            "2025-12-22",
+            "2026-01-21",
+            "2026-03-02",
+            "2026-03-30"
+          ],
+          "max_label_end": "2026-04-29",
+          "selection_metric": "period_balanced_MSE",
+          "probability_method": "monotone_Platt_with_purged_chronological_guard"
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -6.295789313486405,
+            "alpha": -5.598890088680192
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -4.446720006015509,
+            "alpha": -3.7498207812092965
+          },
+          {
+            "quintile": 3,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 1.014853353700937,
+            "alpha": 1.7117525785071497
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 2.913338378292932,
+            "alpha": 3.610237603099145
+          },
+          {
+            "quintile": 5,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 4.661478250765624,
+            "alpha": 5.358377475571837
+          }
+        ]
+      },
+      {
+        "date": "2026-06-26",
+        "training_periods": 30,
+        "max_training_label_end": "2026-05-28",
+        "ranked": 200,
+        "evaluated": 200,
+        "missing": 0,
+        "adaptation": {
+          "return_shrinkage": 1.0,
+          "alpha_shrinkage": 1.0,
+          "return_tuning_mse": {
+            "0.0": 110.462434,
+            "0.25": 110.220179,
+            "0.5": 110.004672,
+            "0.75": 109.815911,
+            "1.0": 109.653898
+          },
+          "alpha_tuning_mse": {
+            "0.0": 88.456414,
+            "0.25": 88.178918,
+            "0.5": 87.92821,
+            "0.75": 87.70429,
+            "1.0": 87.507158
+          },
+          "profit_map": {
+            "slope": 0.9933217806312085,
+            "intercept": 0.020254431688014784,
+            "status": "fitted_on_separate_periods",
+            "fit_dates": [
+              "2025-09-23",
+              "2025-10-27",
+              "2025-11-24"
+            ],
+            "guard_dates": [
+              "2026-01-21",
+              "2026-03-02",
+              "2026-03-30",
+              "2026-04-29"
+            ],
+            "guard_raw_brier": 0.2584859979280847,
+            "guard_fitted_brier": 0.2572076020510888,
+            "guard_baseline_brier": 0.2594762181819226,
+            "selection_reason": "lower_guard_brier_than_raw",
+            "guard_is_validation_not_test": true
+          },
+          "outperform_map": {
+            "slope": 0.9784842006425679,
+            "intercept": 0.03392350985755194,
+            "status": "fitted_on_separate_periods",
+            "fit_dates": [
+              "2025-09-23",
+              "2025-10-27",
+              "2025-11-24"
+            ],
+            "guard_dates": [
+              "2026-01-21",
+              "2026-03-02",
+              "2026-03-30",
+              "2026-04-29"
+            ],
+            "guard_raw_brier": 0.23723600289559904,
+            "guard_fitted_brier": 0.23718864509713672,
+            "guard_baseline_brier": 0.238212897561051,
+            "selection_reason": "lower_guard_brier_than_raw",
+            "guard_is_validation_not_test": true
+          },
+          "status": "time_split_fitted_pending_prospective_evaluation",
+          "tuning_dates": [
+            "2024-09-20",
+            "2024-10-23",
+            "2024-11-21",
+            "2024-12-19",
+            "2025-01-17",
+            "2025-02-25",
+            "2025-03-26",
+            "2025-04-25"
+          ],
+          "calibration_dates": [
+            "2025-09-23",
+            "2025-10-27",
+            "2025-11-24",
+            "2025-12-22",
+            "2026-01-21",
+            "2026-03-02",
+            "2026-03-30",
+            "2026-04-29"
+          ],
+          "max_label_end": "2026-05-28",
+          "selection_metric": "period_balanced_MSE",
+          "probability_method": "monotone_Platt_with_purged_chronological_guard"
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -10.756916987194034,
+            "alpha": -8.318503828026161
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -5.082496142494568,
+            "alpha": -2.644082983326695
+          },
+          {
+            "quintile": 3,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -3.2876304614971907,
+            "alpha": -0.8492173023293174
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -2.0102777854787988,
+            "alpha": 0.4281353736890745
+          },
+          {
+            "quintile": 5,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": -0.7606980462273354,
+            "alpha": 1.6777151129405379
+          }
+        ]
+      },
+      {
+        "date": "2026-07-27",
+        "training_periods": 31,
+        "max_training_label_end": "2026-06-26",
+        "ranked": 200,
+        "evaluated": 199,
+        "missing": 1,
+        "adaptation": {
+          "return_shrinkage": 1.0,
+          "alpha_shrinkage": 1.0,
+          "return_tuning_mse": {
+            "0.0": 112.670692,
+            "0.25": 112.397012,
+            "0.5": 112.149744,
+            "0.75": 111.928889,
+            "1.0": 111.734447
+          },
+          "alpha_tuning_mse": {
+            "0.0": 85.119646,
+            "0.25": 84.828659,
+            "0.5": 84.564065,
+            "0.75": 84.325863,
+            "1.0": 84.114053
+          },
+          "profit_map": {
+            "slope": 0.9558667577203168,
+            "intercept": 0.159766498318067,
+            "status": "fitted_on_separate_periods",
+            "fit_dates": [
+              "2025-10-27",
+              "2025-11-24",
+              "2025-12-22"
+            ],
+            "guard_dates": [
+              "2026-03-02",
+              "2026-03-30",
+              "2026-04-29",
+              "2026-05-28"
+            ],
+            "guard_raw_brier": 0.25650893287821575,
+            "guard_fitted_brier": 0.25180274355156224,
+            "guard_baseline_brier": 0.250823097726503,
+            "selection_reason": "lower_guard_brier_than_raw",
+            "guard_is_validation_not_test": true
+          },
+          "outperform_map": {
+            "slope": 0.978409133595082,
+            "intercept": 0.0675236828799335,
+            "status": "fitted_on_separate_periods",
+            "fit_dates": [
+              "2025-10-27",
+              "2025-11-24",
+              "2025-12-22"
+            ],
+            "guard_dates": [
+              "2026-03-02",
+              "2026-03-30",
+              "2026-04-29",
+              "2026-05-28"
+            ],
+            "guard_raw_brier": 0.24963718546093255,
+            "guard_fitted_brier": 0.24783905943284093,
+            "guard_baseline_brier": 0.2479742462941794,
+            "selection_reason": "lower_guard_brier_than_raw",
+            "guard_is_validation_not_test": true
+          },
+          "status": "time_split_fitted_pending_prospective_evaluation",
+          "tuning_dates": [
+            "2024-10-23",
+            "2024-11-21",
+            "2024-12-19",
+            "2025-01-17",
+            "2025-02-25",
+            "2025-03-26",
+            "2025-04-25"
+          ],
+          "calibration_dates": [
+            "2025-10-27",
+            "2025-11-24",
+            "2025-12-22",
+            "2026-01-21",
+            "2026-03-02",
+            "2026-03-30",
+            "2026-04-29",
+            "2026-05-28"
+          ],
+          "max_label_end": "2026-06-26",
+          "selection_metric": "period_balanced_MSE",
+          "probability_method": "monotone_Platt_with_purged_chronological_guard"
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 10.054006598394803,
+            "alpha": 5.112572943082147
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 9.072708694080516,
+            "alpha": 4.1312750387678605
+          },
+          {
+            "quintile": 3,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 7.384511059362798,
+            "alpha": 2.4430774040501424
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 39,
+            "net_return": null,
+            "alpha": null
+          },
+          {
+            "quintile": 5,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 2.3617183447064414,
+            "alpha": -2.579715310606214
+          }
+        ]
+      },
+      {
+        "date": "2026-08-24",
+        "training_periods": 32,
+        "max_training_label_end": "2026-07-27",
+        "ranked": 199,
+        "evaluated": 198,
+        "missing": 1,
+        "adaptation": {
+          "return_shrinkage": 1.0,
+          "alpha_shrinkage": 1.0,
+          "return_tuning_mse": {
+            "0.0": 120.194815,
+            "0.25": 120.041794,
+            "0.5": 119.911815,
+            "0.75": 119.80488,
+            "1.0": 119.720988
+          },
+          "alpha_tuning_mse": {
+            "0.0": 98.366711,
+            "0.25": 98.189915,
+            "0.5": 98.035874,
+            "0.75": 97.904586,
+            "1.0": 97.796052
+          },
+          "profit_map": {
+            "slope": 0.8977593571771615,
+            "intercept": 0.5593678119781198,
+            "status": "fitted_on_separate_periods",
+            "fit_dates": [
+              "2025-11-24",
+              "2025-12-22",
+              "2026-01-21"
+            ],
+            "guard_dates": [
+              "2026-03-30",
+              "2026-04-29",
+              "2026-05-28",
+              "2026-06-26"
+            ],
+            "guard_raw_brier": 0.26000581507710635,
+            "guard_fitted_brier": 0.2568749437975421,
+            "guard_baseline_brier": 0.25089716005341334,
+            "selection_reason": "lower_guard_brier_than_raw",
+            "guard_is_validation_not_test": true
+          },
+          "outperform_map": {
+            "slope": 1.0,
+            "intercept": 0.0,
+            "status": "guard_identity",
+            "fit_dates": [
+              "2025-11-24",
+              "2025-12-22",
+              "2026-01-21"
+            ],
+            "guard_dates": [
+              "2026-03-30",
+              "2026-04-29",
+              "2026-05-28",
+              "2026-06-26"
+            ],
+            "guard_raw_brier": 0.23878702445368027,
+            "guard_fitted_brier": 0.24721339713122678,
+            "guard_baseline_brier": 0.24830288085840385,
+            "selection_reason": "no_guard_improvement",
+            "guard_is_validation_not_test": true
+          },
+          "status": "time_split_fitted_pending_prospective_evaluation",
+          "tuning_dates": [
+            "2024-11-21",
+            "2024-12-19",
+            "2025-01-17",
+            "2025-02-25",
+            "2025-03-26",
+            "2025-04-25",
+            "2025-09-23"
+          ],
+          "calibration_dates": [
+            "2025-11-24",
+            "2025-12-22",
+            "2026-01-21",
+            "2026-03-02",
+            "2026-03-30",
+            "2026-04-29",
+            "2026-05-28",
+            "2026-06-26"
+          ],
+          "max_label_end": "2026-07-27",
+          "selection_metric": "period_balanced_MSE",
+          "probability_method": "monotone_Platt_with_purged_chronological_guard"
+        },
+        "quintiles": [
+          {
+            "quintile": 1,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 8.60927372088373,
+            "alpha": 0.9974175498438949
+          },
+          {
+            "quintile": 2,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 5.255407457970864,
+            "alpha": -2.35644871306897
+          },
+          {
+            "quintile": 3,
+            "ranked": 40,
+            "evaluated": 40,
+            "net_return": 4.238768586556742,
+            "alpha": -3.373087584483092
+          },
+          {
+            "quintile": 4,
+            "ranked": 40,
+            "evaluated": 39,
+            "net_return": null,
+            "alpha": null
+          },
+          {
+            "quintile": 5,
+            "ranked": 39,
+            "evaluated": 39,
+            "net_return": 2.7865461016758104,
+            "alpha": -4.825310069364024
+          }
+        ]
+      }
+    ],
+    "quintile_results": [
+      {
+        "quintile": 1,
+        "complete_periods": 20,
+        "average_net_return": 1.9,
+        "average_alpha": -1.43,
+        "positive_period_pct": 60.0,
+        "worst_net_return": -13.94
+      },
+      {
+        "quintile": 2,
+        "complete_periods": 21,
+        "average_net_return": 2.11,
+        "average_alpha": -0.73,
+        "positive_period_pct": 52.4,
+        "worst_net_return": -11.95
+      },
+      {
+        "quintile": 3,
+        "complete_periods": 21,
+        "average_net_return": 1.93,
+        "average_alpha": -0.91,
+        "positive_period_pct": 57.1,
+        "worst_net_return": -12.69
+      },
+      {
+        "quintile": 4,
+        "complete_periods": 18,
+        "average_net_return": 0.8,
+        "average_alpha": -1.6,
+        "positive_period_pct": 50.0,
+        "worst_net_return": -13.69
+      },
+      {
+        "quintile": 5,
+        "complete_periods": 20,
+        "average_net_return": 0.91,
+        "average_alpha": -1.67,
+        "positive_period_pct": 60.0,
+        "worst_net_return": -13.76
+      }
+    ],
+    "profit_calibration": {
+      "bins": [
+        {
+          "lower_pct": 0,
+          "upper_pct": 20,
+          "count": 0,
+          "periods": 0,
+          "predicted_pct": null,
+          "observed_pct": null
+        },
+        {
+          "lower_pct": 20,
+          "upper_pct": 40,
+          "count": 12,
+          "periods": 7,
+          "predicted_pct": 39.48,
+          "observed_pct": 50.0
+        },
+        {
+          "lower_pct": 40,
+          "upper_pct": 60,
+          "count": 3995,
+          "periods": 21,
+          "predicted_pct": 47.16,
+          "observed_pct": 46.98
+        },
+        {
+          "lower_pct": 60,
+          "upper_pct": 80,
+          "count": 159,
+          "periods": 1,
+          "predicted_pct": 61.6,
+          "observed_pct": 62.89
+        },
+        {
+          "lower_pct": 80,
+          "upper_pct": 100,
+          "count": 0,
+          "periods": 0,
+          "predicted_pct": null,
+          "observed_pct": null
+        }
+      ],
+      "periods": 21,
+      "sample_count": 4166,
+      "brier_score": 0.24943,
+      "training_base_rate_brier": 0.25062,
+      "mean_probability_error_pp": 0.11,
+      "status": "chronological_diagnostic_not_independent_validation",
+      "uncertainty": "股票同期間相關；樣本筆數不等於獨立樣本數，未宣稱統計顯著"
+    },
+    "outperform_calibration": {
+      "bins": [
+        {
+          "lower_pct": 0,
+          "upper_pct": 20,
+          "count": 0,
+          "periods": 0,
+          "predicted_pct": null,
+          "observed_pct": null
+        },
+        {
+          "lower_pct": 20,
+          "upper_pct": 40,
+          "count": 3351,
+          "periods": 21,
+          "predicted_pct": 37.27,
+          "observed_pct": 39.51
+        },
+        {
+          "lower_pct": 40,
+          "upper_pct": 60,
+          "count": 815,
+          "periods": 21,
+          "predicted_pct": 41.4,
+          "observed_pct": 38.04
+        },
+        {
+          "lower_pct": 60,
+          "upper_pct": 80,
+          "count": 0,
+          "periods": 0,
+          "predicted_pct": null,
+          "observed_pct": null
+        },
+        {
+          "lower_pct": 80,
+          "upper_pct": 100,
+          "count": 0,
+          "periods": 0,
+          "predicted_pct": null,
+          "observed_pct": null
+        }
+      ],
+      "periods": 21,
+      "sample_count": 4166,
+      "brier_score": 0.24006,
+      "training_base_rate_brier": 0.23952,
+      "mean_probability_error_pp": -1.11,
+      "status": "chronological_diagnostic_not_independent_validation",
+      "uncertainty": "股票同期間相關；樣本筆數不等於獨立樣本數，未宣稱統計顯著"
+    },
+    "interval_coverage_pct": 44.0,
+    "downside_breach_pct": 13.0,
+    "independent_holdout_periods": 0,
+    "limitations": [
+      "固定200支股票池的歷史成分未知，存在選樣與存活者偏差",
+      "歷史資料曾參與改版；時間順序重播不等於未使用的封存測試",
+      "股價跳變調整為既有啟發式處理，非完整除權息總報酬資料",
+      "歷史成交假設次日開盤可成交；未建模漲跌停無量、滑價與市場衝擊",
+      "收縮比例由較早OOF期間選定、機率由較晚期間校準；前瞻資料另行凍結評估"
+    ],
+    "adaptation_method": "chronological_tune_then_calibrate_then_evaluate",
+    "historical_replay_role": "development_not_independent_pool_validation"
+  }
+}
