@@ -1,0 +1,18 @@
+const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict'),path=require('path');
+const panel={innerHTML:''};
+const ctx=vm.createContext({document:{addEventListener(){},getElementById(){return panel;}},window:{}});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../app.js'),'utf8'),ctx);
+const row=(id,full,rounded,status='ready')=>({stockId:id,item:{prediction_20d:{net_profit_probability_full:full,net_profit_probability:rounded}},assessment:{status:status==='missing'?'資料不足':'符合觀察進場條件',candidate:true,checks:[{pass:status==='ready'}],reason:''}});
+ctx.rows=[row('1102',55.2,55.2),row('3264',60.001,60),row('2409',60.002,60),row('2006',60.001,60),row('9999',null,null),row('8888',NaN,58),row('7777',100.1,null)];
+const ev=s=>vm.runInContext(s,ctx);
+const before=JSON.stringify(ctx.rows);
+assert.equal(ev('rows.slice().sort(compareBoardProbability).map(r=>r.stockId).join()'),'2409,2006,3264,8888,1102,7777,9999');
+assert.equal(JSON.stringify(ctx.rows),before);
+ctx.rows.push(row('1000',99,99,'waiting'));
+ev('state.boardResults=rows;state.model={latest_date:"2026-09-24"};renderDecisionBoard()');
+assert.ok(panel.innerHTML.indexOf("showStock('2409')")<panel.innerHTML.indexOf("showStock('1000')"),'status grouping preserved');
+assert.match(panel.innerHTML,/60\.00%/);
+ev('renderDecisionBoard("ready")');
+assert.doesNotMatch(panel.innerHTML,/showStock\('1000'\)/);
+assert.equal(JSON.stringify(ctx.rows.slice(0,-1)),before);
+console.log('Board probability: full precision, descending, ties, missing/invalid values, grouping, filtering and immutability passed');
