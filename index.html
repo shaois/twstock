@@ -86,6 +86,68 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
 .toast{position:fixed;bottom:20px;right:20px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 16px;font-size:12px;display:none;align-items:center;gap:8px;z-index:999;}
 .toast.show{display:flex;}
 @media(max-width:768px){.layout{grid-template-columns:1fr;}.sidebar{display:none;}.score-overview{grid-template-columns:repeat(2,1fr);}.detail-grid{grid-template-columns:1fr;}}
+/* V94.4: readable dark surfaces, consistent controls, responsive layout. */
+:root{--bg:#0b1220;--surface:#131e30;--surface2:#1c2c43;--border:#304259;--text:#edf3fb;--muted:#adbed3;--accent:#5ee6c3;--accent2:#8bbcff;--green:#71e0a1;--red:#ff979d;--warn:#f3c56c;}
+body{line-height:1.6;height:100dvh;overflow:hidden;display:flex;flex-direction:column;}
+header{position:relative;flex-shrink:0;gap:16px;flex-wrap:wrap;padding:14px 24px;background:#101b2c;}
+.logo{flex-wrap:wrap;color:var(--text);font-size:18px;gap:10px;}
+.cache-status{font-size:12px;}.cache-status.loaded{color:#91dcbf;}
+.layout{flex:1;min-height:0;height:auto;grid-template-columns:270px minmax(0,1fr);}
+.sidebar{padding:18px 0;background:#111d2e;}
+.sidebar-label{font-size:12px;letter-spacing:.6px;padding:10px 18px 8px;}
+.filter-wrap{padding:0 14px 12px;}.filter-input{padding:10px 12px;font-size:14px;border-radius:8px;}
+input::placeholder{color:#a9bbd0;opacity:1;}
+.stock-item{min-height:50px;padding:10px 12px;border-radius:8px;}
+.s-id{font-size:13px;color:#99c7ff;}.s-name{font-size:13px;color:#e1eaf5;}
+.stock-item>span:last-child .s-name{font-size:12px;color:#b5c6da;}
+.model-badge{font-size:11px;color:#87efd2;}
+.stock-item.active{background:#1c3b43;border-color:#3c7c76;border-left-color:#5ee6c3;}
+.main{min-width:0;padding:28px;scrollbar-color:#566e8b var(--bg);}
+.btn,button{font:inherit;cursor:pointer;}
+.screener-panel button,.panel button{background:#20334c;color:var(--text);border:1px solid #435c78;border-radius:8px;padding:8px 12px;}
+button:focus-visible,input:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:2px solid #8bbcff;outline-offset:3px;}
+.btn{min-height:38px;}.btn-primary{background:#5ee6c3;color:#082720;}.btn-gold{background:#f3c56c;color:#2c2107;}
+.btn-secondary{color:#d9e6f5;}.panel,.screener-panel{padding:24px;border-radius:14px;}
+.panel-title{font-size:13px;letter-spacing:.3px;color:#bed0e4;}
+.metric-name,.metric-val{font-size:13px;}.metric-row{gap:20px;padding:10px 0;}.metric-val{text-align:right;}
+.panel p{margin:12px 0;line-height:1.8;}#entryAssessment>div:not(.panel-title){padding:7px 0;border-bottom:1px solid #28394e;}
+.detail-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.panel h3{font-size:19px;margin-bottom:12px;}
+.screener-panel{overflow-x:auto;}.decision-board{overflow:visible;}
+table{font-size:13px;}thead th{font-size:12px;letter-spacing:0;padding:12px 14px;background:#1a293e;color:#c2d2e6;}
+tbody td{padding:14px;border-bottom:1px solid #29394d;}tbody tr{cursor:default;}tbody tr:hover{background:#1b2c42;}
+.board-heading{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;margin-bottom:20px;}
+.board-eyebrow{font-size:12px;color:#7ee7ce;letter-spacing:1px;margin-bottom:4px;}.board-heading h2{font-size:24px;font-weight:700;letter-spacing:.4px;}
+.board-subtitle{color:var(--muted);font-size:13px;margin-top:6px;}
+.board-notice{padding:12px 16px;background:#1d2b3d;border-left:3px solid #f3c56c;border-radius:6px;color:#e2cfa8;font-size:13px;}
+.board-explanation{margin-top:10px;color:var(--muted);font-size:13px;}.board-explanation summary{cursor:pointer;width:fit-content;padding:5px 0;}.board-explanation p{max-width:1000px;margin:8px 0;}
+.board-filters{display:flex;flex-wrap:wrap;gap:8px;margin:24px 0 16px;}
+.decision-board .filter-chip{display:inline-flex;align-items:center;gap:10px;background:#18263a;border:1px solid #3a506c;color:#cfdeef;padding:9px 13px;border-radius:9px;font-size:13px;}
+.decision-board .filter-chip:hover{background:#243a53;border-color:#7392b5;}.decision-board .filter-chip.selected{background:#193e3e;border-color:#5eddbd;color:#aeffe8;}
+.filter-count{background:#2b405b;border-radius:5px;padding:0 7px;font-variant-numeric:tabular-nums;font-weight:700;}.selected .filter-count{background:#2a5b52;color:#dcfff4;}
+.board-table-meta{display:flex;justify-content:space-between;gap:12px;color:#adbed3;font-size:12px;margin-bottom:10px;}
+.table-scroll{overflow:auto;border:1px solid #304259;border-radius:10px;}
+.decision-table{min-width:780px;table-layout:fixed;}.decision-table th:nth-child(1){width:20%;}.decision-table th:nth-child(2){width:17%;}.decision-table th:nth-child(3){width:28%;}.decision-table th:nth-child(4){width:35%;}
+.decision-table td{padding:17px 16px;vertical-align:middle;}.decision-table th{padding:13px 16px;}
+.decision-table tbody tr:nth-child(even){background:#152237;}.decision-table tbody tr:hover{background:#21354d;}
+.decision-board .stock-link{display:flex;align-items:center;flex-wrap:wrap;gap:8px;text-align:left;background:none;border:none;padding:4px 0;color:#f1f6ff;font-size:14px;font-weight:500;}
+.stock-link:hover span:last-child{text-decoration:underline;text-underline-offset:4px;}.stock-code{color:#a1ceff;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;}
+.probability-cell{font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:600;color:#f3f7fd;font-variant-numeric:tabular-nums;}
+.status-pill{display:inline-block;border-radius:6px;border:1px solid #46617d;padding:5px 9px;font-size:12px;line-height:1.6;color:#d8e5f5;background:#223249;}
+.status-ready{background:#153d35;border-color:#386e60;color:#9cebcf;}.status-waiting{background:#3b3020;border-color:#77613b;color:#f2d49c;}.status-excluded{background:#2a3040;border-color:#505d75;color:#ccd6e7;}.status-missing{background:#3b2933;border-color:#775267;color:#f0bacd;}
+.reason-cell{font-size:13px;line-height:1.8;color:#b9cbe0;overflow-wrap:anywhere;}.empty-state{text-align:center;padding:40px!important;color:#b9cbe0;}
+@media(min-width:1700px){.main{padding:32px 40px;}.decision-table th:nth-child(1){width:18%;}.decision-table th:nth-child(2){width:16%;}.decision-table th:nth-child(3){width:26%;}.decision-table th:nth-child(4){width:40%;}}
+@media(max-width:1100px){.layout{grid-template-columns:230px minmax(0,1fr);}.main{padding:18px;}.panel,.screener-panel{padding:18px;}.detail-grid{grid-template-columns:1fr;}.model-badge{display:none;}}
+@media(max-width:768px){body{height:auto;min-height:100dvh;overflow:auto;}header{padding:12px 16px;}.logo{font-size:16px;}.cache-status{white-space:normal;width:100%;border:0;padding:0;}.header-right{width:100%;}.layout{display:block;}.sidebar{display:none;}.main{overflow:visible;padding:12px;}.board-heading h2{font-size:20px;}.board-table-meta{flex-direction:column;gap:2px;}.board-filters{gap:7px;}.decision-board .filter-chip{padding:8px 10px;}.board-heading>.btn{width:100%;}.stock-title h1{font-size:22px;}}
+/* V94.5: secondary information remains bright and readable on dark surfaces. */
+:root{--text:#f5f7fc;--muted:#d9e3f0;}
+.sidebar-label,.panel-title,.metric-name,.bar-label,.inst-lbl,
+.score-card .lbl,.board-subtitle,.board-explanation,.board-table-meta,
+.stock-title .sub,.reason-cell,.empty-state{color:#d9e3f0;}
+.s-name,.stock-item>span:last-child .s-name{color:#e8eff8;}
+input::placeholder{color:#d1ddeb;opacity:1;}
+thead th{color:#edf3fb;}
+.decision-board .filter-chip,.btn-secondary{color:#edf3fb;}
+.btn:disabled{opacity:1;background:#26364b;color:#d1ddeb;cursor:not-allowed;}
 </style>
 </head>
 <body>
@@ -95,7 +157,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
       <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#00d4aa" stroke-width="1.5" fill="rgba(0,212,170,.08)"/>
       <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    台股選股儀表板 <span class="version-badge">v94.3</span> <span id="cacheStatus" class="cache-status">快取：尚未載入</span>
+    台股選股儀表板 <span class="version-badge">v94.5</span> <span id="cacheStatus" class="cache-status">快取：尚未載入</span>
   </div>
   <div class="header-right">
     <select hidden class="api-select" id="aiProvider" onchange="syncAIProvider()">
@@ -136,7 +198,7 @@ tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.03);}
 </div>
 <div class="toast" id="toast"><span id="toastMsg"></span></div>
 
-<script src="app.js?v=94.3"></script>
-<script src="ai-review.js?v=94.3"></script>
+<script src="app.js?v=94.5"></script>
+<script src="ai-review.js?v=94.5"></script>
 </body>
 </html>
