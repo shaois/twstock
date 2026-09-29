@@ -13,6 +13,10 @@ ev('state.boardResults=rows;state.model={latest_date:"2026-09-24"};renderDecisio
 assert.ok(panel.innerHTML.indexOf("showStock('2409')")<panel.innerHTML.indexOf("showStock('1000')"),'status grouping preserved');
 assert.match(panel.innerHTML,/60\.00%/);
 ev('renderDecisionBoard("ready")');
+assert.match(panel.innerHTML,/class="filter-chip selected" aria-pressed="true"/);
+assert.match(panel.innerHTML,/class="stock-link"/);
+assert.match(panel.innerHTML,/status-pill status-ready/);
+assert.match(panel.innerHTML,/aria-label="候選股票表格"/);
 assert.doesNotMatch(panel.innerHTML,/showStock\('1000'\)/);
 assert.equal(JSON.stringify(ctx.rows.slice(0,-1)),before);
 console.log('Board probability: full precision, descending, ties, missing/invalid values, grouping, filtering and immutability passed');
