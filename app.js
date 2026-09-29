@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "v94.2";
+const APP_VERSION = "v94.3";
 const MODEL_IMPLEMENTATION_VERSION = "v94";
 const MODEL_NAME = "single_horizon_20d_rotation_v94";
 const CONTRACT_VERSION = "20d-net-executable-v2";
@@ -486,21 +486,36 @@ async function showDecisionBoard() {
   state.boardResults=results;renderDecisionBoard('all');
 }
 
+function boardProfitProbability(row) {
+  const f=row.item?.prediction_20d;
+  for(const value of [f?.net_profit_probability_full,f?.net_profit_probability]) {
+    if(Number.isFinite(value)&&value>=0&&value<=100)return value;
+  }
+  return null;
+}
+
+function compareBoardProbability(a,b) {
+  const x=boardProfitProbability(a),y=boardProfitProbability(b);
+  if(x===null&&y!==null)return 1;
+  if(y===null&&x!==null)return -1;
+  return (x!==null&&y!==null?y-x:0)||a.stockId.localeCompare(b.stockId);
+}
+
 function renderDecisionBoard(filter='all') {
   const group=r=>r.assessment.status==='資料不足'?'missing':
     !r.assessment.candidate?'excluded':r.assessment.checks.every(x=>x.pass===true)?'ready':'waiting';
   const order={ready:0,waiting:1,excluded:2,missing:3};
   const all=state.boardResults||[];
   const rows=all.filter(r=>filter==='all'||group(r)===filter)
-    .sort((a,b)=>order[group(a)]-order[group(b)]||a.stockId.localeCompare(b.stockId));
+    .sort((a,b)=>order[group(a)]-order[group(b)]||compareBoardProbability(a,b));
   byId('screenerResult').innerHTML=`<div class="screener-panel">
     <div class="panel-title">候選與進場條件清單（免費）</div>
-    <p>資料日 ${escapeHtml(state.model.latest_date)}。按條件狀態分組，同組依代碼；不是預測排名，也不是已驗證的買點。選股規則未經獨立績效驗證。</p>
+    <p>資料日 ${escapeHtml(state.model.latest_date)}。按條件狀態分組，同組按當日20日模型估計淨獲利機率由高到低排序（優先使用完整精度；同分依代碼、缺值置後）。顯示至小數2位；不是實際回測勝率或已驗證買點。選股規則未經獨立績效驗證。</p>
     <p>20日是評估期限，不代表名單固定20天。此清單與個股頁使用同一判讀函式；沒有第二個 AI 結論。</p>
     ${[['all','全部'],['ready','符合觀察進場條件'],['waiting','候選／等待條件'],['excluded','未符合候選'],['missing','資料不足']].map(([k,label])=>`<button onclick="renderDecisionBoard('${k}')">${label} (${all.filter(r=>k==='all'||group(r)===k).length})</button>`).join(' ')}
     <button onclick="state.boardGeneration++;show20dCandidates()">原模型研究排名／驗證資料</button>
-    <table><thead><tr><th>股票</th><th>條件狀態</th><th>原因</th></tr></thead><tbody>
-    ${rows.map(r=>`<tr><td><button onclick="showStock('${escapeHtml(r.stockId)}')">${escapeHtml(r.stockId)} ${escapeHtml(stockName(r.stockId))}</button></td><td>${escapeHtml(r.assessment.status)}</td><td>${escapeHtml(r.assessment.reason)}</td></tr>`).join('')||'<tr><td colspan="3">此分類沒有股票，不放寬條件湊數。</td></tr>'}
+    <table><thead><tr><th>股票</th><th>估計淨獲利機率</th><th>條件狀態</th><th>原因</th></tr></thead><tbody>
+    ${rows.map(r=>`<tr><td><button onclick="showStock('${escapeHtml(r.stockId)}')">${escapeHtml(r.stockId)} ${escapeHtml(stockName(r.stockId))}</button></td><td>${boardProfitProbability(r)===null?'--':boardProfitProbability(r).toFixed(2)+'%'}</td><td>${escapeHtml(r.assessment.status)}</td><td>${escapeHtml(r.assessment.reason)}</td></tr>`).join('')||'<tr><td colspan="4">此分類沒有股票，不放寬條件湊數。</td></tr>'}
     </tbody></table></div>`;
 }
 
