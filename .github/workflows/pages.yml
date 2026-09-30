@@ -9,6 +9,10 @@ on:
     paths:
       - "index.html"
       - "app.js"
+      - "three_gate.py"
+      - "refresh_fundamentals.py"
+      - "cache/fundamentals/**"
+      - "cache/three_gate.json"
       - "ai-review.js"
       - "build_ai_context.py"
       - "prepare_release.py"
@@ -57,6 +61,7 @@ jobs:
           cp cache/universe.json _site/cache/universe.json
           cp cache/predictions.json _site/cache/predictions.json
           python3 build_ai_context.py
+          cp cache/three_gate.json _site/cache/three_gate.json
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v4
