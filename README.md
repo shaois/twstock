@@ -1,4 +1,10 @@
-# 台股研究儀表板 V94.5 — 灰白高對比文字
+# 台股研究儀表板 V94.6 — 研究紀錄分塊儲存
+
+使用 twstock-v94.6-upload.zip 覆蓋程式（務必包含 protocol_storage.py、update_all.py 與 .github/workflows/daily-cache.yml），保留全部線上 cache。提交更新後，從 Actions 的 Daily FinMind Cache Refresh 按 Run workflow，讓新執行使用新版程式；不要重跑舊的失敗執行。
+
+下一次更新會將既有 research_protocol.json 無損轉為小型索引及 research_protocol.parts/*.gz。每塊原始資料最多 8 MiB，具 SHA-256 校驗；先寫入並驗證全部分塊，才原子替換索引。舊分塊不刪除，重複內容重用；長期總儲存量仍會成長。請勿單独刪除索引或分塊。提交前會檢查 Git 暫存區，任何檔案達 95 MiB 即停止並指出檔名。
+
+沒有清空歷史或修改選股公式。既有實驗身分包含 update_all.py 的程式摘要，因此本次程式變更會依原有機制建立新的實驗身分；舊紀錄仍保留。此版本未直接部署至 GitHub，也未重新呼叫 FinMind。
 
 V94.5 將次要文字、欄位標題、側欄名稱與排名改為明亮灰白色；停用按鈕不再降低整體透明度。使用 twstock-v94.5-upload.zip 更新程式，保留線上 cache，重新整理後確認版本 v94.5。排序、篩選與數據不變。
 

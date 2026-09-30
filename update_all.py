@@ -18,6 +18,7 @@ import httpx
 from predictor import MODEL_NAME, apply_dynamic_probability_ranking, build_predictions, update_prediction_log
 from research_protocol import ensure_protocol, freeze_reference, prospective_report
 from rotation import normalize_institutions
+from protocol_storage import restore as restore_protocol, store as store_protocol
 
 
 ROOT = Path(__file__).resolve().parent
@@ -57,6 +58,9 @@ def load_json(path: Path, default: Any) -> Any:
 
 
 def save_json(path: Path, payload: Any) -> None:
+    if path.name == 'research_protocol.json':
+        store_protocol(path, payload)
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_suffix(path.suffix + ".tmp")
     temp_path.write_text(
@@ -74,6 +78,8 @@ def load_audit_json(path):
         existing = {}
     if not isinstance(existing, dict):
         raise ValueError(f"{path.name} must be an object; do not reset it")
+    if path.name == 'research_protocol.json':
+        existing = restore_protocol(path, existing)
     return existing
 
 
