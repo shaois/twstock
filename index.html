@@ -157,7 +157,7 @@ thead th{color:#edf3fb;}
       <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" stroke="#00d4aa" stroke-width="1.5" fill="rgba(0,212,170,.08)"/>
       <polyline points="7,18 11,12 15,16 21,9" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    台股選股儀表板 <span class="version-badge">v94.6</span> <span id="cacheStatus" class="cache-status">快取：尚未載入</span>
+    台股選股儀表板 <span class="version-badge">v94.7</span> <span id="cacheStatus" class="cache-status">快取：尚未載入</span>
   </div>
   <div class="header-right">
     <select hidden class="api-select" id="aiProvider" onchange="syncAIProvider()">
@@ -169,7 +169,7 @@ thead th{color:#edf3fb;}
     </select>
     <input hidden class="api-input" id="apiKeyInput" type="password" placeholder="停用的相容欄位">
     <button class="btn btn-primary" id="loadCacheBtn" onclick="loadStocks()">重新載入快取</button>
-    <button class="btn btn-gold" id="rankingBtn" onclick="showDecisionBoard()" disabled>開啟免費條件清單</button>
+    <button class="btn btn-gold" id="rankingBtn" onclick="showDecisionBoard()" disabled>開啟三道濾網清單</button>
   </div>
 </header>
 
@@ -198,7 +198,7 @@ thead th{color:#edf3fb;}
 </div>
 <div class="toast" id="toast"><span id="toastMsg"></span></div>
 
-<script src="app.js?v=94.6"></script>
-<script src="ai-review.js?v=94.6"></script>
+<script src="app.js?v=94.7"></script>
+<script src="ai-review.js?v=94.7"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "v94.6";
+const APP_VERSION = "v94.7";
 const MODEL_IMPLEMENTATION_VERSION = "v94";
 const MODEL_NAME = "single_horizon_20d_rotation_v94";
 const CONTRACT_VERSION = "20d-net-executable-v2";
@@ -192,6 +192,7 @@ async function loadStocks() {
     state.model = validateModel(universePayload, predictionPayload);
     state.universe = universePayload.data;
     state.predictions = predictionPayload.data;
+    state.threeGate = null;
     state.loaded = true;
     updateCacheStatus();
     renderStockList();
@@ -375,7 +376,12 @@ function metric(label, value) {
 function showStock(stockId) {
   if (!state.loaded) return;
   const item = state.predictions[stockId];
-  if (!item?.available || !item.prediction_20d) return void showToast("完整資料不足");
+  if (!item?.available || !item.prediction_20d) {
+    state.currentStockId=stockId;
+    byId('welcome').style.display='none';byId('screenerResult').style.display='none';byId('stockDetail').style.display='block';
+    byId('stockDetail').innerHTML=`<h2>${escapeHtml(stockId)} ${escapeHtml(stockName(stockId))}</h2><button class="btn btn-secondary" onclick="showDecisionBoard()">返回免費條件清單</button><div id="entryAssessment" class="panel">正在讀取三關資料…</div>`;
+    void loadEntryAssessment(stockId,item);return;
+  }
   const f = item.prediction_20d;
   state.currentStockId = stockId;
   renderStockList();
@@ -419,49 +425,47 @@ function showStock(stockId) {
       </div>
       <p>以次日實際開盤價為進場基準；價格尚未確定，因此顯示報酬區間。股票與0050各採0.6%來回成本情境；資金流為量價代理值。</p>
     </div>
-    <div class="panel" id="entryAssessment"><div class="panel-title">候選與進場條件核對（免費／規則未驗證績效）</div><p>正在讀取同日期資料…</p></div>
+    <div class="panel" id="entryAssessment"><div class="panel-title">三道濾網核對（免費／策略績效未驗證）</div><p>正在讀取同日期資料…</p></div>
     <div class="ai-panel" id="aiPanel" style="display:none"><div class="ai-header"><div class="panel-title">AI 解讀</div><span class="ai-badge" id="aiBadge"></span></div><div class="ai-content" id="aiContent"></div></div>`;
   loadEntryAssessment(stockId, item);
 }
 
-// Descriptive sign-consistency screen, not fitted or validated trading rules.
-// Shared prior returns never count as individual-stock evidence.
-function assessEntry(item, history) {
-  const problem=Review94.quality(history);
-  if(problem || !item?.available || !item.prediction_20d) return {status:'資料不足',reason:problem||'模型資料不足',checks:[]};
-  const f=item.prediction_20d,e=summarizeAIEvidence(history);
-  const checks=[];
-  const add=(group,label,value,pass,unit,ref)=>checks.push({group,label,value,pass:Number.isFinite(value)?pass:null,unit,ref});
-  add('候選','20日價格報酬 > 0',e.price_changes[20],e.price_changes[20]>0,'%', 'F7');
-  add('候選','模型淨獲利估計機率 > 50%',f.net_profit_probability,f.net_profit_probability>50,'%', 'M2');
-  add('進場','5日價格報酬 > 0',e.price_changes[5],e.price_changes[5]>0,'%', 'F5');
-  add('進場','5日外資＋投信合計淨買超 > 0',e.institution_facts.F4?.combined,e.institution_facts.F4?.combined>0,'股','F4');
-  add('進場','20日外資＋投信合計淨買超 > 0',e.institution_facts.F6?.combined,e.institution_facts.F6?.combined>0,'股','F6');
-  add('進場','5日量價代理 > 0（非實際資金流）',f.capital_flow_5d_pct,f.capital_flow_5d_pct>0,'%', 'M4');
-  checks.push({group:'進場',label:'未觸發既有急漲提醒',value:null,unit:'',ref:'既有急漲規則',pass:f.entry_status==='research_only'?true:f.entry_status==='wait_pullback'?false:null});
-  const missing=checks.filter(x=>x.pass===null),failed=checks.filter(x=>x.pass===false);
-  const candidate=checks.filter(x=>x.group==='候選').every(x=>x.pass===true);
-  return {status:missing.length?'資料不足':!candidate?'未符合候選條件':failed.length?'候選／等待條件':'符合觀察進場條件（非核准買點）',
-    reason:missing.length?'缺少：'+missing.map(x=>x.label).join('；'):failed.length?'尚未符合：'+failed.map(x=>x.label).join('；'):'上述明訂條件全部符合；不代表已證明有交易優勢。',
-    candidate,checks,probability:f.net_profit_probability,downside:f.downside_net_return,
-    outperform:f.outperform_probability,sharedReturn:f.return_shrinkage===1,
-    invalidation:'每次資料更新重新核對；候選條件失效即不再符合候選，進場條件失效則取消該條件狀態。這不是持倉停損或出場策略。'};
+async function loadThreeGate() {
+  if(state.threeGate && Date.now()-Date.parse(state.threeGate.generated_at)>7*86400000)state.threeGate=null;
+  if (!state.threeGate) {
+    try {
+      const payload=await fetchCache('three_gate');
+      const age=Date.now()-Date.parse(payload.generated_at);
+      if(payload.version!==1 || !Number.isFinite(age) || age<0 || age>7*86400000) throw new Error('三關快照已過期');
+      state.threeGate=payload;
+    } catch { return null; }
+  }
+  return state.threeGate;
+}
+
+function threeGateAssessment(stockId,payload) {
+  const r=payload?.data?.[stockId];
+  if(!r || !Array.isArray(r.checks) || r.checks.length<10) return {status:'資料不足',reason:'三關資料尚未建立或已過期；請完成財報與行情更新。',checks:[],passed:false};
+  return r;
 }
 
 async function loadEntryAssessment(stockId,item) {
   const generation=(state.entryAssessmentGeneration||0)+1;state.entryAssessmentGeneration=generation;
-  const history=await loadAIHistory(stockId,item);
+  const payload=await loadThreeGate();
   if(state.currentStockId!==stockId || state.entryAssessmentGeneration!==generation)return;
-  const r=assessEntry(item,history),panel=byId('entryAssessment');if(!panel)return;
-  panel.innerHTML=`<div class="panel-title">候選與進場條件核對（免費／規則 v1）</div>
+  const r=threeGateAssessment(stockId,payload),panel=byId('entryAssessment');if(!panel)return;
+  panel.innerHTML=`<div class="panel-title">三道濾網核對（免費／策略績效未驗證）</div>
     <h3>${escapeHtml(r.status)}</h3><p>${escapeHtml(r.reason)}</p>
-    <p>以下是固定的方向一致性觀察規則，未用報酬最佳化，也尚未驗證績效。條件通過不等於適合你的風險承受度。</p>
-    ${r.checks.map(x=>`<div>${x.pass===null?'缺資料':x.pass?'通過':'未通過'}｜${escapeHtml(x.group)}：${escapeHtml(x.label)}${Number.isFinite(x.value)?`；實際 ${escapeHtml(x.value.toLocaleString('zh-TW',{maximumFractionDigits:4}))}${escapeHtml(x.unit)}`:''} [${escapeHtml(x.ref)}]</div>`).join('')}
-    ${r.checks.length?`<p>模型估計淨獲利機率 ${percent(r.probability)}；超越0050機率 ${percent(r.outperform)}（${Number.isFinite(r.outperform)?r.outperform>50?'估計高於五成':'估計未高於五成':'缺資料'}，本規則不代表能勝過0050）。下行10分位 ${percent(r.downside)}，不是最壞損失或停損價。</p>
-    <p>${r.sharedReturn?'預期報酬為全域共同基準，不用來區分或支持此股票。':''} ${escapeHtml(r.invalidation)}</p>`:''}`;
+    <p>核對時間 ${escapeHtml(payload?.generated_at||'--')}。${escapeHtml(payload?.limitation||'缺資料不得當作通過。')}</p>
+    ${r.checks.map(x=>`<div style="margin:14px 0;padding:12px;border:1px solid var(--border);border-radius:8px">
+      <strong>${x.pass===null?'缺資料':x.pass?'通過':'未通過'}｜${escapeHtml(x.group)}：${escapeHtml(x.label)}</strong>
+      <div>計算值：${Number.isFinite(x.value)?escapeHtml(x.value.toLocaleString('zh-TW',{maximumFractionDigits:4})):'--'}${escapeHtml(x.unit||'')}；${escapeHtml(x.reason)}</div>
+      <div>資料期間：${escapeHtml(x.period||'--')}；取得時間：${escapeHtml(x.observed_at||'見行情期間')}；財報公告日：未提供</div>
+      <details><summary>查看原始數字</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(JSON.stringify(x.raw,null,2))}</pre></details></div>`).join('')}
+    <p>財報來源：<a href="https://finmind.github.io/tutor/TaiwanMarket/Fundamental/" target="_blank" rel="noopener">FinMind 三張財報</a>；原始回應另存 SHA-256 對應快照。</p>
+    <p>全部通過只標示「符合三關條件」，不代表已驗證勝率或保證上漲。每次更新重新核對；允許零檔通過。</p>`;
 }
 
-// One assessment function powers both the list and detail. No AI request.
 async function showDecisionBoard() {
   if(!state.loaded)return;
   state.currentStockId='';
@@ -469,21 +473,12 @@ async function showDecisionBoard() {
   const panel=byId('screenerResult');panel.style.display='block';
   const predictions=state.predictions;
   const generation=(state.boardGeneration||0)+1;state.boardGeneration=generation;
-  panel.innerHTML='<p>讀取同日期資料並核對條件…不呼叫 AI。</p>';
-  const rows=Object.entries(predictions).map(([stockId,item])=>({stockId,item})),results=[];let next=0;
-  await Promise.all(Array.from({length:Math.min(6,rows.length)},async()=>{
-    while(next<rows.length){
-      const row=rows[next++];
-      let history;
-      try {history=row.item?.available?await loadAIHistory(row.stockId,row.item):{available:false,reason:row.item?.reason||'模型資料不足'};}
-      catch {history={available:false,reason:'資料讀取失敗'};}
-      if(state.boardGeneration!==generation||state.predictions!==predictions)return;
-      const assessment=assessEntry(row.item,history);
-      results.push({...row,assessment});
-    }
-  }));
+  panel.innerHTML='<p>讀取三關快照並核對條件…不呼叫 AI。</p>';
+  const payload=await loadThreeGate();
   if(state.boardGeneration!==generation||state.currentStockId||state.predictions!==predictions)return;
-  state.boardResults=results;renderDecisionBoard('all');
+  state.boardResults=Object.keys(state.universe).length?Object.keys(state.universe).map(stockId=>({stockId,item:predictions[stockId],assessment:threeGateAssessment(stockId,payload)})):
+    Object.entries(predictions).map(([stockId,item])=>({stockId,item,assessment:threeGateAssessment(stockId,payload)}));
+  renderDecisionBoard('all');
 }
 
 function boardProfitProbability(row) {
@@ -502,19 +497,18 @@ function compareBoardProbability(a,b) {
 }
 
 function renderDecisionBoard(filter='all') {
-  const group=r=>r.assessment.status==='資料不足'?'missing':
-    !r.assessment.candidate?'excluded':r.assessment.checks.every(x=>x.pass===true)?'ready':'waiting';
-  const order={ready:0,waiting:1,excluded:2,missing:3};
+  const group=r=>r.assessment.status==='金融業另列'?'financial':r.assessment.status==='資料不足'?'missing':r.assessment.passed?'ready':'excluded';
+  const order={ready:0,excluded:1,financial:2,missing:3};
   const all=state.boardResults||[];
   const rows=all.filter(r=>filter==='all'||group(r)===filter)
     .sort((a,b)=>order[group(a)]-order[group(b)]||compareBoardProbability(a,b));
   byId('screenerResult').innerHTML=`<div class="screener-panel decision-board">
-    <div class="board-heading"><div><div class="board-eyebrow">20 日研究 · 免費條件核對</div><h2>候選與進場條件清單</h2><p class="board-subtitle">資料日 ${escapeHtml(state.model.latest_date)} · 同組依估計淨獲利機率遞減</p></div>
+    <div class="board-heading"><div><div class="board-eyebrow">基本面 × 成長 × 價量法人</div><h2>三道濾網條件清單</h2><p class="board-subtitle">行情日 ${escapeHtml(state.model.latest_date)} · 核對 ${escapeHtml(state.threeGate?.generated_at||"尚未建立")} · 同組依估計淨獲利機率遞減</p></div>
     <button class="btn btn-secondary" onclick="state.boardGeneration++;show20dCandidates()">原模型研究排名／驗證資料 ↗</button></div>
     <div class="board-notice">條件符合不等於核准買點。模型估計機率不是實際回測勝率；選股規則尚未完成獨立績效驗證。</div>
-    <details class="board-explanation"><summary>排序與判讀方式</summary><p>按條件狀態分組，同組按當日20日模型估計淨獲利機率由高到低排序（優先使用完整精度；同分依代碼、缺值置後）。顯示至小數2位。20日是評估期限，不代表名單固定20天。此清單與個股頁使用同一判讀函式；沒有第二個 AI 結論。</p></details>
+    <details class="board-explanation"><summary>排序與判讀方式</summary><p>按條件狀態分組，同組按當日20日模型估計淨獲利機率由高到低排序（優先使用完整精度；同分依代碼、缺值置後）。顯示至小數2位。20日是評估期限，不代表名單固定20天。機率僅供同組排序，不參與三關判定。此清單與個股頁使用同一份三關快照；沒有第二個 AI 結論。</p></details>
     <div class="board-filters" role="group" aria-label="條件分類">
-    ${[['all','全部'],['ready','符合觀察進場條件'],['waiting','候選／等待條件'],['excluded','未符合候選'],['missing','資料不足']].map(([k,label])=>`<button class="filter-chip ${filter===k?'selected':''}" aria-pressed="${filter===k}" onclick="renderDecisionBoard('${k}')">${label}<span class="filter-count">${all.filter(r=>k==='all'||group(r)===k).length}</span></button>`).join('')}
+    ${[['all','全部'],['ready','符合三關條件'],['excluded','未符合三關'],['financial','金融業另列'],['missing','資料不足']].map(([k,label])=>`<button class="filter-chip ${filter===k?'selected':''}" aria-pressed="${filter===k}" onclick="renderDecisionBoard('${k}')">${label}<span class="filter-count">${all.filter(r=>k==='all'||group(r)===k).length}</span></button>`).join('')}
     </div><div class="board-table-meta">顯示 ${rows.length} 檔 <span>點選股票查看完整條件與數據</span></div>
     <div class="table-scroll" tabindex="0" role="region" aria-label="候選股票表格"><table class="decision-table"><thead><tr><th scope="col">股票</th><th scope="col">估計淨獲利機率 ↓</th><th scope="col">條件狀態</th><th scope="col">核對說明</th></tr></thead><tbody>
     ${rows.map(r=>`<tr><td><button class="stock-link" onclick="showStock('${escapeHtml(r.stockId)}')"><span class="stock-code">${escapeHtml(r.stockId)}</span><span>${escapeHtml(stockName(r.stockId))}</span></button></td><td class="probability-cell">${boardProfitProbability(r)===null?'--':boardProfitProbability(r).toFixed(2)+'%'}</td><td><span class="status-pill status-${group(r)}">${escapeHtml(r.assessment.status)}</span></td><td class="reason-cell">${escapeHtml(r.assessment.reason)}</td></tr>`).join('')||'<tr><td colspan="4" class="empty-state">此分類沒有股票，不放寬條件湊數。</td></tr>'}

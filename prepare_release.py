@@ -46,6 +46,8 @@ def prepare(root):
         temp.write_text(json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False), encoding="utf-8")
         temp.replace(target)
     publish(root, cache / "ai-context")
+    from three_gate import publish as publish_three_gate
+    publish_three_gate(root)
     print("V94 display migration:", predictions["model"]["latest_date"],
           "history:", predictions["model"]["observation_ranking"]["history_dates"])
 
