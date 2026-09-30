@@ -22,37 +22,15 @@ c.h.institutions[0][1]=null;a.match(ev('Review94.quality(h)'),/法人/);c.h=orig
 c.short={available:true,bars:original.bars.slice(-3),institutions:original.institutions.slice(-3)};
 a.match(ev('summarizeAIEvidence(short).facts.F4'),/法人/);a.match(ev('summarizeAIEvidence(short).facts.F7'),/日線/);a.match(ev('summarizeAIEvidence(short).facts.F9'),/未還原/);
 c.location.hostname='custom.example';a.equal(ev('Review94.backend()'),'https://twstock-app.onrender.com');c.location.hostname='localhost';
-// Deterministic free rules: all-positive observations must not default to waiting.
-c.entryH=JSON.parse(JSON.stringify(original));
-c.entryH.bars.forEach((r,i)=>{r[1]=r[2]=r[3]=r[4]=100+i;});
-c.entryH.institutions.forEach(r=>{r[1]=10;r[2]=1;});
-c.entryItem={available:true,prediction_20d:{net_profit_probability:59.7,capital_flow_5d_pct:39.75,entry_status:'research_only',return_shrinkage:1,expected_net_return:1.32}};
-const entryBefore=JSON.stringify([c.entryItem,c.entryH]);
-a.match(ev('assessEntry(entryItem,entryH).status'),/符合觀察進場條件/);
-a.equal(ev('assessEntry(entryItem,entryH).sharedReturn'),true);
-a.equal(JSON.stringify([c.entryItem,c.entryH]),entryBefore);
-c.entryItem.prediction_20d.expected_net_return=-99;
-a.match(ev('assessEntry(entryItem,entryH).status'),/符合觀察進場條件/);
-c.entryItem.prediction_20d.capital_flow_5d_pct=-1;
-a.equal(ev('assessEntry(entryItem,entryH).status'),'候選／等待條件');
-a.match(ev('assessEntry(entryItem,entryH).reason'),/量價代理/);
-c.entryItem.prediction_20d.capital_flow_5d_pct=1;
-c.entryH.institutions[0][1]=-1000;
-a.match(ev('assessEntry(entryItem,entryH).reason'),/20日外資/);
-c.entryH.institutions[0][1]=10;
-c.entryItem.prediction_20d.net_profit_probability=50;
-a.equal(ev('assessEntry(entryItem,entryH).status'),'未符合候選條件');
-c.entryItem.prediction_20d.net_profit_probability=null;
-a.equal(ev('assessEntry(entryItem,entryH).status'),'資料不足');
-c.entryItem.prediction_20d.net_profit_probability=60;
-c.entryItem.prediction_20d.entry_status='wait_pullback';
-a.match(ev('assessEntry(entryItem,entryH).reason'),/急漲/);
-c.entryH.calendar_verified=false;
-a.equal(ev('assessEntry(entryItem,entryH).status'),'資料不足');
+// Old price/probability rules are replaced by independently tested three-gate snapshots.
+c.gate={version:1,generated_at:new Date().toISOString(),data:{}};
+for(const sid of Object.keys(source.data))c.gate.data[sid]={status:'符合三關條件',passed:true,reason:'fixture',checks:Array.from({length:10},()=>({pass:true,raw:{}}))};
+a.equal(ev('threeGateAssessment("unknown",gate).status'),'資料不足');
 node('apiKeyInput').value='gsk_TEST_SECRET';node('aiProvider').value='groq';node('aiModel').value='openai/gpt-oss-120b';
 const top=Object.keys(source.data).filter(s=>source.data[s].available).sort((x,y)=>source.data[x].probability_rank_20d-source.data[y].probability_rank_20d).slice(0,5);
 let paid=0,mode='ok',release;
 c.fetch=async(url,opts)=>{
+ if(url.startsWith('cache/three_gate'))return{ok:true,json:async()=>c.gate};
  if(url.endsWith('/health'))return{ok:true,json:async()=>({ai_analysis:mode==='old'?'opinion-v93':'opinion-v94'})};
  if(url.startsWith('cache/ai-context'))return{ok:mode!=='missing',json:async()=>JSON.parse(fs.readFileSync(path.join(root,url.split('?')[0])))};
  paid++;if(mode==='hold')await new Promise(r=>release=r);
@@ -66,14 +44,12 @@ c.fetch=async(url,opts)=>{
  ev('renderDecisionBoard("ready")');
  a.doesNotMatch(node('screenerResult').innerHTML,/<td>候選／等待條件<\/td>/);
  for(const row of ev('state.boardResults')){
-   if(!row.item.available){a.equal(row.assessment.status,'資料不足');continue;}
-   c.row=row;c.h={...JSON.parse(fs.readFileSync(path.join(root,`cache/ai-context/${row.stockId}.json`))),available:true};
-   a.equal(row.assessment.status,ev('assessEntry(row.item,h).status'));
+   c.row=row; a.equal(row.assessment.status,ev('threeGateAssessment(row.stockId,gate).status'));
  }
  c.sid=top[0];ev('showStock(sid)');
  a.match(node('stockDetail').innerHTML,/返回免費條件清單/);
  a.doesNotMatch(node('stockDetail').innerHTML,/onclick="runAI20d/);
- for(const sid of top){c.sid=sid;ev('state.currentStockId=sid');await ev('loadEntryAssessment(sid,state.predictions[sid])');a.match(node('entryAssessment').innerHTML,/候選與進場條件核對/);}
+ for(const sid of top){c.sid=sid;ev('state.currentStockId=sid');await ev('loadEntryAssessment(sid,state.predictions[sid])');a.match(node('entryAssessment').innerHTML,/三道濾網核對/);}
  a.equal(paid,0,'Free assessment must not call an AI provider');
  node('entryAssessment').innerHTML='keep';ev('state.currentStockId="other"');await ev('loadEntryAssessment(sid,state.predictions[sid])');a.equal(node('entryAssessment').innerHTML,'keep');
  for(const sid of top){c.sid=sid;ev('state.currentStockId=sid');await ev('window.runAI20d(sid)');a.match(node('aiContent').textContent,/研究偏向/);}
