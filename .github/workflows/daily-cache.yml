@@ -53,7 +53,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add cache/price.json cache/benchmark.json cache/predictions.json cache/prediction_log.json cache/progress.json cache/universe.json cache/research_protocol.json cache/sectors.json cache/institutions.json cache/shadow_log.json
           git add cache/research_protocol.parts/
-          git add cache/three_gate.json cache/fundamentals_progress.json
+          git add cache/three_gate.json cache/fundamentals_progress.json cache/fundamentals_status.json
           if [ -d cache/fundamentals ]; then git add cache/fundamentals/; fi
           if [ -d cache/fundamentals_raw ]; then git add cache/fundamentals_raw/; fi
           python protocol_storage.py

@@ -10,6 +10,8 @@ on:
       - "index.html"
       - "app.js"
       - "three_gate.py"
+      - "bootstrap_fundamentals.py"
+      - "bootstrap/**"
       - "refresh_fundamentals.py"
       - "cache/fundamentals/**"
       - "cache/three_gate.json"
@@ -49,6 +51,13 @@ jobs:
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
+
+      - name: Initialize missing financial data
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        run: |
+          python3 -m pip install httpx
+          python3 refresh_fundamentals.py --bootstrap --limit 200
 
       - name: Prepare website files
         run: |
