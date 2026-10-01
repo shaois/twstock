@@ -228,12 +228,25 @@ def publish(root, destination=None, as_of=None):
     inst = read(cache / 'institutions.json', {}).get('data', {})
     sectors = read(cache / 'sectors.json', {}).get('data', {})
     calendar = [r['date'] for r in read(cache / 'benchmark.json', {}).get('data', [])]
+    refresh_status = read(cache / 'fundamentals_status.json', {}).get('data', {})
+    coverage = {'total': len(universe), 'snapshots': 0, 'nonfinancial': 0, 'financial_complete': 0}
     payload = {'version': 1, 'generated_at': as_of.isoformat(), 'data': {},
                'limitation': '財報公告日未提供；只作目前快照核對，不可倒填公告日或宣稱歷史回測。ROE＝全年本期淨利／平均總權益；EPS依供應商原始單季值，配股拆併股前後比較仍需核實。金額為元，法人為股。'}
     for sid in universe:
         snapshot = read(cache / 'fundamentals' / f'{sid}.json')
+        if snapshot:
+            coverage['snapshots'] += 1
         industry = sectors.get(sid, {}).get('industry_category')
-        payload['data'][sid] = assess(snapshot, prices.get(sid, []), inst.get(sid, []), calendar, as_of, industry)
+        result = assess(snapshot, prices.get(sid, []), inst.get(sid, []), calendar, as_of, industry)
+        result['refresh_status'] = refresh_status.get(sid)
+        if not snapshot:
+            result['reason'] = '財報尚未初始化；' + result['reason']
+        if result['status'] != '金融業另列':
+            coverage['nonfinancial'] += 1
+            if all(c['pass'] is not None for c in result['checks'] if c['group'] != '第三關'):
+                coverage['financial_complete'] += 1
+        payload['data'][sid] = result
+    payload['coverage'] = coverage
     write(destination or cache / 'three_gate.json', payload)
     return payload
 

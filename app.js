@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "v94.7";
+const APP_VERSION = "v94.8";
 const MODEL_IMPLEMENTATION_VERSION = "v94";
 const MODEL_NAME = "single_horizon_20d_rotation_v94";
 const CONTRACT_VERSION = "20d-net-executable-v2";
@@ -456,6 +456,7 @@ async function loadEntryAssessment(stockId,item) {
   const r=threeGateAssessment(stockId,payload),panel=byId('entryAssessment');if(!panel)return;
   panel.innerHTML=`<div class="panel-title">三道濾網核對（免費／策略績效未驗證）</div>
     <h3>${escapeHtml(r.status)}</h3><p>${escapeHtml(r.reason)}</p>
+    ${r.refresh_status && r.refresh_status.status!=="ok"?`<p>最近財報更新：${escapeHtml(r.refresh_status.status)}；資料集 ${escapeHtml(r.refresh_status.dataset)}；時間 ${escapeHtml(r.refresh_status.at)}</p>`:""}
     <p>核對時間 ${escapeHtml(payload?.generated_at||'--')}。${escapeHtml(payload?.limitation||'缺資料不得當作通過。')}</p>
     ${r.checks.map(x=>`<div style="margin:14px 0;padding:12px;border:1px solid var(--border);border-radius:8px">
       <strong>${x.pass===null?'缺資料':x.pass?'通過':'未通過'}｜${escapeHtml(x.group)}：${escapeHtml(x.label)}</strong>
@@ -506,6 +507,7 @@ function renderDecisionBoard(filter='all') {
     <div class="board-heading"><div><div class="board-eyebrow">基本面 × 成長 × 價量法人</div><h2>三道濾網條件清單</h2><p class="board-subtitle">行情日 ${escapeHtml(state.model.latest_date)} · 核對 ${escapeHtml(state.threeGate?.generated_at||"尚未建立")} · 同組依估計淨獲利機率遞減</p></div>
     <button class="btn btn-secondary" onclick="state.boardGeneration++;show20dCandidates()">原模型研究排名／驗證資料 ↗</button></div>
     <div class="board-notice">條件符合不等於核准買點。模型估計機率不是實際回測勝率；選股規則尚未完成獨立績效驗證。</div>
+    <div class="board-notice">財報快照 ${state.threeGate?.coverage?.snapshots ?? "--"}/${state.threeGate?.coverage?.total ?? 200} 檔；一般產業財報可完整核對 ${state.threeGate?.coverage?.financial_complete ?? "--"}/${state.threeGate?.coverage?.nonfinancial ?? "--"} 檔。${state.threeGate?.coverage?.snapshots===0?"財報尚未初始化，不能將零檔通過當成選股結果。":"缺欄位的股票會列出缺項，不視為通過。"}</div>
     <details class="board-explanation"><summary>排序與判讀方式</summary><p>按條件狀態分組，同組按當日20日模型估計淨獲利機率由高到低排序（優先使用完整精度；同分依代碼、缺值置後）。顯示至小數2位。20日是評估期限，不代表名單固定20天。機率僅供同組排序，不參與三關判定。此清單與個股頁使用同一份三關快照；沒有第二個 AI 結論。</p></details>
     <div class="board-filters" role="group" aria-label="條件分類">
     ${[['all','全部'],['ready','符合三關條件'],['excluded','未符合三關'],['financial','金融業另列'],['missing','資料不足']].map(([k,label])=>`<button class="filter-chip ${filter===k?'selected':''}" aria-pressed="${filter===k}" onclick="renderDecisionBoard('${k}')">${label}<span class="filter-count">${all.filter(r=>k==='all'||group(r)===k).length}</span></button>`).join('')}

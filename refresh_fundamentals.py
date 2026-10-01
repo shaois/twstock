@@ -14,7 +14,9 @@ from three_gate import DATASETS, TAIPEI, normalize, publish, read, write
 URL = 'https://api.finmindtrade.com/api/v4/data'
 
 
-async def refresh(root, limit=40, stock_ids=None, client=None):
+async def refresh(root, limit=40, stock_ids=None, client=None, bootstrap=False):
+    from bootstrap_fundamentals import seed_missing
+    seed_missing(root)
     cache = root / 'cache'
     universe = read(cache / 'universe.json', {}).get('data', {})
     ids = stock_ids or sorted(universe)
@@ -23,6 +25,9 @@ async def refresh(root, limit=40, stock_ids=None, client=None):
     now = datetime.now(TAIPEI)
     progress_path = cache / 'fundamentals_progress.json'
     progress = read(progress_path, {})
+    write(progress_path, progress)
+    status_path = cache / 'fundamentals_status.json'
+    status = read(status_path, {'data': {}})
     # Oldest attempted first: failures cannot starve the rest of the universe.
     ids = sorted(ids, key=lambda sid: progress.get(sid, ''))
     token = os.environ.get('FINMIND_TOKEN', '').strip()
@@ -39,7 +44,7 @@ async def refresh(root, limit=40, stock_ids=None, client=None):
             old = read(target, {})
             try:
                 age = now - datetime.fromisoformat(old.get('observed_at', ''))
-                if timedelta(0) <= age < timedelta(days=1):
+                if timedelta(0) <= age < timedelta(days=7 if bootstrap else 1):
                     continue
             except (ValueError, TypeError):
                 pass
@@ -74,18 +79,28 @@ async def refresh(root, limit=40, stock_ids=None, client=None):
                 snapshot['raw_sha256'] = digest
                 snapshot['raw_path'] = archive.relative_to(cache).as_posix()
                 write(target, snapshot)
+                status['data'][sid] = {'status': 'ok', 'at': observed}
                 print(f'{sid}: financial snapshot saved')
             except (httpx.HTTPError, ValueError, RuntimeError) as exc:
                 # Never print provider bodies, request headers or tokens.
-                print(f'{sid}: financial refresh unavailable; previous snapshot retained')
+                error = ('quota' if isinstance(exc, RuntimeError) and str(exc) == 'quota' else
+                         f'http_{exc.response.status_code}' if isinstance(exc, httpx.HTTPStatusError) else
+                         'network_error' if isinstance(exc, httpx.HTTPError) else 'invalid_or_empty_data')
+                status['data'][sid] = {'status': error, 'dataset': dataset, 'at': now.isoformat()}
+                print(f'{sid}: {dataset}: {error}; previous snapshot retained')
                 if isinstance(exc, RuntimeError) and str(exc) == 'quota':
                     break
             finally:
                 write(progress_path, progress)
+                write(status_path, status)
     finally:
         if owned:
             await client.aclose()
-    publish(root)
+    write(status_path, status)
+    payload = publish(root)
+    coverage = payload['coverage']
+    print(f"Financial coverage: {coverage['snapshots']}/{coverage['total']} snapshots; "
+          f"{coverage['financial_complete']}/{coverage['nonfinancial']} nonfinancial stocks with all financial checks evaluable")
     return attempted
 
 
@@ -94,7 +109,8 @@ if __name__ == '__main__':
     parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parent)
     parser.add_argument('--limit', type=int, default=40)
     parser.add_argument('--stocks', nargs='+')
+    parser.add_argument('--bootstrap', action='store_true', help='Only fetch missing or expired snapshots; up to 200 stocks')
     args = parser.parse_args()
-    if not 1 <= args.limit <= 40:
-        parser.error('--limit must be between 1 and 40 (at most 120 requests)')
-    asyncio.run(refresh(args.root, args.limit, args.stocks))
+    if not 1 <= args.limit <= (200 if args.bootstrap else 40):
+        parser.error('--limit must be 1..40, or 1..200 with --bootstrap')
+    asyncio.run(refresh(args.root, args.limit, args.stocks, bootstrap=args.bootstrap))

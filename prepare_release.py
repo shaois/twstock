@@ -5,6 +5,8 @@ from predictor import apply_observation_ranking, update_prediction_log, MODEL_NA
 from build_ai_context import publish
 
 def prepare(root):
+    from bootstrap_fundamentals import seed_missing
+    seed_missing(root)
     cache = root / "cache"
     def read(name):
         return json.loads((cache / name).read_text(encoding="utf-8"))
