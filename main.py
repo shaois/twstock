@@ -193,3 +193,8 @@ async def review_script() -> FileResponse:
 @app.get("/ai-schema.json")
 async def review_schema() -> dict:
     return {"version": VERSION, "schema": SCHEMA}
+
+
+@app.get("/short-term.js")
+async def short_term_script() -> FileResponse:
+    return FileResponse(ROOT / "short-term.js", media_type="application/javascript")

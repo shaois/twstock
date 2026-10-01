@@ -50,6 +50,8 @@ def prepare(root):
     publish(root, cache / "ai-context")
     from three_gate import publish as publish_three_gate
     publish_three_gate(root)
+    from short_term import publish as publish_short_term
+    publish_short_term(root)
     print("V94 display migration:", predictions["model"]["latest_date"],
           "history:", predictions["model"]["observation_ranking"]["history_dates"])
 

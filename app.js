@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "v94.8";
+const APP_VERSION = "v94.9";
 const MODEL_IMPLEMENTATION_VERSION = "v94";
 const MODEL_NAME = "single_horizon_20d_rotation_v94";
 const CONTRACT_VERSION = "20d-net-executable-v2";
@@ -176,6 +176,7 @@ function validateModel(universePayload, predictionPayload) {
 }
 
 async function loadStocks() {
+  state.shortActive=false;
   byId("loadCacheBtn").disabled = true;
   byId("rankingBtn").disabled = true;
   const cacheStatus = byId("cacheStatus");
@@ -282,6 +283,7 @@ function candidateRowHtml(row, index) {
 }
 
 function show20dCandidates() {
+  state.shortActive=false;
   state.boardGeneration=(state.boardGeneration||0)+1;
   if (!state.loaded) {
     showToast("請先按「重新載入快取」");
@@ -374,6 +376,7 @@ function metric(label, value) {
 }
 
 function showStock(stockId) {
+  state.shortActive=false;
   if (!state.loaded) return;
   const item = state.predictions[stockId];
   if (!item?.available || !item.prediction_20d) {
@@ -468,6 +471,7 @@ async function loadEntryAssessment(stockId,item) {
 }
 
 async function showDecisionBoard() {
+  state.shortActive=false;
   if(!state.loaded)return;
   state.currentStockId='';
   byId('welcome').style.display='none';byId('stockDetail').style.display='none';
