@@ -17,11 +17,17 @@ c.trade.date='2026-08-01';a.match(ev('shortTradeState(trade,row,calendar).error'
 c.trade.date='';a.match(ev('shortTradeState(trade,row,calendar).error'),/等待/);
 ev('shortPayload={data:{2330:row},calendar};state.universe={2330:{name:"台積電"}}');
 ev('saveShortSignal("2330")');a.equal(ev('shortTrades()["2330"].signal_date'),'2026-09-01');
+a.equal(ev('shortTrades()["2330"].horizon'),5);
+c.trade.date='2026-09-11';c.trade.horizon=5;
+a.ok(ev('shortTradeState(trade,row,calendar).alerts.some(x=>x.includes("5個交易日"))'));
+c.trade.date='2026-09-12';
+a.ok(!ev('shortTradeState(trade,row,calendar).alerts.some(x=>x.includes("持有期限"))'));
 node('shortDate').value='2026-09-01';node('shortPrice').value='100';node('shortStop').value='4';node('shortTarget').value='12';
 ev('saveShortTrade("2330")');a.match(node('shortMessage').textContent,/晚於訊號日/);
 // Next day's data changes current signal; the saved signal must remain anchored.
 c.row.date='2026-09-15';c.row.signal_low=120;c.row.passed=false;
 node('shortDate').value='2026-09-06';ev('saveShortTrade("2330")');
 a.equal(ev('shortTrades()["2330"].signal_low'),95);a.equal(ev('shortTrades()["2330"].date'),'2026-09-06');
+a.equal(ev('shortTrades()["2330"].horizon'),5);
 ev('removeShortTrade("2330")');a.equal(ev('Object.keys(shortTrades()).length'),0);
 console.log('Short-term: persisted signal anchoring, next-session entry, cash levels, missing days, 3/10-day reminders and ambiguous daily touches passed');
