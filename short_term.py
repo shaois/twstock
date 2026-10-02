@@ -5,7 +5,8 @@ from pathlib import Path
 from three_gate import TAIPEI, num, read, write
 
 
-def assess(prices, institutions, dates, now):
+def assess(prices, institutions, dates, now, capital=None):
+    # Legacy optional capital argument is ignored; screening has no capital dependency.
     by_date = {}
     conflicts = set()
     for r in prices:
@@ -39,22 +40,40 @@ def assess(prices, institutions, dates, now):
         close > high if valid else None, {'前20日最高價': high, '收盤': close})
     avg = sum(Decimal(str(b['volume'])) for b in recent[:-1]) / 20 if valid else None
     ratio = float(Decimal(str(latest['volume'])) / avg) if valid and avg > 0 else None
-    add('當日成交量 > 前20日均量的2倍（不含當日）', ratio,
-        Decimal(str(latest['volume'])) > avg * 2 if ratio is not None else None,
+    add('當日成交量 ≥ 前20日均量的2倍（不含當日）', ratio,
+        Decimal(str(latest['volume'])) >= avg * 2 if ratio is not None else None,
         {'當日成交股數': latest.get('volume'), '前20日平均股數': float(avg) if avg is not None else None})
-    add('訊號日收紅（收盤 > 開盤）', close,
-        close > latest['open'] if valid else None, {'開盤': latest.get('open'), '收盤': close})
+    body = Decimal(str(close))-Decimal(str(latest['open'])) if valid else None
+    body_pct = float(body/Decimal(str(latest['open']))*100) if valid else None
+    add('紅K實體漲幅 ≥ 3%（收盤／開盤－1）', body_pct,
+        body >= Decimal(str(latest['open']))*Decimal('.03') if valid else None,
+        {'開盤': latest.get('open'), '收盤': close, '實體漲幅%': body_pct})
+    span = Decimal(str(latest['high']))-Decimal(str(latest['low'])) if valid else None
+    upper = Decimal(str(latest['high']))-Decimal(str(close)) if valid else None
+    add('收盤位於當日振幅頂部20%', None,
+        upper <= span*Decimal('.2') if valid and span > 0 else False if valid else None,
+        {'最高': latest.get('high'), '最低': latest.get('low'), '收盤': close})
+    add('上影線 ≤ 紅K實體一半', None,
+        body > 0 and upper <= body/2 if valid else None,
+        {'上影線': float(upper) if valid else None, '實體': float(body) if valid else None})
+    add('收盤價30～150元（含邊界）', close, 30 <= close <= 150 if valid else None, {'收盤': close})
     for n in (5, 10, 20):
         ma = sum(Decimal(str(b['close'])) for b in recent[-n:]) / n if valid else None
         add(f'收盤 > MA{n}', close, Decimal(str(close)) > ma if ma is not None else None,
             {'收盤': close, '均線': float(ma) if ma is not None else None})
-    inst = [r for r in institutions if r.get('date') == latest.get('date')]
-    row = inst[0] if inst and all(r == inst[0] for r in inst) else {}
-    foreign, trust = [num(row.get(k)) for k in ('foreign_net_shares', 'trust_net_shares')]
-    positive = any(v is not None and v > 0 for v in (foreign, trust))
-    passed = (True if positive else None if foreign is None or trust is None else False) if fresh else None
-    add('訊號日外資或投信淨買超 > 0（任一）', None, passed,
-        {'外資淨買超股數': foreign, '投信淨買超股數': trust})
+    inst_days = []
+    for d in dates[-3:]:
+        matches = [r for r in institutions if r.get('date') == d]
+        row = matches[0] if matches and all(r == matches[0] for r in matches) else {}
+        inst_days.append({'date': d, 'foreign': num(row.get('foreign_net_shares')), 'trust': num(row.get('trust_net_shares'))})
+    inst_valid = valid and len(inst_days) == 3 and all(r[k] is not None for r in inst_days for k in ('foreign','trust'))
+    total = sum(Decimal(str(r[k])) for r in inst_days for k in ('foreign','trust')) if inst_valid else None
+    volume = sum(Decimal(str(b['volume'])) for b in recent[-3:]) if inst_valid else None
+    concentration = float(total/volume*100) if inst_valid and volume > 0 else None
+    add('近3交易日外資＋投信合計淨買超／同期成交量 ≥ 5%', concentration,
+        total >= volume*Decimal('.05') if concentration is not None else None,
+        {'逐日淨買超股數': inst_days, '合計淨買超股數': float(total) if total is not None else None,
+         '同期成交股數': float(volume) if volume is not None else None, '占比%': concentration})
     missing = any(c['pass'] is None for c in checks)
     passed = all(c['pass'] is True for c in checks)
     return {'status': '資料不足' if missing else '符合短線觀察條件' if passed else '未符合短線條件',
@@ -74,7 +93,7 @@ def publish(root, now=None):
     calendar = sorted({r['date'] for r in read(cache/'benchmark.json', {}).get('data', [])
                        if r['date'] < now.date().isoformat() or
                        (r['date'] == now.date().isoformat() and now.hour >= 18)})
-    payload = {'version': 1, 'generated_at': now.isoformat(), 'market_date': calendar[-1] if calendar else None,
+    payload = {'version': 3, 'strategy': 'short-v3-no-capital-1to5', 'generated_at': now.isoformat(), 'market_date': calendar[-1] if calendar else None,
                'calendar': calendar[-80:], 'data': {
                    sid: assess(prices.get(sid, []), institutions.get(sid, []), calendar, now) for sid in universe}}
     write(cache/'short_term.json', payload)

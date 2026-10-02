@@ -23,7 +23,8 @@ function shortTradeState(trade,row,calendar) {
   if(last&&last.close<trade.signal_low)alerts.push('最新收盤跌破原訊號日低點：技術停損提醒');
   if(last&&ma!==null&&last.close<ma)alerts.push('最新收盤跌破MA5：技術停損／移動停利提醒');
   if(held.length>=3&&held[2].close<=p)alerts.push('第3交易日收盤未高於成交價：未走強提醒');
-  if(held.length>=10)alerts.push('已達10個交易日（成交日算第1天）：持有期限提醒');
+  const horizon=trade.horizon===5?5:10;
+  if(held.length>=horizon)alerts.push(`已達${horizon}個交易日（成交日算第1天）：持有期限提醒`);
   return {stopPrice,targetPrice,ma,ret,days:held.length,alerts};
 }
 async function showShortTerm(){
@@ -36,7 +37,7 @@ async function showShortTerm(){
     const p=await fetchCache('short_term');
     if(generation!==shortGeneration||!state.shortActive)return;
     const age=Date.now()-Date.parse(p.generated_at);
-    if(p.version!==1||!Array.isArray(p.calendar)||!Number.isFinite(age)||age<0||age>7*86400000)throw Error('短線快照缺失或過期，請完成更新');
+    if(p.version!==3||!Array.isArray(p.calendar)||!Number.isFinite(age)||age<0||age>7*86400000)throw Error('短線快照缺失或過期，請完成更新');
     shortPayload=p;renderShortTerm('ready');
   }catch(e){if(generation===shortGeneration&&state.shortActive)byId('screenerResult').innerHTML=`<p>${escapeHtml(e.message)}</p>`;}
 }
@@ -48,9 +49,9 @@ function renderShortTerm(filter=shortFilter){
   const selected=rows.filter(r=>filter==='all'||(filter==='held'?trades[r.id]:group(r)===filter))
     .sort((a,b)=>(b.volume_ratio??-1)-(a.volume_ratio??-1)||a.id.localeCompare(b.id));
   byId('screenerResult').innerHTML=`<div class="screener-panel decision-board"><h2>短線交易觀察｜收盤後篩選</h2>
-    <p>行情日 ${escapeHtml(shortPayload.market_date)} · 下一交易日觀察進場 · 目標持有1～10交易日</p>
+    <p>行情日 ${escapeHtml(shortPayload.market_date)} · 下一交易日觀察進場 · 目標持有1～5交易日</p>
     <div class="board-notice">這是固定條件觀察，不是短線獲利機率或已驗證策略。不提供盤中／收盤前訊號；當日收盤後資料不能假設在當日收盤成交。</div>
-    <details><summary>完整規則與口徑</summary><p>收盤突破前20交易日最高價；成交量大於前20日均量2倍，兩者均不含訊號日。當日收紅、收盤站上MA5／10／20、當日外資或投信任一淨買超為正。均線包含當日。未另定義盤整幅度、中長紅K幅度或「顯著」買超門檻，沒有主力資料；不以舊20日模型機率筛選。所有產業同用技術條件。</p><p>同組依量比排序，同分依代碼；缺資料不通過、不為湊名單放寬。價格為原始未還原日線，除權息／拆併股附近需另核實。</p></details>
+    <details><summary>完整規則與口徑</summary><p>不限制股本；收盤30～150元；收盤突破前20交易日最高價、成交量至少前20日均量2倍，兩者均不含訊號日。紅K實體（收盤／開盤－1）至少3%、收盤位於當日振幅頂部20%、上影線不超過實體一半；收盤站上MA5／10／20。近3交易日外資＋投信合計淨買超股數／同期成交股數至少5%，包含訊號日，賣超會扣除。無主力券商資料，不啟用主力替代分支。</p><p>同組依量比排序，同分依代碼；缺資料不通過、不為湊名單放寬。價格為原始未還原日線，除權息／拆併股附近需另核實。</p></details>
     <div class="board-filters">${[['ready','符合觀察'],['excluded','未符合'],['missing','資料不足'],['all','全部'],['held','我的追蹤']].map(([k,t])=>`<button class="filter-chip ${filter===k?'selected':''}" onclick="renderShortTerm('${k}')">${t}<span class="filter-count">${rows.filter(r=>k==='all'||(k==='held'?trades[r.id]:group(r)===k)).length}</span></button>`).join('')}</div>
     <div class="table-scroll"><table class="decision-table"><thead><tr><th>股票</th><th>量比 ↓</th><th>狀態</th><th>原因／追蹤</th></tr></thead><tbody>${selected.map(r=>{
       const t=trades[r.id]?shortTradeState(trades[r.id],r,shortPayload.calendar):null;
@@ -72,7 +73,7 @@ function showShortStock(id){
     ${trade?`<button class="btn btn-secondary" onclick="removeShortTrade('${escapeHtml(id)}')">移除本機追蹤</button>`:''}
     <div id="shortMessage" role="status"></div>
     ${t?`<p>${escapeHtml(t.error||`資金停損參考 ${t.stopPrice.toFixed(2)} 元；半數停利參考 ${t.targetPrice.toFixed(2)} 元；最新MA5 ${t.ma?.toFixed(2)||'--'} 元；持有 ${t.days} 交易日；收盤帳面報酬 ${percent(t.ret)}（未扣費用）`)}</p>${(t.alerts||[]).map(x=>`<p>${escapeHtml(x)}</p>`).join('')}`:''}
-    <p>止損以資金停損線、原訊號日低點及最新MA5各自核對。成交當天高低價也包含成交前行情，不能斷言成交後才觸價。日線只能提醒觸價，不能保證成交價；跳空可能超過設定虧損。同日停損停利先後不明時明示不確定。「3日未走強」定義為第3交易日收盤≤成交價，不另假裝辨識橫盤；第10交易日起提示期限。</p></div>`;
+    <p>止損以資金停損線、原訊號日低點及最新MA5各自核對。成交當天高低價也包含成交前行情，不能斷言成交後才觸價。日線只能提醒觸價，不能保證成交價；跳空可能超過設定虧損。同日停損停利先後不明時明示不確定。「3日未走強」定義為第3交易日收盤≤成交價，不另假裝辨識橫盤；新訊號第5交易日起提示期限，舊版追蹤保留10日。</p></div>`;
   byId('shortDetail').scrollIntoView?.({behavior:'smooth',block:'start'});
 }
 function saveShortTrade(id){
@@ -84,7 +85,7 @@ function saveShortTrade(id){
     !shortPayload.calendar.includes(date)?'成交日尚無完整日線或非可核對交易日；請於資料更新後記錄':
     !Number.isFinite(price)||price<=0?'請填正確成交價':stop<3||stop>5||target<10||target>15?'風控比例超出指定範圍':!Number.isFinite(signalLow)?'缺訊號日低點':null;
   if(error){byId('shortMessage').textContent=error;return;}
-  trades[id]={date,price,stop,target,signal_date:signalDate,signal_low:signalLow};
+  trades[id]={date,price,stop,target,signal_date:signalDate,signal_low:signalLow,horizon:old?(old.horizon||10):5};
   try{localStorage.setItem(SHORT_KEY,JSON.stringify(trades));showShortStock(id);byId('shortMessage').textContent='已儲存；未送出任何交易。';}
   catch{byId('shortMessage').textContent='瀏覽器禁止儲存，紀錄未保存。';}
 }
@@ -92,7 +93,7 @@ function removeShortTrade(id){const trades=shortTrades();delete trades[id];try{l
 
 function saveShortSignal(id){
   const r=shortPayload.data[id],trades=shortTrades();if(!r?.passed||trades[id])return;
-  trades[id]={signal_date:r.date,signal_low:r.signal_low,date:'',price:null,stop:4,target:12};
+  trades[id]={signal_date:r.date,signal_low:r.signal_low,date:'',price:null,stop:4,target:12,horizon:5};
   try{localStorage.setItem(SHORT_KEY,JSON.stringify(trades));showShortStock(id);byId('shortMessage').textContent='已保留訊號。下一交易日成交後，待該日完整資料更新再輸入實際成交日與價格。';}
   catch{byId('shortMessage').textContent='瀏覽器禁止儲存，訊號未保存。';}
 }
