@@ -5,6 +5,29 @@ from pathlib import Path
 from three_gate import TAIPEI, num, read, write
 
 
+ENTRY_MAX_MA5_GAP = Decimal('5')
+ENTRY_MAX_STOP_DISTANCE = Decimal('5')
+
+def entry_risk(close, ma5, signal_low, breakout, eligible=True, missing=False):
+    if missing or any(num(v) is None or v <= 0 for v in (close, ma5, signal_low, breakout)):
+        return {'status': '資料不足', 'reason': '進場風險所需資料缺漏或過期'}
+    if not eligible:
+        return {'status': '未符合短線條件', 'reason': '未通過選股條件，不提供進場標示'}
+    c,m,l,b = map(lambda v: Decimal(str(v)), (close, ma5, signal_low, breakout))
+    gap=(c/m-1)*100
+    distance=(c-l)/c*100
+    reasons=[]
+    if gap > ENTRY_MAX_MA5_GAP: reasons.append(f'距MA5 {float(gap):.2f}% > 5%')
+    if distance > ENTRY_MAX_STOP_DISTANCE: reasons.append(f'距訊號低點 {float(distance):.2f}% > 5%')
+    if c <= b: reasons.append('收盤未站在突破價之上')
+    if c <= m: reasons.append('收盤未站在MA5之上')
+    if c <= l: reasons.append('收盤未高於訊號低點')
+    return {'status': '風險偏高' if reasons else '可以進場',
+            'reason': '；'.join(reasons) or '已通過收盤風險條件；下一交易日須重新核對成交價格',
+            'ma5_gap_pct': float(gap), 'stop_distance_pct': float(distance),
+            'reference_close': close, 'ma5': ma5, 'signal_low': signal_low, 'breakout': breakout}
+
+
 def assess(prices, institutions, dates, now, capital=None):
     # Legacy optional capital argument is ignored; screening has no capital dependency.
     by_date = {}
@@ -76,7 +99,9 @@ def assess(prices, institutions, dates, now, capital=None):
          '同期成交股數': float(volume) if volume is not None else None, '占比%': concentration})
     missing = any(c['pass'] is None for c in checks)
     passed = all(c['pass'] is True for c in checks)
-    return {'status': '資料不足' if missing else '符合短線觀察條件' if passed else '未符合短線條件',
+    risk = entry_risk(close, float(sum(Decimal(str(b['close'])) for b in recent[-5:])/5) if valid else None,
+                      latest.get('low'), high, eligible=passed, missing=missing)
+    return {'entry': risk, 'status': '資料不足' if missing else '符合短線觀察條件' if passed else '未符合短線條件',
             'passed': passed, 'checks': checks, 'date': dates[-1] if dates else None,
             'signal_low': latest.get('low') if valid else None,
             'close': close, 'volume_ratio': ratio, 'bars': bars,
@@ -93,7 +118,7 @@ def publish(root, now=None):
     calendar = sorted({r['date'] for r in read(cache/'benchmark.json', {}).get('data', [])
                        if r['date'] < now.date().isoformat() or
                        (r['date'] == now.date().isoformat() and now.hour >= 18)})
-    payload = {'version': 3, 'strategy': 'short-v3-no-capital-1to5', 'generated_at': now.isoformat(), 'market_date': calendar[-1] if calendar else None,
+    payload = {'version': 4, 'strategy': 'short-v4-entry-risk-1to5', 'generated_at': now.isoformat(), 'market_date': calendar[-1] if calendar else None,
                'calendar': calendar[-80:], 'data': {
                    sid: assess(prices.get(sid, []), institutions.get(sid, []), calendar, now) for sid in universe}}
     write(cache/'short_term.json', payload)

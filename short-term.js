@@ -37,7 +37,7 @@ async function showShortTerm(){
     const p=await fetchCache('short_term');
     if(generation!==shortGeneration||!state.shortActive)return;
     const age=Date.now()-Date.parse(p.generated_at);
-    if(p.version!==3||!Array.isArray(p.calendar)||!Number.isFinite(age)||age<0||age>7*86400000)throw Error('短線快照缺失或過期，請完成更新');
+    if(p.version!==4||!Array.isArray(p.calendar)||!Number.isFinite(age)||age<0||age>7*86400000)throw Error('短線快照缺失或過期，請完成更新');
     shortPayload=p;renderShortTerm('ready');
   }catch(e){if(generation===shortGeneration&&state.shortActive)byId('screenerResult').innerHTML=`<p>${escapeHtml(e.message)}</p>`;}
 }
@@ -46,22 +46,22 @@ function renderShortTerm(filter=shortFilter){
   shortFilter=filter;shortSelected='';
   const rows=Object.entries(shortPayload.data).map(([id,r])=>({id,...r})),trades=shortTrades();
   const group=r=>r.status==='資料不足'?'missing':r.passed?'ready':'excluded';
-  const selected=rows.filter(r=>filter==='all'||(filter==='held'?trades[r.id]:group(r)===filter))
+  const selected=rows.filter(r=>filter==='all'||(filter==='held'?trades[r.id]:(filter==='enter'?r.entry?.status==='可以進場':filter==='risk'?r.entry?.status==='風險偏高':group(r)===filter)))
     .sort((a,b)=>(b.volume_ratio??-1)-(a.volume_ratio??-1)||a.id.localeCompare(b.id));
   byId('screenerResult').innerHTML=`<div class="screener-panel decision-board"><h2>短線交易觀察｜收盤後篩選</h2>
     <p>行情日 ${escapeHtml(shortPayload.market_date)} · 下一交易日觀察進場 · 目標持有1～5交易日</p>
-    <div class="board-notice">這是固定條件觀察，不是短線獲利機率或已驗證策略。不提供盤中／收盤前訊號；當日收盤後資料不能假設在當日收盤成交。</div>
-    <details><summary>完整規則與口徑</summary><p>不限制股本；收盤30～150元；收盤突破前20交易日最高價、成交量至少前20日均量2倍，兩者均不含訊號日。紅K實體（收盤／開盤－1）至少3%、收盤位於當日振幅頂部20%、上影線不超過實體一半；收盤站上MA5／10／20。近3交易日外資＋投信合計淨買超股數／同期成交股數至少5%，包含訊號日，賣超會扣除。無主力券商資料，不啟用主力替代分支。</p><p>同組依量比排序，同分依代碼；缺資料不通過、不為湊名單放寬。價格為原始未還原日線，除權息／拆併股附近需另核實。</p></details>
-    <div class="board-filters">${[['ready','符合觀察'],['excluded','未符合'],['missing','資料不足'],['all','全部'],['held','我的追蹤']].map(([k,t])=>`<button class="filter-chip ${filter===k?'selected':''}" onclick="renderShortTerm('${k}')">${t}<span class="filter-count">${rows.filter(r=>k==='all'||(k==='held'?trades[r.id]:group(r)===k)).length}</span></button>`).join('')}</div>
+    <div class="board-notice">「可以進場」僅依標示日期收盤資料判定，下一交易日須重新核對成交價格，並非即時買進指令。這是固定條件觀察，不是已驗證策略。不提供盤中／收盤前訊號；當日收盤後資料不能假設在當日收盤成交。</div>
+    <details><summary>完整規則與口徑</summary><p>不限制股本；收盤30～150元；收盤突破前20交易日最高價、成交量至少前20日均量2倍，兩者均不含訊號日。紅K實體（收盤／開盤－1）至少3%、收盤位於當日振幅頂部20%、上影線不超過實體一半；收盤站上MA5／10／20。近3交易日外資＋投信合計淨買超股數／同期成交股數至少5%，包含訊號日，賣超會扣除。無主力券商資料，不啟用主力替代分支。</p><p>進場風險：通過選股條件後，距MA5不超過5%、距訊號低點（收盤－低點）／收盤不超過5%，且收盤高於MA5、訊號低點與突破價，標為「可以進場」；超出門檻標為「風險偏高」。5%是初始風險規則，未經績效最佳化。未入選及缺資料不標為可以進場。</p><p>同組依量比排序，同分依代碼；缺資料不通過、不為湊名單放寬。價格為原始未還原日線，除權息／拆併股附近需另核實。</p></details>
+    <div class="board-filters">${[['ready','符合觀察'],['enter','可以進場'],['risk','風險偏高'],['excluded','未符合'],['missing','資料不足'],['all','全部'],['held','我的追蹤']].map(([k,t])=>`<button class="filter-chip ${filter===k?'selected':''}" onclick="renderShortTerm('${k}')">${t}<span class="filter-count">${rows.filter(r=>k==='all'||(k==='held'?trades[r.id]:(k==='enter'?r.entry?.status==='可以進場':k==='risk'?r.entry?.status==='風險偏高':group(r)===k))).length}</span></button>`).join('')}</div>
     <div class="table-scroll"><table class="decision-table"><thead><tr><th>股票</th><th>量比 ↓</th><th>狀態</th><th>原因／追蹤</th></tr></thead><tbody>${selected.map(r=>{
       const t=trades[r.id]?shortTradeState(trades[r.id],r,shortPayload.calendar):null;
-      return `<tr><td><button class="stock-link" onclick="showShortStock('${escapeHtml(r.id)}')">${escapeHtml(r.id)} ${escapeHtml(stockName(r.id))}</button></td><td>${Number.isFinite(r.volume_ratio)?r.volume_ratio.toFixed(2)+'倍':'--'}</td><td>${escapeHtml(r.status)}</td><td>${escapeHtml(t?(t.error||`持有${t.days}交易日；`+(t.alerts.join('；')||'尚無已定義提醒')):r.reason)}</td></tr>`;
+      return `<tr><td><button class="stock-link" onclick="showShortStock('${escapeHtml(r.id)}')">${escapeHtml(r.id)} ${escapeHtml(stockName(r.id))}</button></td><td>${Number.isFinite(r.volume_ratio)?r.volume_ratio.toFixed(2)+'倍':'--'}</td><td>${escapeHtml(r.entry?.status||r.status)}</td><td>${escapeHtml(t?(t.error||`持有${t.days}交易日；`+(t.alerts.join('；')||'尚無已定義提醒')):(r.passed?r.entry?.reason:r.reason))}</td></tr>`;
     }).join('')||'<tr><td colspan="4">此分類沒有股票，不放寬條件湊數。</td></tr>'}</tbody></table></div><div id="shortDetail"></div></div>`;
 }
 function showShortStock(id){
   shortSelected=id;
   const r=shortPayload.data[id],trade=shortTrades()[id],t=trade?shortTradeState(trade,r,shortPayload.calendar):null;
-  byId('shortDetail').innerHTML=`<div class="panel"><h3>${escapeHtml(id)} ${escapeHtml(stockName(id))}｜${escapeHtml(r.status)}</h3>
+  byId('shortDetail').innerHTML=`<div class="panel"><h3>${escapeHtml(id)} ${escapeHtml(stockName(id))}｜${escapeHtml(r.entry?.status||r.status)}</h3><p>判定日 ${escapeHtml(r.date)}；${escapeHtml(r.entry?.reason||r.reason)}</p>
     ${r.checks.map(c=>`<p>${c.pass===null?'缺資料':c.pass?'通過':'未通過'}｜${escapeHtml(c.label)}<br>資料日 ${escapeHtml(c.date)}；${escapeHtml(JSON.stringify(c.raw))}</p>`).join('')}
     <hr><h3>成交紀錄與風控追蹤</h3>${!trade&&r.passed?`<button class="btn btn-secondary" onclick="saveShortSignal('${escapeHtml(id)}')">保留此訊號，下一交易日追蹤</button>`:""}<p>只存這台瀏覽器，不上傳、不下單。先有實際成交才填寫；3～5%與10～15%為你提供的範圍。預設4%與12%只是中間值，未最佳化。</p>
     ${trade?`<p>原訊號日 ${escapeHtml(trade.signal_date)}；訊號低點 ${trade.signal_low}；成交日 ${escapeHtml(trade.date||"尚未成交")}；成交價 ${trade.price||"尚未填寫"} 元</p>`:''}

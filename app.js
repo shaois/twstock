@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "v94.11";
+const APP_VERSION = "v94.12";
 const MODEL_IMPLEMENTATION_VERSION = "v94";
 const MODEL_NAME = "single_horizon_20d_rotation_v94";
 const CONTRACT_VERSION = "20d-net-executable-v2";
