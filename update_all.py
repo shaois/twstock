@@ -38,7 +38,7 @@ TAIPEI_TZ = timezone(timedelta(hours=8))
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 BATCH_SIZE = 40
 PRICE_HISTORY_LIMIT = 1800
-EXPECTED_STOCK_COUNT = 200
+EXPECTED_STOCK_COUNT = 300
 BENCHMARK_ID = "0050"
 
 
@@ -370,6 +370,9 @@ async def main() -> None:
 
     now = taipei_now()
     today_str = now.date().isoformat()
+    from universe300 import install, seed_history
+    install(ROOT)
+    seed_history(ROOT)
     universe = load_universe()
     # Even a partial batch records the real membership observation time.
     save_json(RESEARCH_PROTOCOL_PATH, load_protocol(universe, now))
@@ -447,8 +450,9 @@ async def main() -> None:
     )
     build_model_outputs(inputs, universe, benchmark_input, cutoff, check)
     save_json(PROGRESS_PATH, {"date": today_str, "index": 0})
-    print("Cycle complete: 200/200 and the only 20-day model was rebuilt.")
+    print("Cycle complete: 300/300 and the only 20-day model was rebuilt.")
 
 
 if __name__ == "__main__":
     asyncio.run(main())
+

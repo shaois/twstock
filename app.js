@@ -1,12 +1,12 @@
 "use strict";
 
-const APP_VERSION = "v94.13";
+const APP_VERSION = "v94.14";
 const MODEL_IMPLEMENTATION_VERSION = "v94";
 const MODEL_NAME = "single_horizon_20d_rotation_v94";
 const CONTRACT_VERSION = "20d-net-executable-v2";
 const MODEL_OBJECTIVE = "outperform_0050_net_return_over_next_20_trading_sessions";
 const BACKEND_URL = "https://twstock-app.onrender.com";
-const REQUIRED_STOCK_COUNT = 200;
+const REQUIRED_STOCK_COUNT = 300;
 const AI_MODELS = {
   nvidia: [{id: "nvidia/nemotron-3.5-lightning-30b-a3b", label: "NVIDIA Nemotron 3.5 Lightning"}],
   groq: [{id: "openai/gpt-oss-20b", label: "Groq GPT-OSS 20B"},
@@ -95,7 +95,7 @@ function updateCacheStatus() {
     return;
   }
   const date = state.model.latest_date || "--";
-  status.textContent = `快取交易日：${date}｜可排序 ${modelRows().length}/200 支`;
+  status.textContent = `快取交易日：${date}｜可排序 ${modelRows().length}/300 支`;
   status.classList.add("loaded");
 }
 
@@ -122,8 +122,8 @@ function showLoadedSummary() {
   byId("welcome").innerHTML = `
     <h2>快取載入完成</h2>
     <p style="max-width:560px;line-height:1.9">
-      資料日 ${escapeHtml(state.model.latest_date || "--")}，已讀取 ${Object.keys(state.predictions).length}/200 筆，可排序 ${modelRows().length} 支。<br>
-      200支股票池量價狀態：${escapeHtml(flow.status || "尚無判斷")}；5日正資金流廣度 ${number(flow.positive_5d_pct).toFixed(1)}%。<br>
+      資料日 ${escapeHtml(state.model.latest_date || "--")}，已讀取 ${Object.keys(state.predictions).length}/300 筆，可排序 ${modelRows().length} 支。<br>
+      300支股票池量價狀態：${escapeHtml(flow.status || "尚無判斷")}；5日正資金流廣度 ${number(flow.positive_5d_pct).toFixed(1)}%。<br>
       綠色按鈕重新讀取快取；黃色按鈕開啟免費條件清單。原模型排行另列，未證明優於基準。
     </p>`;
 }
@@ -160,8 +160,8 @@ function validateModel(universePayload, predictionPayload) {
   if (contract.intraday_used_for_ranking !== false) errors.push("模型排名混入盤中價格");
   if (contract.ai_can_override_model !== false) errors.push("AI 仍可改寫模型結論");
   if (contract.legacy_fallback_allowed !== false) errors.push("模型仍允許舊版後援");
-  if (universeIds.length !== REQUIRED_STOCK_COUNT) errors.push(`股票名冊只有 ${universeIds.length}/200 支`);
-  if (predictionIds.length !== REQUIRED_STOCK_COUNT) errors.push(`20 日預測只有 ${predictionIds.length}/200 支`);
+  if (universeIds.length !== REQUIRED_STOCK_COUNT) errors.push(`股票名冊只有 ${universeIds.length}/300 支`);
+  if (predictionIds.length !== REQUIRED_STOCK_COUNT) errors.push(`20 日預測只有 ${predictionIds.length}/300 支`);
   if (universeIds.join(",") !== predictionIds.join(",")) errors.push("股票名冊與 20 日預測代碼不一致");
   const invalidForecastKeys = predictionIds.flatMap((id) =>
     Object.keys(predictions[id] || {}).filter(
@@ -184,7 +184,7 @@ async function loadStocks() {
     cacheStatus.textContent = "快取：載入中...";
     cacheStatus.classList.remove("loaded");
   }
-  setProgress("正在讀取並驗證 200 支股票的單一 20 日模型...");
+  setProgress("正在讀取並驗證 300 支股票的單一 20 日模型...");
   try {
     const [universePayload, predictionPayload] = await Promise.all([
       fetchCache("universe"),
@@ -199,7 +199,7 @@ async function loadStocks() {
     renderStockList();
     byId("rankingBtn").disabled = false;
     showLoadedSummary();
-    showToast(`已載入 200 支股票，單一 20 日模型 ${APP_VERSION}`);
+    showToast(`已載入 300 支股票，單一 20 日模型 ${APP_VERSION}`);
   } catch (error) {
     state.loaded = false;
     byId("rankingBtn").disabled = true;
@@ -313,7 +313,7 @@ function show20dCandidates() {
         資料日 ${escapeHtml(state.model.latest_date || "--")}；共排序 ${rows.length} 支。20 日是預測期限，不再鎖定持有名單。<br>
         排序方式：${observationRankingActive()?'依最多5資料日觀察分數排序；同分依股票代碼':'依當日20日淨獲利估計機率完整精度排序'}。急漲提醒獨立顯示，不改變排名。<br>
         急漲條件：基準日漲幅≥7%，或漲幅≥5%且收盤位於當日高低價區間最上方5%。未觸發不代表適合買進；本提醒不計算回測價位或進場時機。<br>
-        200支股票池量價狀態：${escapeHtml(flow.status || "尚無判斷")}；正資金流廣度 ${number(flow.positive_5d_pct).toFixed(1)}%；5日資金流中位數 ${percent(flow.median_5d_pct, 1)}。<br>
+        300支股票池量價狀態：${escapeHtml(flow.status || "尚無判斷")}；正資金流廣度 ${number(flow.positive_5d_pct).toFixed(1)}%；5日資金流中位數 ${percent(flow.median_5d_pct, 1)}。<br>
         量價與類股輪動直接參與歷史相似樣本權重，再依20日淨獲利估計機率排序。<br>分類可形成族群的股票 ${number(state.model.sector_coverage)} 支；成交熱度不是淨資金流入，法人資料僅展示與累積，尚未納入機率。<br>
         ${protocolSummary(state.model)}<br>開發用途時間順序重播 ${number(validation.periods)} 期；不能當成發布後獨立績效。<br>
         股票及0050各採0.6%來回成本情境；次一交易日開盤進場，訊號後第20個交易日收盤評估。<br>
@@ -511,7 +511,7 @@ function renderDecisionBoard(filter='all') {
     <div class="board-heading"><div><div class="board-eyebrow">基本面 × 成長 × 價量法人</div><h2>三道濾網條件清單</h2><p class="board-subtitle">行情日 ${escapeHtml(state.model.latest_date)} · 核對 ${escapeHtml(state.threeGate?.generated_at||"尚未建立")} · 同組依估計淨獲利機率遞減</p></div>
     <button class="btn btn-secondary" onclick="state.boardGeneration++;show20dCandidates()">原模型研究排名／驗證資料 ↗</button></div>
     <div class="board-notice">條件符合不等於核准買點。模型估計機率不是實際回測勝率；選股規則尚未完成獨立績效驗證。</div>
-    <div class="board-notice">財報快照 ${state.threeGate?.coverage?.snapshots ?? "--"}/${state.threeGate?.coverage?.total ?? 200} 檔；一般產業財報可完整核對 ${state.threeGate?.coverage?.financial_complete ?? "--"}/${state.threeGate?.coverage?.nonfinancial ?? "--"} 檔。${state.threeGate?.coverage?.snapshots===0?"財報尚未初始化，不能將零檔通過當成選股結果。":"缺欄位的股票會列出缺項，不視為通過。"}</div>
+    <div class="board-notice">財報快照 ${state.threeGate?.coverage?.snapshots ?? "--"}/${state.threeGate?.coverage?.total ?? 300} 檔；一般產業財報可完整核對 ${state.threeGate?.coverage?.financial_complete ?? "--"}/${state.threeGate?.coverage?.nonfinancial ?? "--"} 檔。${state.threeGate?.coverage?.snapshots===0?"財報尚未初始化，不能將零檔通過當成選股結果。":"缺欄位的股票會列出缺項，不視為通過。"}</div>
     <details class="board-explanation"><summary>排序與判讀方式</summary><p>按條件狀態分組，同組按當日20日模型估計淨獲利機率由高到低排序（優先使用完整精度；同分依代碼、缺值置後）。顯示至小數2位。20日是評估期限，不代表名單固定20天。機率僅供同組排序，不參與三關判定。此清單與個股頁使用同一份三關快照；沒有第二個 AI 結論。</p></details>
     <div class="board-filters" role="group" aria-label="條件分類">
     ${[['all','全部'],['ready','符合三關條件'],['excluded','未符合三關'],['financial','金融業另列'],['missing','資料不足']].map(([k,label])=>`<button class="filter-chip ${filter===k?'selected':''}" aria-pressed="${filter===k}" onclick="renderDecisionBoard('${k}')">${label}<span class="filter-count">${all.filter(r=>k==='all'||group(r)===k).length}</span></button>`).join('')}

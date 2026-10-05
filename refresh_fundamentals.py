@@ -109,8 +109,8 @@ if __name__ == '__main__':
     parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parent)
     parser.add_argument('--limit', type=int, default=40)
     parser.add_argument('--stocks', nargs='+')
-    parser.add_argument('--bootstrap', action='store_true', help='Only fetch missing or expired snapshots; up to 200 stocks')
+    parser.add_argument('--bootstrap', action='store_true', help='Only fetch missing or expired snapshots; up to 300 stocks')
     args = parser.parse_args()
-    if not 1 <= args.limit <= (200 if args.bootstrap else 40):
-        parser.error('--limit must be 1..40, or 1..200 with --bootstrap')
+    if not 1 <= args.limit <= (300 if args.bootstrap else 40):
+        parser.error('--limit must be 1..40, or 1..300 with --bootstrap')
     asyncio.run(refresh(args.root, args.limit, args.stocks, bootstrap=args.bootstrap))

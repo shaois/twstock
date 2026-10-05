@@ -797,7 +797,7 @@ def _walk_forward_validation(sections, snapshot_date):
         "downside_breach_pct": round(statistics.mean(r["q10_exceeded"] for r in records)*100, 1) if records else None,
         "independent_holdout_periods": 0,
         "limitations": [
-            "固定200支股票池的歷史成分未知，存在選樣與存活者偏差",
+            "固定股票池的歷史成分未知，存在選樣與存活者偏差",
             "歷史資料曾參與改版；時間順序重播不等於未使用的封存測試",
             "股價跳變調整為既有啟發式處理，非完整除權息總報酬資料",
             "歷史成交假設次日開盤可成交；未建模漲跌停無量、滑價與市場衝擊",
@@ -871,7 +871,7 @@ def build_predictions(price_db, stock_universe=None, benchmark_rows=None, run_da
             "market_capital_flow": flow,
             "sector_rotation": rotation_summary,
             "sector_coverage": sum(r.get("rotation", {}).get("members", 0)>0 for r in current.values()),
-            "rotation_basis": "200支池內量價與成交熱度輪動，非淨資金流入；現行分類回推歷史未經PIT核實",
+            "rotation_basis": "池內量價與成交熱度輪動，非淨資金流入；現行分類回推歷史未經PIT核實",
             "institutional_role": "外資投信展示與累積，未納入機率訓練",
             "universe_fingerprint": fingerprint,
             "universe_history_status": "current_fixed_membership_not_point_in_time",
@@ -1082,3 +1082,4 @@ def update_prediction_log(existing_log, predictions, price_db, benchmark_rows=No
 
 
 __all__ = ["build_predictions", "apply_dynamic_probability_ranking", "update_prediction_log"]
+
