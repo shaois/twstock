@@ -62,6 +62,9 @@ function showShortStock(id){
   shortSelected=id;
   const r=shortPayload.data[id],trade=shortTrades()[id],t=trade?shortTradeState(trade,r,shortPayload.calendar):null;
   byId('shortDetail').innerHTML=`<div class="panel"><h3>${escapeHtml(id)} ${escapeHtml(stockName(id))}｜${escapeHtml(r.entry?.status||r.status)}</h3><p>判定日 ${escapeHtml(r.date)}；${escapeHtml(r.entry?.reason||r.reason)}</p>
+    ${r.passed?`<section><h3>預計進場價分析</h3><label>預計進場價（元） <input id="plannedPrice" type="number" min="0.01" step="0.01" placeholder="輸入你打算買進的價格" oninput="updatePlannedEntry('${escapeHtml(id)}')" style="color:#fff;background:#19283b"></label>
+    <p>依 ${escapeHtml(r.date)} 收盤資料重算，非即時行情；此欄位不會建立成交紀錄。</p><div id="plannedRisk" role="status">請輸入預計進場價。</div>
+    <button class="btn btn-primary" onclick="copyPlannedAnalysis('${escapeHtml(id)}')">複製分析資料</button><p id="plannedCopyStatus" role="status"></p><textarea id="plannedAnalysisText" readonly aria-label="分析資料（可手動複製）" style="display:none;width:100%;min-height:220px;color:#fff;background:#19283b"></textarea></section>`:''}
     ${r.checks.map(c=>`<p>${c.pass===null?'缺資料':c.pass?'通過':'未通過'}｜${escapeHtml(c.label)}<br>資料日 ${escapeHtml(c.date)}；${escapeHtml(JSON.stringify(c.raw))}</p>`).join('')}
     <hr><h3>成交紀錄與風控追蹤</h3>${!trade&&r.passed?`<button class="btn btn-secondary" onclick="saveShortSignal('${escapeHtml(id)}')">保留此訊號，下一交易日追蹤</button>`:""}<p>只存這台瀏覽器，不上傳、不下單。先有實際成交才填寫；3～5%與10～15%為你提供的範圍。預設4%與12%只是中間值，未最佳化。</p>
     ${trade?`<p>原訊號日 ${escapeHtml(trade.signal_date)}；訊號低點 ${trade.signal_low}；成交日 ${escapeHtml(trade.date||"尚未成交")}；成交價 ${trade.price||"尚未填寫"} 元</p>`:''}
@@ -96,4 +99,50 @@ function saveShortSignal(id){
   trades[id]={signal_date:r.date,signal_low:r.signal_low,date:'',price:null,stop:4,target:12,horizon:5};
   try{localStorage.setItem(SHORT_KEY,JSON.stringify(trades));showShortStock(id);byId('shortMessage').textContent='已保留訊號。下一交易日成交後，待該日完整資料更新再輸入實際成交日與價格。';}
   catch{byId('shortMessage').textContent='瀏覽器禁止儲存，訊號未保存。';}
+}
+
+function plannedEntryRisk(row, price, generatedAt, now=Date.now()) {
+  if(!Number.isFinite(price)||price<=0)return {status:'請輸入有效價格',reason:'預計進場價必須大於0'};
+  const age=now-Date.parse(generatedAt),dayAge=now-Date.parse(row.date+'T00:00:00+08:00');
+  const e=row.entry||{},m=e.ma5,l=e.signal_low,b=e.breakout;
+  if(!Number.isFinite(age)||age<0||age>7*86400000||!Number.isFinite(dayAge)||dayAge<0||dayAge>8*86400000||![m,l,b].every(v=>Number.isFinite(v)&&v>0))return {status:'資料不足',reason:'參考行情缺漏或過期，請先更新資料'};
+  if(!row.passed)return {status:'未符合短線條件',reason:'原始選股條件未通過'};
+  const gap=(price/m-1)*100,distance=(price-l)/price*100,reasons=[];
+  if(gap>5+1e-9)reasons.push('距MA5超過5%');
+  if(distance>5+1e-9)reasons.push('距訊號低點超過5%');
+  if(price<=b)reasons.push('預計價格未站在突破價之上');
+  if(price<=m)reasons.push('預計價格未站在MA5之上');
+  if(price<=l)reasons.push('預計價格未高於訊號低點');
+  return {status:reasons.length?'風險偏高':'可以進場',reason:reasons.join('；')||'依既有收盤資料通過價格風險檢查',gap,distance};
+}
+function updatePlannedEntry(id){
+  const price=Number(byId('plannedPrice').value),row=shortPayload.data[id];
+  const result=plannedEntryRisk(row,price,shortPayload.generated_at);
+  byId('plannedRisk').textContent=result.status+'｜'+result.reason+(Number.isFinite(result.gap)?`；距MA5 ${result.gap.toFixed(2)}%；距訊號低點 ${result.distance.toFixed(2)}%`:'');
+  byId('plannedCopyStatus').textContent='';byId('plannedAnalysisText').value='';byId('plannedAnalysisText').style.display='none';
+  return result;
+}
+function plannedAnalysisText(id,price,result){
+  const r=shortPayload.data[id];
+  return [
+    '請查詢最新實際數據，對以下短線候選做中性客觀分析，分開呈現有利、不利因素、關鍵價位與情境；區分事實、推論及資料缺口，不只套停利公式。買賣由我決定。',
+    `股票：${id} ${stockName(id)}`,
+    `預計進場價：${price}元（假設價格，不代表已成交，也不是即時報價）`,
+    `持有規劃：1～5交易日；訊號／行情日：${r.date}；快照產生時間：${shortPayload.generated_at}`,
+    `原收盤：${r.close}；原標示：${r.entry?.status||r.status}；量比：${r.volume_ratio}`,
+    `預計價格重算：${result.status}；${result.reason}`,
+    Number.isFinite(result.gap)?`距MA5：${result.gap.toFixed(2)}%；距訊號低點：${result.distance.toFixed(2)}%`:'',
+    `參考價位：${JSON.stringify(r.entry)}`,
+    '下列為網站既有收盤資料，請核對最新行情、法人、營收及重大消息，勿視為今日即時數據。',
+    ...r.checks.map(c=>`${c.label}｜${c.pass===true?'通過':c.pass===false?'未通過':'缺資料'}｜資料日${c.date}｜${JSON.stringify(c.raw)}`),
+    '最近21交易日日線（volume單位股；valid=false代表資料不可用）：',JSON.stringify((r.bars||[]).slice(-21))
+  ].filter(Boolean).join('\n');
+}
+async function copyPlannedAnalysis(id){
+  const result=updatePlannedEntry(id),price=Number(byId('plannedPrice').value);
+  if(!Number.isFinite(price)||price<=0){byId('plannedCopyStatus').textContent='請先填寫有效的預計進場價。';return;}
+  const text=plannedAnalysisText(id,price,result),area=byId('plannedAnalysisText'),status=byId('plannedCopyStatus');
+  area.value=text;area.style.display='block';
+  try{await navigator.clipboard.writeText(text);status.textContent='已複製，貼到聊天室即可接續分析。';}
+  catch{status.textContent='瀏覽器無法自動複製，請從下方文字框手動複製。';}
 }
