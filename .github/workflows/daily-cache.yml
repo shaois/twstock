@@ -2,13 +2,16 @@ name: Daily FinMind Cache Refresh
 
 on:
   schedule:
-    # UTC Mon-Fri 15:00-19:00 = Taiwan 23:00-03:00, after market close.
-    # Five batches x 40 stocks complete all 200 stocks before the next open.
+    # UTC Mon-Fri 15:00-22:00 = Taiwan 23:00-06:00, after market close.
+    # Eight batches x 40 cover 300 stocks; quota failures resume next run.
     - cron: '0 15 * * 1-5'
     - cron: '0 16 * * 1-5'
     - cron: '0 17 * * 1-5'
     - cron: '0 18 * * 1-5'
     - cron: '0 19 * * 1-5'
+    - cron: '0 20 * * 1-5'
+    - cron: '0 21 * * 1-5'
+    - cron: '0 22 * * 1-5'
   workflow_dispatch:
 
 permissions:
@@ -53,9 +56,11 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add cache/price.json cache/benchmark.json cache/predictions.json cache/prediction_log.json cache/progress.json cache/universe.json cache/research_protocol.json cache/sectors.json cache/institutions.json cache/shadow_log.json
           git add cache/research_protocol.parts/
+          if [ -d cache/universe_history ]; then git add cache/universe_history/; fi
           git add cache/three_gate.json cache/fundamentals_progress.json cache/fundamentals_status.json
           if [ -d cache/fundamentals ]; then git add cache/fundamentals/; fi
           if [ -d cache/fundamentals_raw ]; then git add cache/fundamentals_raw/; fi
           python protocol_storage.py
           git diff --staged --quiet || git commit -m "chore: update FinMind cache $(date -u +'%Y-%m-%d %H:%M UTC')"
           git push
+

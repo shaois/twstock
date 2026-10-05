@@ -11,6 +11,7 @@ on:
       - "app.js"
       - "short-term.js"
       - "short_term.py"
+      - "universe300.py"
       - "three_gate.py"
       - "bootstrap_fundamentals.py"
       - "bootstrap/**"
@@ -59,7 +60,8 @@ jobs:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
         run: |
           python3 -m pip install httpx
-          python3 refresh_fundamentals.py --bootstrap --limit 200
+          python3 universe300.py
+          python3 refresh_fundamentals.py --bootstrap --limit 300
 
       - name: Prepare website files
         run: |
