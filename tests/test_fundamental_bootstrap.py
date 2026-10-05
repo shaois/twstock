@@ -89,6 +89,6 @@ class BootstrapTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         workflow = (root/'.github/workflows/pages.yml').read_text(encoding='utf-8')
         self.assertIn('"bootstrap/**"', workflow)
-        self.assertLess(workflow.index('refresh_fundamentals.py --bootstrap --limit 200'),
+        self.assertLess(workflow.index('refresh_fundamentals.py --bootstrap --limit 300'),
                         workflow.index('python3 prepare_release.py'))
         self.assertIn('FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}', workflow)
