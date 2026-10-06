@@ -1,0 +1,22 @@
+const fs=require('fs'),vm=require('vm'),a=require('node:assert/strict'),path=require('path');
+const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{innerHTML:'',style:{}});return nodes.get(id)};
+const c=vm.createContext({console,Date,document:{addEventListener(){},getElementById:node},window:{}});
+for(const f of ['app.js','market-trend.js','short-term.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',f),'utf8'),c);
+const ev=s=>vm.runInContext(s,c);
+const today=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Taipei'});
+c.p={version:1,market_date:today,generated_at:new Date().toISOString(),status:'震盪',stale:false,cards:[{key:'breadth',title:'盤面廣度',status:'偏弱',date:today,text:'上漲364，下跌631<script>',values:{up:364,down:631}}],supporting:[],risks:['廣度偏弱'],rules:'規則',scope:'官方股票欄',errors:[]};
+ev('marketPayload=p');
+a.equal(ev('marketContext().status'),'震盪');
+a.equal(ev('marketContext("2000-01-01").status'),'資料不足');
+a.match(ev('marketPanel()'),/&lt;script&gt;/);
+a.match(ev('marketAnalysisText(p.market_date)'),/364/);
+c.p.generated_at='2000-01-01T00:00:00Z';a.equal(ev('marketContext().status'),'資料不足');
+c.p.generated_at=new Date().toISOString();c.p.market_date='2000-01-01';a.equal(ev('marketContext().status'),'資料不足');
+ev('marketPayload=null');a.match(ev('marketPanel()'),/尚無大盤資料/);
+console.log('Market context freshness, date alignment, escaping and copy tests passed.');
+(async()=>{
+ c.fetch=async()=>({ok:true,json:async()=>c.p});
+ await ev('loadMarketTrend()');a.equal(ev('marketPayload.version'),1);
+ c.fetch=async()=>({ok:false});await ev('loadMarketTrend()');a.equal(ev('marketPayload'),null);
+ console.log('Market snapshot fetch contract and failure handling passed.');
+})().catch(e=>{console.error(e);process.exitCode=1});
