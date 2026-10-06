@@ -33,6 +33,16 @@ class ShortTermTests(unittest.TestCase):
         self.prices[-1].update(open=100, close=101, min=99)
         self.assertFalse(self.result()['checks'][0]['pass'])
 
+    def test_price_range_no_longer_excludes_low_or_high_prices(self):
+        baseline=copy.deepcopy(self.prices)
+        for scale in (0.1, 10):
+            self.prices=copy.deepcopy(baseline)
+            for row in self.prices:
+                for key in ('open','max','min','close'):row[key]*=scale
+            result=self.result()
+            self.assertTrue(result['passed'])
+            self.assertFalse(any('30～150' in c['label'] for c in result['checks']))
+
     def test_volume_equal_passes_and_zero_base_missing(self):
         self.prices[-1]['Trading_Volume'] = 2000
         self.assertTrue(self.result()['checks'][1]['pass'])
