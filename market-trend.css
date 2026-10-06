@@ -1,0 +1,7 @@
+.market-context{margin-bottom:20px;padding:24px;border:1px solid #30485e;border-radius:12px;background:#142133}
+.market-context>h2{margin:0 0 10px}.market-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:20px 0}
+.market-card{padding:18px;border:1px solid #30485e;border-radius:10px;background:#1b2b40;min-width:0}
+.market-card h3{font-size:16px;margin:0 0 12px}.market-card h3 span{display:inline-block;color:#6fe2cf;margin-left:8px;font-size:14px}.market-card p{line-height:1.7;overflow-wrap:anywhere}.market-card small{color:#afc2d5}.market-context details p{white-space:pre-line;overflow-wrap:anywhere;line-height:1.8}.market-context summary{cursor:pointer}
+@media(max-width:1100px){.market-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:650px){.market-grid{grid-template-columns:1fr}.market-context{padding:14px}}
+
+.market-card span[data-status="偏弱"]{color:#ffabb5}.market-card span[data-status="震盪"]{color:#ffd489}.market-card span[data-status="資料不足"]{color:#c2cbd5}

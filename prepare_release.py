@@ -54,6 +54,8 @@ def prepare(root):
     publish_three_gate(root)
     from short_term import publish as publish_short_term
     publish_short_term(root)
+    from market_trend import publish as publish_market
+    publish_market(root)
     print("V94 display migration:", predictions["model"]["latest_date"],
           "history:", predictions["model"].get("observation_ranking", {}).get("history_dates", []))
 
