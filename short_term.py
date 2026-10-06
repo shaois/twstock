@@ -79,7 +79,6 @@ def assess(prices, institutions, dates, now, capital=None):
     add('上影線 ≤ 紅K實體一半', None,
         body > 0 and upper <= body/2 if valid else None,
         {'上影線': float(upper) if valid else None, '實體': float(body) if valid else None})
-    add('收盤價30～150元（含邊界）', close, 30 <= close <= 150 if valid else None, {'收盤': close})
     for n in (5, 10, 20):
         ma = sum(Decimal(str(b['close'])) for b in recent[-n:]) / n if valid else None
         add(f'收盤 > MA{n}', close, Decimal(str(close)) > ma if ma is not None else None,
@@ -118,7 +117,7 @@ def publish(root, now=None):
     calendar = sorted({r['date'] for r in read(cache/'benchmark.json', {}).get('data', [])
                        if r['date'] < now.date().isoformat() or
                        (r['date'] == now.date().isoformat() and now.hour >= 18)})
-    payload = {'version': 4, 'strategy': 'short-v4-entry-risk-1to5', 'generated_at': now.isoformat(), 'market_date': calendar[-1] if calendar else None,
+    payload = {'version': 5, 'strategy': 'short-v5-no-price-limit-1to5', 'generated_at': now.isoformat(), 'market_date': calendar[-1] if calendar else None,
                'calendar': calendar[-80:], 'data': {
                    sid: assess(prices.get(sid, []), institutions.get(sid, []), calendar, now) for sid in universe}}
     write(cache/'short_term.json', payload)
