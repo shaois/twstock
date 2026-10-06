@@ -40,6 +40,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install httpx
 
+      - name: Refresh official market context
+        run: python market_trend.py
+
       - name: Fetch FinMind data
         env:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
@@ -54,6 +57,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add cache/market_history.json cache/market_trend.json
           git add cache/price.json cache/benchmark.json cache/predictions.json cache/prediction_log.json cache/progress.json cache/universe.json cache/research_protocol.json cache/sectors.json cache/institutions.json cache/shadow_log.json
           git add cache/research_protocol.parts/
           if [ -d cache/universe_history ]; then git add cache/universe_history/; fi

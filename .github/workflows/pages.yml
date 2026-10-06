@@ -10,6 +10,10 @@ on:
       - "index.html"
       - "app.js"
       - "short-term.js"
+      - "market-trend.js"
+      - "market-trend.css"
+      - "market_trend.py"
+      - "cache/market_history.json"
       - "short_term.py"
       - "universe300.py"
       - "three_gate.py"
@@ -67,10 +71,14 @@ jobs:
         run: |
           mkdir -p _site/cache
           python3 -m pip install httpx
+          python3 market_trend.py
           python3 prepare_release.py
           cp index.html _site/index.html
           cp app.js _site/app.js
           cp short-term.js _site/short-term.js
+          cp market-trend.js _site/market-trend.js
+          cp market-trend.css _site/market-trend.css
+          cp cache/market_trend.json _site/cache/market_trend.json
           cp ai-review.js _site/ai-review.js
           cp cache/universe.json _site/cache/universe.json
           cp cache/predictions.json _site/cache/predictions.json
