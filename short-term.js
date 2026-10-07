@@ -51,7 +51,7 @@ function renderShortTerm(filter=shortFilter){
   const group=r=>r.status==='資料不足'?'missing':r.passed?'ready':'excluded';
   const selected=rows.filter(r=>filter==='all'||(filter==='held'?trades[r.id]:(filter==='enter'?r.entry?.status==='可以進場':filter==='risk'?r.entry?.status==='風險偏高':group(r)===filter)))
     .sort((a,b)=>(b.volume_ratio??-1)-(a.volume_ratio??-1)||a.id.localeCompare(b.id));
-  byId('screenerResult').innerHTML=`${typeof marketPanel==='function'?marketPanel(shortPayload.market_date):''}<div class="screener-panel decision-board"><h2>短線交易觀察｜收盤後篩選</h2>
+  byId('screenerResult').innerHTML=`<div class="screener-panel decision-board"><h2>短線交易觀察｜收盤後篩選</h2>
     <p>行情日 ${escapeHtml(shortPayload.market_date)} · 下一交易日觀察進場 · 目標持有1～5交易日</p>
     <div class="board-notice">「可以進場」僅依標示日期收盤資料判定，下一交易日須重新核對成交價格，並非即時買進指令。這是固定條件觀察，不是已驗證策略。不提供盤中／收盤前訊號；當日收盤後資料不能假設在當日收盤成交。</div>
     <details><summary>完整規則與口徑</summary><p>不限制股本與股價區間；收盤突破前20交易日最高價、成交量至少前20日均量2倍，兩者均不含訊號日。紅K實體（收盤／開盤－1）至少3%、收盤位於當日振幅頂部20%、上影線不超過實體一半；收盤站上MA5／10／20。近3交易日外資＋投信合計淨買超股數／同期成交股數至少5%，包含訊號日，賣超會扣除。無主力券商資料，不啟用主力替代分支。</p><p>進場風險：通過選股條件後，距MA5不超過5%、距訊號低點（收盤－低點）／收盤不超過5%，且收盤高於MA5、訊號低點與突破價，標為「可以進場」；超出門檻標為「風險偏高」。5%是初始風險規則，未經績效最佳化。未入選及缺資料不標為可以進場。</p><p>同組依量比排序，同分依代碼；缺資料不通過、不為湊名單放寬。價格為原始未還原日線，除權息／拆併股附近需另核實。</p></details>
