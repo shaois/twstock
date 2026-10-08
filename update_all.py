@@ -382,77 +382,83 @@ async def main() -> None:
     if not isinstance(price_data, dict):
         price_data = {}
 
+    from refresh_state import target_date, pending_stocks, completed_bar
+    # Official completed-session calendar, independent of the old batch cursor.
+    target = target_date(load_json(CACHE_DIR / "market_history.json", {}), now)
     progress = load_json(PROGRESS_PATH, {})
-    start_index = resolve_start_index(progress, today_str, len(stock_ids))
-    end_index = min(start_index + BATCH_SIZE, len(stock_ids))
-    print(f"Refreshing {start_index + 1}-{end_index}/{len(stock_ids)}")
-
+    pending = pending_stocks(price_data, stock_ids, target, now, progress)
+    batch = pending[:BATCH_SIZE]
+    print(f"Target {target}: {len(stock_ids)-len(pending)}/{len(stock_ids)} current; retry {len(batch)}")
+    institutions = load_json(INSTITUTIONS_PATH, {"data": {}})
+    benchmark_rows = merge_benchmark_rows(load_json(BENCHMARK_PATH, {}).get("data", []), [])
+    errors = []
+    attempted = []
     timeout = httpx.Timeout(35.0, connect=15.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
-        institutions = load_json(INSTITUTIONS_PATH, {"data": {}})
         save_json(SECTORS_PATH, load_json(SECTORS_PATH, {}))
         save_json(SHADOW_LOG_PATH, load_audit_json(SHADOW_LOG_PATH))
-        next_index = start_index
-        try:
-            for index in range(start_index, end_index):
-                stock_id = stock_ids[index]
+        # Check the benchmark on every incomplete cycle, not only at stock 300.
+        if not completed_bar(benchmark_rows, target, now):
+            try:
+                rows = await fetch_price_rows(client, BENCHMARK_ID, latest_start_date(benchmark_rows), token)
+                benchmark_rows = merge_benchmark_rows(benchmark_rows, mark_fetched_rows(rows, taipei_now()))
+            except (httpx.HTTPError, ValueError, RuntimeError) as exc:
+                errors.append(f"0050: {type(exc).__name__}")
+        for stock_id in batch:
+            attempted.append(stock_id)
+            try:
                 existing = price_data.get(stock_id, [])
-                print(f"[{index + 1}/{len(stock_ids)}] {stock_id} {universe[stock_id]['name']}")
-                rows = await fetch_price_rows(
-                    client, stock_id, latest_start_date(existing), token
-                )
+                rows = await fetch_price_rows(client, stock_id, latest_start_date(existing), token)
                 price_data[stock_id] = merge_price_rows(existing, mark_fetched_rows(rows, taipei_now()))
-                next_index = index + 1
-                if os.environ.get("FETCH_INSTITUTIONS", "1") == "1":
-                    try:
-                        old_rows = institutions.setdefault("data", {}).get(stock_id, [])
-                        start = (now.date()-timedelta(days=90)).isoformat() if not old_rows else latest_start_date(old_rows)
-                        raw = await fetch_aux(client, token, "TaiwanStockInstitutionalInvestorsBuySell",
-                                              data_id=stock_id, start_date=start)
-                        institutions["data"][stock_id] = merge_price_rows(old_rows, normalize_institutions(raw))
-                    except (httpx.HTTPError, ValueError, RuntimeError):
-                        print(f"{stock_id}: institution data unavailable; price refresh continues.")
-        except FinMindQuotaError as exc:
-            save_json(INSTITUTIONS_PATH, institutions)
-            save_json(PRICE_PATH, {"_saved_at": now.isoformat(), "data": price_data})
-            save_json(PROGRESS_PATH, {"date": today_str, "index": next_index})
-            print(f"Quota limit; saved through stock {next_index}. {exc}")
-            return
-
-        save_json(INSTITUTIONS_PATH, institutions)
+            except FinMindQuotaError:
+                errors.append("FinMind quota; pending stocks retained")
+                break
+            except (httpx.HTTPError, ValueError, RuntimeError) as exc:
+                errors.append(f"{stock_id}: {type(exc).__name__}")
+                continue
+            if os.environ.get("FETCH_INSTITUTIONS", "1") == "1":
+                try:
+                    old_rows = institutions.setdefault("data", {}).get(stock_id, [])
+                    start = (now.date()-timedelta(days=90)).isoformat() if not old_rows else latest_start_date(old_rows)
+                    raw = await fetch_aux(client, token, "TaiwanStockInstitutionalInvestorsBuySell",
+                                          data_id=stock_id, start_date=start)
+                    institutions["data"][stock_id] = merge_price_rows(old_rows, normalize_institutions(raw))
+                except (httpx.HTTPError, ValueError, RuntimeError) as exc:
+                    errors.append(f"{stock_id} institutions: {type(exc).__name__}")
+        remaining = pending_stocks(price_data, stock_ids, target, taipei_now(), {})
+        # Rotate unavailable stocks so suspensions/provider failures cannot starve others.
+        remaining = [sid for sid in pending if sid in remaining and sid not in attempted] + [sid for sid in attempted if sid in remaining]
+        current_count = len(stock_ids)-len(remaining)
+        benchmark_ready = completed_bar(benchmark_rows, target, taipei_now())
+        progress = {"version": 2, "date": today_str, "index": 0, "target_date": target,
+                    "updated_at": taipei_now().isoformat(), "current_count": current_count,
+                    "total": len(stock_ids), "pending": remaining, "benchmark_ready": benchmark_ready,
+                    "status": "complete" if not remaining and benchmark_ready else "pending", "errors": errors}
         save_json(PRICE_PATH, {"_saved_at": now.isoformat(), "data": price_data})
-
-        if end_index < len(stock_ids):
-            save_json(PROGRESS_PATH, {"date": today_str, "index": end_index})
-            print(f"Batch complete; next stock is {end_index + 1}.")
-            return
-
-        benchmark_payload = load_json(BENCHMARK_PATH, {})
-        await refresh_sectors(client, token, universe)
-        benchmark_rows = (
-            benchmark_payload.get("data", []) if isinstance(benchmark_payload, dict) else []
-        )
-        benchmark_rows = merge_benchmark_rows(benchmark_rows, [])
-        try:
-            fetched_benchmark = await fetch_price_rows(
-                client, BENCHMARK_ID, latest_start_date(benchmark_rows), token
-            )
-            benchmark_rows = merge_benchmark_rows(benchmark_rows, mark_fetched_rows(fetched_benchmark, taipei_now()))
-        except FinMindQuotaError:
-            if not benchmark_rows:
-                save_json(PROGRESS_PATH, {"date": today_str, "index": len(stock_ids)})
-                raise RuntimeError("Stocks complete but 0050 benchmark is missing; run once more")
-            print("Using the existing 0050 benchmark because the quota was reached.")
-
-    save_json(BENCHMARK_PATH, {"_saved_at": now.isoformat(), "data": benchmark_rows})
-    inputs, benchmark_input, cutoff, check = completed_model_inputs(
-        price_data, benchmark_rows, universe, taipei_now()
-    )
-    build_model_outputs(inputs, universe, benchmark_input, cutoff, check)
-    save_json(PROGRESS_PATH, {"date": today_str, "index": 0})
-    print("Cycle complete: 300/300 and the only 20-day model was rebuilt.")
+        save_json(INSTITUTIONS_PATH, institutions)
+        save_json(BENCHMARK_PATH, {"_saved_at": now.isoformat(), "data": benchmark_rows})
+        save_json(PROGRESS_PATH, progress)
+        previous_model = load_json(PREDICTIONS_PATH, {}).get("model", {})
+        last_check = previous_model.get("completion_check", {})
+        rebuild = (current_count >= math.ceil(len(stock_ids)*0.90) and benchmark_ready
+                   and (previous_model.get("latest_date", "") < target
+                        or last_check.get("target_date") != target
+                        or last_check.get("current_count") != current_count))
+        if rebuild:
+            try:
+                await refresh_sectors(client, token, universe)
+            except (httpx.HTTPError, ValueError, RuntimeError):
+                print("Sector refresh unavailable; retained existing sectors")
+    if rebuild:
+        inputs, benchmark_input, cutoff, check = completed_model_inputs(price_data, benchmark_rows, universe, taipei_now())
+        # Freeze the run to its explicit target even if it crosses midnight.
+        cutoff = (datetime.fromisoformat(target).date()+timedelta(days=1)).isoformat()
+        inputs = {sid: [r for r in rows if r.get("date", "") <= target] for sid, rows in inputs.items()}
+        benchmark_input = [r for r in benchmark_input if r.get("date", "") <= target]
+        check.update(target_date=target, current_count=current_count, total=len(stock_ids))
+        build_model_outputs(inputs, universe, benchmark_input, cutoff, check)
+    print(f"Target {target}: {current_count}/{len(stock_ids)} current; remaining {len(remaining)}; benchmark {benchmark_ready}")
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-

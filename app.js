@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "v94.17";
+const APP_VERSION = "v94.18";
 const MODEL_IMPLEMENTATION_VERSION = "v94";
 const MODEL_NAME = "single_horizon_20d_rotation_v94";
 const CONTRACT_VERSION = "20d-net-executable-v2";
@@ -96,6 +96,13 @@ function updateCacheStatus() {
   }
   const date = state.model.latest_date || "--";
   status.textContent = `快取交易日：${date}｜可排序 ${modelRows().length}/300 支`;
+  const refresh = state.refreshStatus;
+  if(refresh?.target_date && Number.isInteger(refresh.current_count) && refresh.total===300){
+    status.textContent += `｜目標 ${refresh.target_date}：${refresh.current_count}/${refresh.total} 檔已更新`;
+    if(!refresh.benchmark_ready)status.textContent += "｜0050待更新";
+    if(date < refresh.target_date)status.textContent += "｜模型待更新";
+    status.title = `資料核對：${refresh.checked_at}；最近抓取：${refresh.last_attempt_at||"尚無紀錄"}`;
+  }else{status.textContent += "｜更新進度尚無資料";}
   status.classList.add("loaded");
 }
 
@@ -186,11 +193,13 @@ async function loadStocks() {
   }
   setProgress("正在讀取並驗證 300 支股票的單一 20 日模型...");
   try {
-    const [universePayload, predictionPayload] = await Promise.all([
+    const [universePayload, predictionPayload, refreshPayload] = await Promise.all([
       fetchCache("universe"),
       fetchCache("predictions"),
+      fetchCache("update_status").catch(() => null),
     ]);
     state.model = validateModel(universePayload, predictionPayload);
+    state.refreshStatus = refreshPayload?.data || null;
     state.universe = universePayload.data;
     state.predictions = predictionPayload.data;
     state.threeGate = null;

@@ -56,6 +56,10 @@ def prepare(root):
     publish_short_term(root)
     from market_trend import publish as publish_market
     publish_market(root)
+    from refresh_state import snapshot, TAIPEI
+    from datetime import datetime
+    from market_trend import write
+    write(cache / "update_status.json", {"data": snapshot(root, datetime.now(TAIPEI))})
     print("V94 display migration:", predictions["model"]["latest_date"],
           "history:", predictions["model"].get("observation_ranking", {}).get("history_dates", []))
 
