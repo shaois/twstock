@@ -29,6 +29,8 @@ on:
       - "research_protocol.py"
       - "protocol_storage.py"
       - "update_all.py"
+      - "refresh_state.py"
+      - "cache/progress.json"
       - "rotation.py"
       - "cache/benchmark.json"
       - "cache/prediction_log.json"
@@ -85,6 +87,7 @@ jobs:
           python3 build_ai_context.py
           cp cache/three_gate.json _site/cache/three_gate.json
           cp cache/short_term.json _site/cache/short_term.json
+          cp cache/update_status.json _site/cache/update_status.json
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v4
