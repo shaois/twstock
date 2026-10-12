@@ -10,7 +10,7 @@ from three_gate import TAIPEI, write
 class ShortTermTests(unittest.TestCase):
     def setUp(self):
         self.now = datetime(2026, 9, 30, 20, tzinfo=TAIPEI)
-        self.dates = [(self.now.date()-timedelta(days=i)).isoformat() for i in range(35, -1, -1)
+        self.dates = [(self.now.date()-timedelta(days=i)).isoformat() for i in range(100, -1, -1)
                       if (self.now.date()-timedelta(days=i)).weekday()<5]
         self.prices = [{'date': d, 'open': 99, 'max': 101, 'min': 98, 'close': 100, 'Trading_Volume': 1000} for d in self.dates]
         self.prices[-1].update(open=104, max=111, min=103, close=110, Trading_Volume=3000)

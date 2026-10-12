@@ -1,0 +1,10 @@
+const fs=require('fs'),vm=require('vm'),a=require('node:assert/strict'),path=require('path');
+const c=vm.createContext({console,Date});vm.runInContext(fs.readFileSync(path.join(__dirname,'../short-term.js'),'utf8'),c);
+const ev=s=>vm.runInContext(s,c);
+c.r={passed:true,date:'2026-10-12',close:100,entry:{ma5:100,signal_low:99,breakout:99}};c.now=Date.parse('2026-10-12T20:00:00+08:00');c.generated='2026-10-12T20:00:00+08:00';
+a.equal(ev('plannedEntryRisk(r,103,generated,now).status'),'可以進場');
+a.equal(ev('plannedEntryRisk(r,103.01,generated,now).status'),'不建議追');
+a.equal(ev('plannedEntryRisk(r,110,generated,now).status'),'不建議追');a.match(ev('plannedEntryRisk(r,110,generated,now).reason'),/距訊號低點超過5%/);
+c.items=[{id:'2',passed:true,entry:{status:'可以進場'},breakout_gap_pct:2,volume_ratio:2},{id:'1',passed:true,entry:{status:'風險偏高'},breakout_gap_pct:1,volume_ratio:9},{id:'3',passed:true,entry:{status:'可以進場'},breakout_gap_pct:1,volume_ratio:2}];
+a.equal(ev('items.sort(shortCompare).map(r=>r.id).join(",")'),'3,2,1');
+console.log('MA60 release: planned chase boundary, retained stops, and priority sorting passed.');

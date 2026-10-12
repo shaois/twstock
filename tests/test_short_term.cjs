@@ -37,7 +37,7 @@ c.row.entry={status:'可以進場',reason:'已通過收盤風險條件'};
 ev('renderShortTerm("enter")');a.match(node('screenerResult').innerHTML,/已通過收盤風險條件/);
 ev('showShortStock("2330")');a.match(node('shortDetail').innerHTML,/可以進場/);
 console.log('Short-term: persisted signal anchoring, next-session entry, cash levels, missing days, 3/10-day reminders and ambiguous daily touches passed');
-c.row.date='2026-10-02';c.row.entry={status:'可以進場',ma5:43.2,signal_low:43.05,breakout:44.7};
+c.row.date='2026-10-02';c.row.close=45.15;c.row.entry={status:'可以進場',ma5:43.2,signal_low:43.05,breakout:44.7};
 c.now=Date.parse('2026-10-05T12:00:00+08:00');c.generated='2026-10-02T20:00:00+08:00';
 a.equal(ev('plannedEntryRisk(row,45.15,generated,now).status'),'可以進場');
 a.equal(ev('plannedEntryRisk(row,46.5,generated,now).status'),'風險偏高');
