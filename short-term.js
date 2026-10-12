@@ -37,12 +37,24 @@ async function showShortTerm(){
     const p=await fetchCache('short_term');
     if(generation!==shortGeneration||!state.shortActive)return;
     const age=Date.now()-Date.parse(p.generated_at);
-    if(p.version!==5||!Array.isArray(p.calendar)||!Number.isFinite(age)||age<0||age>7*86400000)throw Error('短線快照缺失或過期，請完成更新');
+    if(p.version!==6||!Array.isArray(p.calendar)||!Number.isFinite(age)||age<0||age>7*86400000)throw Error('短線快照缺失或過期，請完成更新');
     shortPayload=p;
     if(typeof loadMarketTrend==='function')await loadMarketTrend();
     if(generation!==shortGeneration||!state.shortActive)return;
     renderShortTerm('ready');
   }catch(e){if(generation===shortGeneration&&state.shortActive)byId('screenerResult').innerHTML=`<p>${escapeHtml(e.message)}</p>`;}
+}
+function shortCompare(a,b){
+  const priority=r=>r.entry?.status==='可以進場'?0:r.passed?1:r.status==='資料不足'?3:2;
+  const gap=r=>Number.isFinite(r.breakout_gap_pct)?r.breakout_gap_pct:Infinity;
+  return priority(a)-priority(b)||gap(a)-gap(b)||a.id.localeCompare(b.id);
+}
+function shortObservationHtml(){
+  const o=shortPayload.observation;
+  if(!o)return '';
+  const fmt=v=>Number.isFinite(v)?v.toFixed(2):'—';
+  return `<details><summary>新舊名單比較與前瞻紀錄</summary><p>同份快取：原規則 ${shortPayload.comparison?.legacy_candidates??'—'} 檔；新增MA60條件後 ${shortPayload.comparison?.new_candidates??'—'} 檔。記錄 ${o.signal_days} 個訊號日。</p>
+  <p>${escapeHtml(o.note)}</p><table><thead><tr><th>規則</th><th>可計算筆數</th><th>成本後正報酬比例</th><th>平均淨報酬</th><th>平均最大不利變動</th></tr></thead><tbody>${[['legacy','原規則'],['new','MA60新版']].map(([k,label])=>{const s=o.summary[k];return `<tr><td>${label}</td><td>${s.count}</td><td>${fmt(s.win_rate_pct)}%</td><td>${fmt(s.mean_net_pct)}%</td><td>${fmt(s.mean_mae_pct)}%</td></tr>`;}).join('')}</tbody></table><p>尚無到期資料時不顯示勝率結論。此處是全部候選名單比較，不是「可以進場」或預計買價規則的績效。</p></details>`;
 }
 function renderShortTerm(filter=shortFilter){
   if(!shortPayload)return;
@@ -50,16 +62,17 @@ function renderShortTerm(filter=shortFilter){
   const rows=Object.entries(shortPayload.data).map(([id,r])=>({id,...r})),trades=shortTrades();
   const group=r=>r.status==='資料不足'?'missing':r.passed?'ready':'excluded';
   const selected=rows.filter(r=>filter==='all'||(filter==='held'?trades[r.id]:(filter==='enter'?r.entry?.status==='可以進場':filter==='risk'?r.entry?.status==='風險偏高':group(r)===filter)))
-    .sort((a,b)=>(b.volume_ratio??-1)-(a.volume_ratio??-1)||a.id.localeCompare(b.id));
+    .sort(shortCompare);
   byId('screenerResult').innerHTML=`<div class="screener-panel decision-board"><h2>短線交易觀察｜收盤後篩選</h2>
     <p>行情日 ${escapeHtml(shortPayload.market_date)} · 下一交易日觀察進場 · 目標持有1～5交易日</p>
     <div class="board-notice">「可以進場」僅依標示日期收盤資料判定，下一交易日須重新核對成交價格，並非即時買進指令。這是固定條件觀察，不是已驗證策略。不提供盤中／收盤前訊號；當日收盤後資料不能假設在當日收盤成交。</div>
-    <details><summary>完整規則與口徑</summary><p>不限制股本與股價區間；收盤突破前20交易日最高價、成交量至少前20日均量2倍，兩者均不含訊號日。紅K實體（收盤／開盤－1）至少3%、收盤位於當日振幅頂部20%、上影線不超過實體一半；收盤站上MA5／10／20。近3交易日外資＋投信合計淨買超股數／同期成交股數至少5%，包含訊號日，賣超會扣除。無主力券商資料，不啟用主力替代分支。</p><p>進場風險：通過選股條件後，距MA5不超過5%、距訊號低點（收盤－低點）／收盤不超過5%，且收盤高於MA5、訊號低點與突破價，標為「可以進場」；超出門檻標為「風險偏高」。5%是初始風險規則，未經績效最佳化。未入選及缺資料不標為可以進場。</p><p>同組依量比排序，同分依代碼；缺資料不通過、不為湊名單放寬。價格為原始未還原日線，除權息／拆併股附近需另核實。</p></details>
+    <details><summary>完整規則與口徑</summary><p>不限制股本與股價區間；收盤突破前20交易日最高價、成交量至少前20日均量2倍，兩者均不含訊號日。紅K實體（收盤／開盤－1）至少3%、收盤位於當日振幅頂部20%、上影線不超過實體一半；收盤站上MA5／10／20，且收盤＞MA60、MA20＞MA60（均含訊號日，須60日完整日線）。近3交易日外資＋投信合計淨買超股數／同期成交股數至少5%，包含訊號日，賣超會扣除。無主力券商資料，不啟用主力替代分支。</p><p>進場風險：通過選股條件後，距MA5不超過5%、距訊號低點（收盤－低點）／收盤不超過5%，且收盤高於MA5、訊號低點與突破價，標為「可以進場」；超出門檻標為「風險偏高」。5%是初始風險規則，未經績效最佳化。未入選及缺資料不標為可以進場。</p><p>先列可以進場，再列風險偏高；同組依距突破價由小到大，同分依代碼。預計買價高於訊號收盤3%標「不建議追」，原5%風險門檻保留。大盤偏弱標逆勢候選，不作淘汰條件；缺資料不通過、不為湊名單放寬。價格為原始未還原日線，除權息／拆併股附近需另核實。</p></details>
+    ${shortObservationHtml()}
     <div class="board-filters">${[['ready','符合觀察'],['enter','可以進場'],['risk','風險偏高'],['excluded','未符合'],['missing','資料不足'],['all','全部'],['held','我的追蹤']].map(([k,t])=>`<button class="filter-chip ${filter===k?'selected':''}" onclick="renderShortTerm('${k}')">${t}<span class="filter-count">${rows.filter(r=>k==='all'||(k==='held'?trades[r.id]:(k==='enter'?r.entry?.status==='可以進場':k==='risk'?r.entry?.status==='風險偏高':group(r)===k))).length}</span></button>`).join('')}</div>
-    <div class="table-scroll"><table class="decision-table"><thead><tr><th>股票</th><th>量比 ↓</th><th>狀態</th><th>原因／追蹤</th></tr></thead><tbody>${selected.map(r=>{
+    <div class="table-scroll"><table class="decision-table"><thead><tr><th>股票</th><th>量比</th><th>距突破價 ↑</th><th>狀態／市場環境</th><th>原因／追蹤</th></tr></thead><tbody>${selected.map(r=>{
       const t=trades[r.id]?shortTradeState(trades[r.id],r,shortPayload.calendar):null;
-      return `<tr><td><button class="stock-link" onclick="showShortStock('${escapeHtml(r.id)}')">${escapeHtml(r.id)} ${escapeHtml(stockName(r.id))}</button></td><td>${Number.isFinite(r.volume_ratio)?r.volume_ratio.toFixed(2)+'倍':'--'}</td><td>${escapeHtml(r.entry?.status||r.status)}</td><td>${escapeHtml(t?(t.error||`持有${t.days}交易日；`+(t.alerts.join('；')||'尚無已定義提醒')):(r.passed?r.entry?.reason:r.reason))}</td></tr>`;
-    }).join('')||'<tr><td colspan="4">此分類沒有股票，不放寬條件湊數。</td></tr>'}</tbody></table></div><div id="shortDetail"></div></div>`;
+      return `<tr><td><button class="stock-link" onclick="showShortStock('${escapeHtml(r.id)}')">${escapeHtml(r.id)} ${escapeHtml(stockName(r.id))}</button></td><td>${Number.isFinite(r.volume_ratio)?r.volume_ratio.toFixed(2)+'倍':'--'}</td><td>${Number.isFinite(r.breakout_gap_pct)?r.breakout_gap_pct.toFixed(2)+'%':'—'}</td><td>${escapeHtml(r.entry?.status||r.status)}${r.passed?'<br>'+escapeHtml(r.market_label||'大盤待核對'):''}</td><td>${escapeHtml(t?(t.error||`持有${t.days}交易日；`+(t.alerts.join('；')||'尚無已定義提醒')):(r.passed?r.entry?.reason:r.reason))}</td></tr>`;
+    }).join('')||'<tr><td colspan="5">此分類沒有股票，不放寬條件湊數。</td></tr>'}</tbody></table></div><div id="shortDetail"></div></div>`;
 }
 function showShortStock(id){
   shortSelected=id;
@@ -107,8 +120,8 @@ function saveShortSignal(id){
 function plannedEntryRisk(row, price, generatedAt, now=Date.now()) {
   if(!Number.isFinite(price)||price<=0)return {status:'請輸入有效價格',reason:'預計進場價必須大於0'};
   const age=now-Date.parse(generatedAt),dayAge=now-Date.parse(row.date+'T00:00:00+08:00');
-  const e=row.entry||{},m=e.ma5,l=e.signal_low,b=e.breakout;
-  if(!Number.isFinite(age)||age<0||age>7*86400000||!Number.isFinite(dayAge)||dayAge<0||dayAge>8*86400000||![m,l,b].every(v=>Number.isFinite(v)&&v>0))return {status:'資料不足',reason:'參考行情缺漏或過期，請先更新資料'};
+  const e=row.entry||{},m=e.ma5,l=e.signal_low,b=e.breakout,signalClose=row.close;
+  if(!Number.isFinite(age)||age<0||age>7*86400000||!Number.isFinite(dayAge)||dayAge<0||dayAge>8*86400000||![m,l,b,signalClose].every(v=>Number.isFinite(v)&&v>0))return {status:'資料不足',reason:'參考行情缺漏或過期，請先更新資料'};
   if(!row.passed)return {status:'未符合短線條件',reason:'原始選股條件未通過'};
   const gap=(price/m-1)*100,distance=(price-l)/price*100,reasons=[];
   if(gap>5+1e-9)reasons.push('距MA5超過5%');
@@ -116,7 +129,11 @@ function plannedEntryRisk(row, price, generatedAt, now=Date.now()) {
   if(price<=b)reasons.push('預計價格未站在突破價之上');
   if(price<=m)reasons.push('預計價格未站在MA5之上');
   if(price<=l)reasons.push('預計價格未高於訊號低點');
-  return {status:reasons.length?'風險偏高':'可以進場',reason:reasons.join('；')||'依既有收盤資料通過價格風險檢查',gap,distance};
+  const chase=(price/signalClose-1)*100;
+  const chaseLimit=shortPayload?.planned_max_chase_pct??3;
+  const chasing=chase>chaseLimit+1e-9;
+  if(chasing)reasons.unshift(`預計買價高於訊號收盤${chaseLimit}%，不建議追`);
+  return {status:chasing?'不建議追':reasons.length?'風險偏高':'可以進場',reason:reasons.join('；')||'依既有收盤資料通過價格風險檢查',gap,distance,chase};
 }
 function updatePlannedEntry(id){
   const price=Number(byId('plannedPrice').value),row=shortPayload.data[id];
@@ -136,6 +153,7 @@ function plannedAnalysisText(id,price,result){
     `預計價格重算：${result.status}；${result.reason}`,
     Number.isFinite(result.gap)?`距MA5：${result.gap.toFixed(2)}%；距訊號低點：${result.distance.toFixed(2)}%`:'',
     `參考價位：${JSON.stringify(r.entry)}`,
+    `市場標籤：${r.market_label||'大盤待核對'}；距突破價：${r.breakout_gap_pct??'缺資料'}%`,
     typeof marketAnalysisText==='function'?marketAnalysisText(r.date):'大盤資料尚未載入',
     '下列為網站既有收盤資料，請核對最新行情、法人、營收及重大消息，勿視為今日即時數據。',
     ...r.checks.map(c=>`${c.label}｜${c.pass===true?'通過':c.pass===false?'未通過':'缺資料'}｜資料日${c.date}｜${JSON.stringify(c.raw)}`),

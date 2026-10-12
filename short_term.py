@@ -5,6 +5,9 @@ from pathlib import Path
 from three_gate import TAIPEI, num, read, write
 
 
+TREND_WINDOW = 60
+PLANNED_MAX_CHASE_PCT = 3
+
 ENTRY_MAX_MA5_GAP = Decimal('5')
 ENTRY_MAX_STOP_DISTANCE = Decimal('5')
 
@@ -83,6 +86,15 @@ def assess(prices, institutions, dates, now, capital=None):
         ma = sum(Decimal(str(b['close'])) for b in recent[-n:]) / n if valid else None
         add(f'收盤 > MA{n}', close, Decimal(str(close)) > ma if ma is not None else None,
             {'收盤': close, '均線': float(ma) if ma is not None else None})
+    trend_bars = bars[-TREND_WINDOW:]
+    trend_valid = fresh and len(trend_bars) == TREND_WINDOW and all(b['valid'] for b in trend_bars)
+    ma60 = sum(Decimal(str(b['close'])) for b in trend_bars)/TREND_WINDOW if trend_valid else None
+    ma20 = sum(Decimal(str(b['close'])) for b in trend_bars[-20:])/20 if trend_valid else None
+    add('收盤 > MA60（含訊號日）', close, Decimal(str(close)) > ma60 if trend_valid else None,
+        {'收盤': close, 'MA60': float(ma60) if ma60 is not None else None})
+    add('MA20 > MA60（含訊號日）', float(ma20) if ma20 is not None else None,
+        ma20 > ma60 if trend_valid else None,
+        {'MA20': float(ma20) if ma20 is not None else None, 'MA60': float(ma60) if ma60 is not None else None})
     inst_days = []
     for d in dates[-3:]:
         matches = [r for r in institutions if r.get('date') == d]
@@ -96,11 +108,13 @@ def assess(prices, institutions, dates, now, capital=None):
         total >= volume*Decimal('.05') if concentration is not None else None,
         {'逐日淨買超股數': inst_days, '合計淨買超股數': float(total) if total is not None else None,
          '同期成交股數': float(volume) if volume is not None else None, '占比%': concentration})
+    legacy_checks = [c for c in checks if c['label'] not in ('收盤 > MA60（含訊號日）', 'MA20 > MA60（含訊號日）')]
+    legacy_passed = all(c['pass'] is True for c in legacy_checks)
     missing = any(c['pass'] is None for c in checks)
     passed = all(c['pass'] is True for c in checks)
     risk = entry_risk(close, float(sum(Decimal(str(b['close'])) for b in recent[-5:])/5) if valid else None,
                       latest.get('low'), high, eligible=passed, missing=missing)
-    return {'entry': risk, 'status': '資料不足' if missing else '符合短線觀察條件' if passed else '未符合短線條件',
+    return {'legacy_passed': legacy_passed, 'breakout_gap_pct': (close/high-1)*100 if valid and high else None, 'entry': risk, 'status': '資料不足' if missing else '符合短線觀察條件' if passed else '未符合短線條件',
             'passed': passed, 'checks': checks, 'date': dates[-1] if dates else None,
             'signal_low': latest.get('low') if valid else None,
             'close': close, 'volume_ratio': ratio, 'bars': bars,
@@ -117,9 +131,16 @@ def publish(root, now=None):
     calendar = sorted({r['date'] for r in read(cache/'benchmark.json', {}).get('data', [])
                        if r['date'] < now.date().isoformat() or
                        (r['date'] == now.date().isoformat() and now.hour >= 18)})
-    payload = {'version': 5, 'strategy': 'short-v5-no-price-limit-1to5', 'generated_at': now.isoformat(), 'market_date': calendar[-1] if calendar else None,
+    payload = {'version': 6, 'strategy': 'short-v6-ma60-entry3', 'planned_max_chase_pct': PLANNED_MAX_CHASE_PCT, 'generated_at': now.isoformat(), 'market_date': calendar[-1] if calendar else None,
                'calendar': calendar[-80:], 'data': {
                    sid: assess(prices.get(sid, []), institutions.get(sid, []), calendar, now) for sid in universe}}
+    from short_observations import market_label, record
+    market = read(cache/'market_trend.json', {})
+    label = market_label(market, payload['market_date'], now)
+    for row in payload['data'].values(): row['market_label'] = label
+    payload['comparison'] = {'legacy_candidates': sum(r['legacy_passed'] for r in payload['data'].values()),
+                             'new_candidates': sum(r['passed'] for r in payload['data'].values())}
+    payload['observation'] = record(root, payload, prices, calendar, now)
     write(cache/'short_term.json', payload)
     return payload
 
