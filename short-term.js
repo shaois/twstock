@@ -173,17 +173,29 @@ async function copyPlannedAnalysis(id){
   catch{status.textContent='瀏覽器無法自動複製，請從下方文字框手動複製。';}
 }
 
+function rotationLabels(x){
+  if(!x)return {sample:'族群分類資料待補'};
+  const min=5;
+  if(x.members<min)return {sample:`族群樣本不足：${x.members}檔，門檻${min}檔`};
+  if(x.valid_members<min)return {sample:`族群價格資料待補：有效${x.valid_members}/${x.members}檔，門檻${min}檔`};
+  return {
+    sample:'',
+    strength:Number.isFinite(x.excess_5)?(x.excess_5>0?'跑贏0050':x.excess_5<0?'落後0050':'與0050持平'):'相對強弱待補',
+    heat:Number.isFinite(x.heat_ratio)?(x.heat_ratio>=1.2?'成交升溫':x.heat_ratio<0.9?'成交降溫':'成交熱度持平'):'成交熱度待補'
+  };
+}
 function shortRotationText(r){
-  const x=r.rotation, f=v=>Number.isFinite(v)?v.toFixed(2):'—';
-  return x?`${x.sector}｜${x.flag}｜熱度${f(x.heat_ratio)}倍｜MA20廣度${f(x.breadth)}%`:'族群資料待補';
+  const x=r.rotation,l=rotationLabels(x),f=v=>Number.isFinite(v)?v.toFixed(2):'—';
+  if(l.sample)return `${x?.sector||r.sector||'未分類'}｜${l.sample}`;
+  return `${x.sector}｜${l.strength}｜${l.heat} ${f(x.heat_ratio)}倍｜MA20廣度${f(x.breadth)}%`;
 }
 function shortRotationHtml(){
   const p=shortPayload.rotation;if(!p)return '';
   const f=v=>Number.isFinite(v)?v.toFixed(2):'—';
   const o=shortPayload.rotation_observation;
   return `<details><summary>族群輪動排行（股票池內；${escapeHtml(p.market_date)}）</summary>
-  <p>${escapeHtml(p.note)}</p><p>${escapeHtml(p.heat_note)}；無分類 ${p.unclassified.length} 檔；成員不足跳過 ${p.skipped}/${p.sectors.length} 個族群${p.skipped_pct>30?'，超過30%，保留原門檻':''}。</p>
-  <p>近期轉強：5日超額報酬正值、熱度≥1.2倍且MA20廣度≥60%；熱度降溫：20日超額報酬正值、5日低於20日且熱度＜0.9倍；孤軍突破：僅1檔突破且廣度＜40%。皆為初始觀察門檻。</p>
-  <div class="table-scroll"><table class="rotation-table"><thead><tr><th>產業／旗標</th><th>有效／成員</th><th>5日超額／名次</th><th>20日超額／名次</th><th>成交占比／熱度</th><th>MA20／上漲廣度</th><th>3日法人估算（億元）／覆蓋</th></tr></thead><tbody>${p.sectors.map(r=>`<tr><td>${escapeHtml(r.sector)}<br>${escapeHtml(r.flag)}</td><td>${r.valid_members}/${r.members}</td><td>${f(r.excess_5)}%／${r.rank_5??'—'}</td><td>${f(r.excess_20)}%／${r.rank_20??'—'}</td><td>${f(r.share_pct)}%／${f(r.heat_ratio)}倍</td><td>${f(r.breadth)}%／${f(r.advancing)}%</td><td>${f(r.institutional_estimate_3===null?null:r.institutional_estimate_3/1e8)}／${r.institutional_members}/${r.members}</td></tr>`).join('')||'<tr><td colspan="7">尚無產業資料</td></tr>'}</tbody></table></div>
+  <p>${escapeHtml(p.note)}</p><p>${escapeHtml(p.heat_note)}；無分類 ${p.unclassified.length} 檔；樣本或有效價格不足跳過 ${p.skipped}/${p.sectors.length} 個族群${p.skipped_pct>30?'，超過30%，保留原門檻':''}。</p>
+  <p>相對強弱依5日超額報酬：正值跑贏0050、負值落後、零為持平。成交熱度≥1.2倍為升溫、＜0.9倍為降溫，其餘持平；兩者分開判讀。MA20廣度為站上20日均線的有效成員比例。少於5檔不計算；有足夠成員但完整價格不足時另標待補。前瞻紀錄仍沿用原「近期轉強」定義，未變更歷史分組。</p>
+  <div class="table-scroll"><table class="rotation-table"><thead><tr><th>產業／樣本狀態</th><th>有效／成員</th><th>5日超額／名次</th><th>20日超額／名次</th><th>成交占比／熱度</th><th>MA20／上漲廣度</th><th>3日法人估算（億元）／覆蓋</th></tr></thead><tbody>${p.sectors.map(r=>`<tr><td>${escapeHtml(r.sector)}<br>${escapeHtml(rotationLabels(r).sample||'樣本達門檻')}</td><td>${r.valid_members}/${r.members}</td><td>${f(r.excess_5)}%／${r.rank_5??'—'}<br>${escapeHtml(rotationLabels(r).strength||'暫不判定')}</td><td>${f(r.excess_20)}%／${r.rank_20??'—'}</td><td>${f(r.share_pct)}%／${f(r.heat_ratio)}倍<br>${escapeHtml(rotationLabels(r).heat||'暫不判定')}</td><td>${f(r.breadth)}%／${f(r.advancing)}%</td><td>${f(r.institutional_estimate_3===null?null:r.institutional_estimate_3/1e8)}／${r.institutional_members}/${r.members}</td></tr>`).join('')||'<tr><td colspan="7">尚無產業資料</td></tr>'}</tbody></table></div>
   ${o?`<details><summary>輪動後續1／3／5日觀察（${o.signal_days}個訊號日）</summary><p>${escapeHtml(o.note)}</p><table class="rotation-table"><thead><tr><th>天數／分類</th><th>筆數</th><th>平均淨報酬</th><th>正報酬比例</th></tr></thead><tbody>${o.summary.map(r=>`<tr><td>${r.days}日／${escapeHtml(r.group)}</td><td>${r.count}</td><td>${f(r.mean_net_pct)}%</td><td>${f(r.positive_pct)}%</td></tr>`).join('')}</tbody></table></details>`:''}</details>`;
 }
