@@ -63,7 +63,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add cache/short_term.json cache/short_observations.json
+          git add cache/short_term.json cache/short_observations.json cache/short_rotation_observations.json
           git add cache/market_history.json cache/market_trend.json
           git add cache/price.json cache/benchmark.json cache/predictions.json cache/prediction_log.json cache/progress.json cache/universe.json cache/research_protocol.json cache/sectors.json cache/institutions.json cache/shadow_log.json
           git add cache/research_protocol.parts/
