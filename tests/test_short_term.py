@@ -108,7 +108,11 @@ class ShortTermTests(unittest.TestCase):
             for name, data in [('universe', {'2330': {}}), ('price', {'2330': self.prices}),
                                ('institutions', {'2330': self.inst}), ('benchmark', [{'date': x} for x in self.dates])]:
                 write(root/'cache'/f'{name}.json', {'data': data})
-            self.assertTrue(publish(root, self.now)['data']['2330']['passed'])
+            actual = publish(root, self.now)['data']['2330']
+            baseline = self.result()
+            for key in ('passed', 'entry', 'checks', 'status', 'breakout_gap_pct'):
+                self.assertEqual(actual[key], baseline[key])
+            self.assertTrue(actual['passed'])
             r = publish(root, self.now.replace(hour=15))
             self.assertEqual(r['market_date'], self.dates[-2])
             self.assertFalse(r['data']['2330']['passed'])
