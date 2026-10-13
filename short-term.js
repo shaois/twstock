@@ -68,11 +68,12 @@ function renderShortTerm(filter=shortFilter){
     <div class="board-notice">「可以進場」僅依標示日期收盤資料判定，下一交易日須重新核對成交價格，並非即時買進指令。這是固定條件觀察，不是已驗證策略。不提供盤中／收盤前訊號；當日收盤後資料不能假設在當日收盤成交。</div>
     <details><summary>完整規則與口徑</summary><p>不限制股本與股價區間；收盤突破前20交易日最高價、成交量至少前20日均量2倍，兩者均不含訊號日。紅K實體（收盤／開盤－1）至少3%、收盤位於當日振幅頂部20%、上影線不超過實體一半；收盤站上MA5／10／20，且收盤＞MA60、MA20＞MA60（均含訊號日，須60日完整日線）。近3交易日外資＋投信合計淨買超股數／同期成交股數至少5%，包含訊號日，賣超會扣除。無主力券商資料，不啟用主力替代分支。</p><p>進場風險：通過選股條件後，距MA5不超過5%、距訊號低點（收盤－低點）／收盤不超過5%，且收盤高於MA5、訊號低點與突破價，標為「可以進場」；超出門檻標為「風險偏高」。5%是初始風險規則，未經績效最佳化。未入選及缺資料不標為可以進場。</p><p>先列可以進場，再列風險偏高；同組依距突破價由小到大，同分依代碼。預計買價高於訊號收盤3%標「不建議追」，原5%風險門檻保留。大盤偏弱標逆勢候選，不作淘汰條件；缺資料不通過、不為湊名單放寬。價格為原始未還原日線，除權息／拆併股附近需另核實。</p></details>
     ${shortObservationHtml()}
+    ${shortRotationHtml()}
     <div class="board-filters">${[['ready','符合觀察'],['enter','可以進場'],['risk','風險偏高'],['excluded','未符合'],['missing','資料不足'],['all','全部'],['held','我的追蹤']].map(([k,t])=>`<button class="filter-chip ${filter===k?'selected':''}" onclick="renderShortTerm('${k}')">${t}<span class="filter-count">${rows.filter(r=>k==='all'||(k==='held'?trades[r.id]:(k==='enter'?r.entry?.status==='可以進場':k==='risk'?r.entry?.status==='風險偏高':group(r)===k))).length}</span></button>`).join('')}</div>
     <div class="table-scroll"><table class="decision-table short-table"><thead><tr><th>股票</th><th>量比</th><th>距突破價 ↑</th><th>狀態／市場環境</th><th>原因／追蹤</th></tr></thead><tbody>${selected.map(r=>{
       const t=trades[r.id]?shortTradeState(trades[r.id],r,shortPayload.calendar):null;
       const reason=t?(t.error||`持有${t.days}交易日；`+(t.alerts.join('；')||'尚無已定義提醒')):(r.passed?r.entry?.reason:r.reason);
-      return `<tr><td><button class="stock-link" onclick="showShortStock('${escapeHtml(r.id)}')">${escapeHtml(r.id)} ${escapeHtml(stockName(r.id))}</button></td><td>${Number.isFinite(r.volume_ratio)?r.volume_ratio.toFixed(2)+'倍':'--'}</td><td>${Number.isFinite(r.breakout_gap_pct)?r.breakout_gap_pct.toFixed(2)+'%':'—'}</td><td>${escapeHtml(r.entry?.status||r.status)}${r.passed?'<br>'+escapeHtml(r.market_label||'大盤待核對'):''}</td><td><div class="short-reason" title="${escapeHtml(reason||'')}">${escapeHtml(reason||'')}</div></td></tr>`;
+      return `<tr><td><button class="stock-link" onclick="showShortStock('${escapeHtml(r.id)}')">${escapeHtml(r.id)} ${escapeHtml(stockName(r.id))}</button></td><td>${Number.isFinite(r.volume_ratio)?r.volume_ratio.toFixed(2)+'倍':'--'}</td><td>${Number.isFinite(r.breakout_gap_pct)?r.breakout_gap_pct.toFixed(2)+'%':'—'}</td><td>${escapeHtml(r.entry?.status||r.status)}${r.passed?'<br>'+escapeHtml(r.market_label||'大盤待核對'):''}</td><td><div class="short-reason" title="${escapeHtml((r.passed?shortRotationText(r)+'；':'')+(reason||''))}">${escapeHtml((r.passed?shortRotationText(r)+'；':'')+(reason||''))}</div></td></tr>`;
     }).join('')||'<tr><td colspan="5">此分類沒有股票，不放寬條件湊數。</td></tr>'}</tbody></table></div><div id="shortDetail"></div></div>`;
 }
 function showShortStock(id){
@@ -82,6 +83,7 @@ function showShortStock(id){
     ${r.passed?`<section><h3>預計進場價分析</h3><label>預計進場價（元） <input id="plannedPrice" type="number" min="0.01" step="0.01" placeholder="輸入你打算買進的價格" oninput="updatePlannedEntry('${escapeHtml(id)}')" style="color:#fff;background:#19283b"></label>
     <p>依 ${escapeHtml(r.date)} 收盤資料重算，非即時行情；此欄位不會建立成交紀錄。</p><div id="plannedRisk" role="status">請輸入預計進場價。</div>
     <button class="btn btn-primary" onclick="copyPlannedAnalysis('${escapeHtml(id)}')">複製分析資料</button><p id="plannedCopyStatus" role="status"></p><textarea id="plannedAnalysisText" readonly aria-label="分析資料（可手動複製）" style="display:none;width:100%;min-height:220px;color:#fff;background:#19283b"></textarea></section>`:''}
+    <p>${escapeHtml(shortRotationText(r))}</p>
     ${r.checks.map(c=>`<p>${c.pass===null?'缺資料':c.pass?'通過':'未通過'}｜${escapeHtml(c.label)}<br>資料日 ${escapeHtml(c.date)}；${escapeHtml(JSON.stringify(c.raw))}</p>`).join('')}
     <hr><h3>成交紀錄與風控追蹤</h3>${!trade&&r.passed?`<button class="btn btn-secondary" onclick="saveShortSignal('${escapeHtml(id)}')">保留此訊號，下一交易日追蹤</button>`:""}<p>只存這台瀏覽器，不上傳、不下單。先有實際成交才填寫；3～5%與10～15%為你提供的範圍。預設4%與12%只是中間值，未最佳化。</p>
     ${trade?`<p>原訊號日 ${escapeHtml(trade.signal_date)}；訊號低點 ${trade.signal_low}；成交日 ${escapeHtml(trade.date||"尚未成交")}；成交價 ${trade.price||"尚未填寫"} 元</p>`:''}
@@ -154,6 +156,7 @@ function plannedAnalysisText(id,price,result){
     `預計價格重算：${result.status}；${result.reason}`,
     Number.isFinite(result.gap)?`距MA5：${result.gap.toFixed(2)}%；距訊號低點：${result.distance.toFixed(2)}%`:'',
     `參考價位：${JSON.stringify(r.entry)}`,
+    `族群觀察（未還原價格；法人金額為估算）：${JSON.stringify(r.rotation||null)}`,
     `市場標籤：${r.market_label||'大盤待核對'}；距突破價：${r.breakout_gap_pct??'缺資料'}%`,
     typeof marketAnalysisText==='function'?marketAnalysisText(r.date):'大盤資料尚未載入',
     '下列為網站既有收盤資料，請核對最新行情、法人、營收及重大消息，勿視為今日即時數據。',
@@ -168,4 +171,19 @@ async function copyPlannedAnalysis(id){
   area.value=text;area.style.display='block';
   try{await navigator.clipboard.writeText(text);status.textContent='已複製，貼到聊天室即可接續分析。';}
   catch{status.textContent='瀏覽器無法自動複製，請從下方文字框手動複製。';}
+}
+
+function shortRotationText(r){
+  const x=r.rotation, f=v=>Number.isFinite(v)?v.toFixed(2):'—';
+  return x?`${x.sector}｜${x.flag}｜熱度${f(x.heat_ratio)}倍｜MA20廣度${f(x.breadth)}%`:'族群資料待補';
+}
+function shortRotationHtml(){
+  const p=shortPayload.rotation;if(!p)return '';
+  const f=v=>Number.isFinite(v)?v.toFixed(2):'—';
+  const o=shortPayload.rotation_observation;
+  return `<details><summary>族群輪動排行（股票池內；${escapeHtml(p.market_date)}）</summary>
+  <p>${escapeHtml(p.note)}</p><p>${escapeHtml(p.heat_note)}；無分類 ${p.unclassified.length} 檔；成員不足跳過 ${p.skipped}/${p.sectors.length} 個族群${p.skipped_pct>30?'，超過30%，保留原門檻':''}。</p>
+  <p>近期轉強：5日超額報酬正值、熱度≥1.2倍且MA20廣度≥60%；熱度降溫：20日超額報酬正值、5日低於20日且熱度＜0.9倍；孤軍突破：僅1檔突破且廣度＜40%。皆為初始觀察門檻。</p>
+  <div class="table-scroll"><table class="rotation-table"><thead><tr><th>產業／旗標</th><th>有效／成員</th><th>5日超額／名次</th><th>20日超額／名次</th><th>成交占比／熱度</th><th>MA20／上漲廣度</th><th>3日法人估算（億元）／覆蓋</th></tr></thead><tbody>${p.sectors.map(r=>`<tr><td>${escapeHtml(r.sector)}<br>${escapeHtml(r.flag)}</td><td>${r.valid_members}/${r.members}</td><td>${f(r.excess_5)}%／${r.rank_5??'—'}</td><td>${f(r.excess_20)}%／${r.rank_20??'—'}</td><td>${f(r.share_pct)}%／${f(r.heat_ratio)}倍</td><td>${f(r.breadth)}%／${f(r.advancing)}%</td><td>${f(r.institutional_estimate_3===null?null:r.institutional_estimate_3/1e8)}／${r.institutional_members}/${r.members}</td></tr>`).join('')||'<tr><td colspan="7">尚無產業資料</td></tr>'}</tbody></table></div>
+  ${o?`<details><summary>輪動後續1／3／5日觀察（${o.signal_days}個訊號日）</summary><p>${escapeHtml(o.note)}</p><table class="rotation-table"><thead><tr><th>天數／分類</th><th>筆數</th><th>平均淨報酬</th><th>正報酬比例</th></tr></thead><tbody>${o.summary.map(r=>`<tr><td>${r.days}日／${escapeHtml(r.group)}</td><td>${r.count}</td><td>${f(r.mean_net_pct)}%</td><td>${f(r.positive_pct)}%</td></tr>`).join('')}</tbody></table></details>`:''}</details>`;
 }

@@ -141,6 +141,16 @@ def publish(root, now=None):
     payload['comparison'] = {'legacy_candidates': sum(r['legacy_passed'] for r in payload['data'].values()),
                              'new_candidates': sum(r['passed'] for r in payload['data'].values())}
     payload['observation'] = record(root, payload, prices, calendar, now)
+    from short_rotation import calculate, record as record_rotation
+    rotation = calculate(universe, prices, institutions, read(cache/'sectors.json', {}).get('data', {}),
+                         read(cache/'benchmark.json', {}).get('data', []), calendar)
+    sector_rows = {r['sector']: r for r in rotation['sectors']}
+    sectors = read(cache/'sectors.json', {}).get('data', {})
+    for sid, row in payload['data'].items():
+        row['sector'] = sectors.get(sid, {}).get('industry_category')
+        row['rotation'] = sector_rows.get(row['sector'])
+    payload['rotation'] = rotation
+    payload['rotation_observation'] = record_rotation(root, payload, rotation, prices, calendar, now)
     write(cache/'short_term.json', payload)
     return payload
 
