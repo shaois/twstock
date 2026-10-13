@@ -1,0 +1,11 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const c=vm.createContext({});vm.runInContext(fs.readFileSync('short-term.js','utf8'),c);
+const base={sector:'航運業',members:12,valid_members:12,excess_5:-0.56,heat_ratio:3.4,breadth:75};
+assert.match(c.shortRotationText({rotation:base}),/落後0050.*成交升溫.*75.00%/);
+assert.match(c.shortRotationText({rotation:{...base,sector:'電子零組件業',excess_5:3.21,heat_ratio:.93}}),/跑贏0050.*成交熱度持平/);
+assert.match(c.shortRotationText({rotation:{...base,members:2,valid_members:2}}),/族群樣本不足：2檔，門檻5檔/);
+assert.match(c.shortRotationText({rotation:{...base,valid_members:4}}),/族群價格資料待補/);
+assert.equal(c.rotationLabels({...base,heat_ratio:.9}).heat,'成交熱度持平');
+assert.equal(c.rotationLabels({...base,heat_ratio:1.2}).heat,'成交升溫');
+assert.equal(c.rotationLabels({...base,heat_ratio:null}).heat,'成交熱度待補');
+console.log('Rotation labels: examples, missing data and threshold boundaries passed');
