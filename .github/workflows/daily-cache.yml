@@ -2,8 +2,11 @@ name: Daily FinMind Cache Refresh
 
 on:
   schedule:
-    # UTC Mon-Fri 15:00-22:00 = Taiwan 23:00-06:00, after market close.
-    # Eight batches x 40 cover 300 stocks; quota failures resume next run.
+    # UTC Mon-Fri 13:00-20:00 = Taiwan 21:00-04:00, eight regular batches.
+    # UTC 21:00/22:00 = Taiwan 05:00/06:00, two catch-up opportunities.
+    # Date-based refresh skips current prices and retries pending stocks only.
+    - cron: '0 13 * * 1-5'
+    - cron: '0 14 * * 1-5'
     - cron: '0 15 * * 1-5'
     - cron: '0 16 * * 1-5'
     - cron: '0 17 * * 1-5'
