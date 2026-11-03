@@ -391,6 +391,17 @@ async def main() -> None:
     print(f"Target {target}: {len(stock_ids)-len(pending)}/{len(stock_ids)} current; retry {len(batch)}")
     institutions = load_json(INSTITUTIONS_PATH, {"data": {}})
     benchmark_rows = merge_benchmark_rows(load_json(BENCHMARK_PATH, {}).get("data", []), [])
+    def missing_institutions():
+        days = sorted({r['date'] for r in benchmark_rows if r['date'] <= target} | {target})[-5:]
+        missing = []
+        for sid in stock_ids:
+            by_day = {r.get('date'): r for r in institutions.get('data', {}).get(sid, [])}
+            if len(days) < 5 or any(not all(isinstance(by_day.get(d, {}).get(k), (int,float))
+                    and math.isfinite(by_day[d][k]) for k in ('foreign_net_shares','trust_net_shares')) for d in days):
+                missing.append(sid)
+        return missing
+    inst_pending = missing_institutions()
+    batch = (pending + [sid for sid in inst_pending if sid not in pending])[:BATCH_SIZE]
     errors = []
     attempted = []
     timeout = httpx.Timeout(35.0, connect=15.0)
@@ -408,8 +419,9 @@ async def main() -> None:
             attempted.append(stock_id)
             try:
                 existing = price_data.get(stock_id, [])
-                rows = await fetch_price_rows(client, stock_id, latest_start_date(existing), token)
-                price_data[stock_id] = merge_price_rows(existing, mark_fetched_rows(rows, taipei_now()))
+                if stock_id in pending:
+                    rows = await fetch_price_rows(client, stock_id, latest_start_date(existing), token)
+                    price_data[stock_id] = merge_price_rows(existing, mark_fetched_rows(rows, taipei_now()))
             except FinMindQuotaError:
                 errors.append("FinMind quota; pending stocks retained")
                 break
@@ -423,6 +435,9 @@ async def main() -> None:
                     raw = await fetch_aux(client, token, "TaiwanStockInstitutionalInvestorsBuySell",
                                           data_id=stock_id, start_date=start)
                     institutions["data"][stock_id] = merge_price_rows(old_rows, normalize_institutions(raw))
+                except FinMindQuotaError:
+                    errors.append("FinMind quota on institutions; pending retained")
+                    break
                 except (httpx.HTTPError, ValueError, RuntimeError) as exc:
                     errors.append(f"{stock_id} institutions: {type(exc).__name__}")
         remaining = pending_stocks(price_data, stock_ids, target, taipei_now(), {})
@@ -432,8 +447,8 @@ async def main() -> None:
         benchmark_ready = completed_bar(benchmark_rows, target, taipei_now())
         progress = {"version": 2, "date": today_str, "index": 0, "target_date": target,
                     "updated_at": taipei_now().isoformat(), "current_count": current_count,
-                    "total": len(stock_ids), "pending": remaining, "benchmark_ready": benchmark_ready,
-                    "status": "complete" if not remaining and benchmark_ready else "pending", "errors": errors}
+                    "total": len(stock_ids), "pending": remaining, "institution_pending": missing_institutions(), "benchmark_ready": benchmark_ready,
+                    "status": "complete" if not remaining and benchmark_ready and not missing_institutions() else "pending", "errors": errors}
         save_json(PRICE_PATH, {"_saved_at": now.isoformat(), "data": price_data})
         save_json(INSTITUTIONS_PATH, institutions)
         save_json(BENCHMARK_PATH, {"_saved_at": now.isoformat(), "data": benchmark_rows})
