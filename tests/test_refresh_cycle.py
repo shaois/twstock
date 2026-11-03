@@ -34,7 +34,8 @@ class RefreshCycleTests(unittest.IsolatedAsyncioTestCase):
             build.assert_not_called()
             await u.main()
             self.assertEqual(db[u.PROGRESS_PATH]['current_count'],300)
-            self.assertEqual(db[u.PROGRESS_PATH]['status'],'complete')
+            self.assertEqual(db[u.PROGRESS_PATH]['status'],'pending')
+            self.assertEqual(len(db[u.PROGRESS_PATH]['institution_pending']),300) # price-only fixture cannot claim full completion
             self.assertEqual(calls,ids[:80])
             build.assert_called_once()
             self.assertEqual(build.call_args.args[3],'2026-10-08')
