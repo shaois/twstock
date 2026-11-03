@@ -20,8 +20,8 @@ on:
 permissions:
   contents: write
 
-# GitHub scheduled jobs can start late. Queue every batch so each checkout
-# sees the progress committed by the preceding batch.
+# Scheduled triggers are fallback opportunities. Each run continues batches itself.
+# Do not cancel an active refresh when another scheduled trigger arrives.
 concurrency:
   group: daily-finmind-cache
   cancel-in-progress: false
@@ -29,6 +29,7 @@ concurrency:
 jobs:
   refresh-cache:
     runs-on: ubuntu-latest
+    timeout-minutes: 210
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -46,10 +47,12 @@ jobs:
       - name: Refresh official market context
         run: python market_trend.py
 
-      - name: Fetch FinMind data
+      - name: Fetch FinMind data until complete
+        id: refresh
+        continue-on-error: true
         env:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
-        run: python update_all.py
+        run: python refresh_until_complete.py
 
       - name: Refresh financial snapshots (at most 40 stocks)
         env:
@@ -60,6 +63,7 @@ jobs:
         run: python short_term.py
 
       - name: Commit and push cache
+        if: always() && steps.refresh.outcome != 'skipped'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -75,3 +79,9 @@ jobs:
           git diff --staged --quiet || git commit -m "chore: update FinMind cache $(date -u +'%Y-%m-%d %H:%M UTC')"
           git push
 
+
+      - name: Report incomplete refresh
+        if: steps.refresh.outcome == 'failure'
+        run: |
+          echo "::error::Refresh incomplete. Saved cache committed; next run resumes pending stocks."
+          exit 1
