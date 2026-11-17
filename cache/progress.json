@@ -1,1 +1,1 @@
-{"version":2,"date":"2026-11-18","index":0,"target_date":"2026-11-17","updated_at":"2026-11-18T06:13:58.653032+08:00","current_count":300,"total":300,"pending":[],"institution_pending":["3714"],"benchmark_ready":true,"status":"pending","errors":["3714 institutions: HTTPStatusError"]}
+{"version":2,"date":"2026-11-18","index":0,"target_date":"2026-11-17","updated_at":"2026-11-18T06:47:01.481090+08:00","current_count":300,"total":300,"pending":[],"institution_pending":["3714"],"benchmark_ready":true,"status":"pending","errors":[]}
